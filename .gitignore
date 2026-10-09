@@ -1,0 +1,10 @@
+.env
+runs/
+artifacts/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+ros_ws/build/
+ros_ws/install/
+ros_ws/log/

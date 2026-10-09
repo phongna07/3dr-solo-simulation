@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+TASK_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$TASK_ROOT"
+LOCAL_UID="$(id -u)"
+LOCAL_GID="$(id -g)"
+export LOCAL_UID LOCAL_GID
+dc=(docker compose)
+if [[ -n "${COMPOSE_FILE:-}" ]]; then
+  : # Compose handles user-provided override files.
+elif [[ -d /mnt/wslg && -d /tmp/.X11-unix ]]; then
+  dc+=(-f compose.yaml -f compose.wslg.yaml)
+else
+  dc+=(-f compose.yaml)
+fi
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/dev COMMAND [arguments]
+  doctor                         Host/Docker/config diagnostics
+  build [sim|companion]           Build an image (sim by default)
+  sim [--profile control|reference] [--gui] [--no-wait] [--resume RUN_ID]
+  wait [TIMEOUT]                 Wait for current simulation readiness
+  status                         Show Docker state and live readiness
+  logs                           Follow process logs (Ctrl+C only stops tail)
+  shell                          Bash inside simulation container
+  gui                            Gazebo GUI client; server keeps running on GUI exit
+  flight takeoff|land|velocity|position [options]
+  stop                           LAND, await disarm, then stop simulation
+  stop --force                   Stop processes immediately, no LAND
+  test                           Unit/config tests inside image
+  lock                           Export manifests and image ID to artifacts/
+  pull                           Pull images specified in .env (use registry digests)
+  companion                      Start hardware-profile MAVROS (requires config/devices)
+  companion-stop                 Stop companion processes; does NOT land hardware
+  help
+EOF
+}
+
+command="${1:-help}"
+[[ $# -eq 0 ]] || shift
+case "$command" in
+  doctor)
+    uname -a
+    docker version --format 'Client={{.Client.Version}} Server={{.Server.Version}}'
+    docker compose version
+    "${dc[@]}" config --quiet
+    printf 'Repository: %s\nUID:GID: %s:%s\n' "$TASK_ROOT" "$LOCAL_UID" "$LOCAL_GID"
+    if [[ "$TASK_ROOT" == /mnt/[a-z]/* ]]; then
+      printf 'Move repository to WSL Linux filesystem for better build performance.\n'
+    fi
+    if [[ -d /mnt/wslg ]]; then
+      printf 'WSLg detected. GUI override enabled. GPU acceleration requires separate validation.\n'
+    fi
+    ;;
+  build)
+    "${dc[@]}" --profile hardware build "${1:-sim}"
+    ;;
+  sim)
+    show_gui=false
+    wait_ready=true
+    resume=false
+    RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
+    export RUN_ID
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --profile) export SIM_PROFILE="${2:?profile required}"; shift 2 ;;
+        --gui) show_gui=true; shift ;;
+        --no-wait) wait_ready=false; shift ;;
+        --resume) export RUN_ID="${2:?run ID required}"; resume=true; shift 2 ;;
+        *) printf 'Unknown sim argument: %s\n' "$1" >&2; exit 2 ;;
+      esac
+    done
+    if [[ -n "$("${dc[@]}" ps --status running -q sim)" ]]; then
+      printf 'Simulation already running. Use status/stop before starting another.\n' >&2
+      exit 1
+    fi
+    mkdir -p runs
+    if "$resume"; then
+      # Compose run with service command override would lose health/GUI access.
+      # A small override keeps the same service lifecycle and arguments.
+      export SIM_RESUME=true
+    else
+      export SIM_RESUME=false
+    fi
+    "${dc[@]}" up -d --no-build sim
+    TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
+    docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
+    if "$wait_ready"; then
+      TASK_TIMEOUT="$("${dc[@]}" exec -T sim printenv READINESS_TIMEOUT)"
+      python3 scripts/wait_ready.py --run-id "$RUN_ID" --timeout "$TASK_TIMEOUT"
+    fi
+    if "$show_gui"; then
+      "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3
+    fi
+    ;;
+  wait)
+    python3 scripts/wait_ready.py --timeout "${1:-600}"
+    ;;
+  status)
+    "${dc[@]}" ps
+    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight status
+    ;;
+  logs) "${dc[@]}" logs -f --tail 100 sim ;;
+  shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
+  gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3 ;;
+  flight) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight "$@" ;;
+  stop)
+    if [[ "${1:-}" != --force ]]; then
+      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight land
+    fi
+    "${dc[@]}" stop sim
+    ;;
+  test)
+    "${dc[@]}" run --rm --no-deps sim python3 -m pytest -q /workspace/tests
+    ;;
+  lock)
+    mkdir -p artifacts
+    "${dc[@]}" run --rm --no-deps sim bash -c \
+      'cp /opt/solo/*.lock /opt/solo/versions.json /opt/solo/geoid.sha256 /workspace/artifacts/'
+    TASK_IMAGE="$("${dc[@]}" images -q sim | head -n 1)"
+    [[ -n "$TASK_IMAGE" ]] || { printf 'Start sim once before exporting its image identity.\n' >&2; exit 1; }
+    docker image inspect "$TASK_IMAGE" --format '{{json .}}' > artifacts/simulation-image.json
+    printf 'Exported artifacts/. Share a registry digest or docker save image for exact replication.\n'
+    ;;
+  pull) "${dc[@]}" --profile hardware pull ;;
+  companion) "${dc[@]}" --profile hardware up -d --no-build companion ;;
+  companion-stop) "${dc[@]}" --profile hardware stop companion ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

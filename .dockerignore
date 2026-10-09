@@ -1,0 +1,12 @@
+.git
+.agents
+.codex
+.aws
+.env
+runs
+artifacts
+**/__pycache__
+ros_ws/build
+ros_ws/install
+ros_ws/log
+*.tlog*
