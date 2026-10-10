@@ -88,14 +88,16 @@ case "$command" in
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
     if "$wait_ready"; then
       TASK_TIMEOUT="$("${dc[@]}" exec -T sim printenv READINESS_TIMEOUT)"
-      python3 scripts/wait_ready.py --run-id "$RUN_ID" --timeout "$TASK_TIMEOUT"
+      python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --timeout "$TASK_TIMEOUT"
     fi
     if "$show_gui"; then
       "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3
     fi
     ;;
   wait)
-    python3 scripts/wait_ready.py --timeout "${1:-600}"
+    TASK_CONTAINER="$("${dc[@]}" ps -a -q sim)"
+    [[ -n "$TASK_CONTAINER" ]] || { printf 'No simulation container. Start with ./scripts/dev sim.\n' >&2; exit 1; }
+    python3 scripts/wait_ready.py --container "$TASK_CONTAINER" --timeout "${1:-600}"
     ;;
   status)
     "${dc[@]}" ps

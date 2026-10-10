@@ -19,6 +19,8 @@ cp .env.example .env
 
 Build đầu tải nhiều package và compile ArduPilot/plugin; các lần chạy sau dùng lại image. `sim` chạy nền và chờ heartbeat + telemetry + ít nhất ba pose có timestamp khác nhau trên mọi UAV. Không tự ARM. Profile mặc định `control` không có gimbal/camera để giảm tải.
 
+`connected=False` trong các giây đầu có thể là trạng thái đang khởi tạo. Lệnh theo dõi container và báo lỗi kèm log nếu stack đã dừng; không tiếp tục chờ trên health cũ. Khi đã `connected=True` nhưng `pose=0`, tiếp tục chờ EKF theo readiness.
+
 Đã nghiệm thu ba UAV với takeoff/setpoint/LAND trong Docker tại workspace này; xem [kết quả và giới hạn kiểm thử](docs/VALIDATION.md). Camera/gimbal trên renderer phần mềm có thể làm readiness gián đoạn, nên cần đo lại trước khi dùng profile `reference` cho controller.
 
 Xem GUI ở terminal khác:

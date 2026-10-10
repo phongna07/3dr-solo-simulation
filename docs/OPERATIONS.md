@@ -17,12 +17,14 @@ Launch kiểm tra port chưa bị chiếm, tạo world từ model/plugin đã pi
 Node sử dụng subscription/service ROS có kiểu, không parse output CLI. Với mỗi UAV:
 
 1. Chờ state connected.
-   Đồng thời áp dụng YAML cho các plugin đang load qua ROS parameter services, xác nhận phản hồi trước khi ready. Commit MAVROS đã pin đặt `use_global_arguments(false)` cho plugin nodes, nên file YAML trên CLI không tự áp vào các node này. Các key YAML upstream không còn được plugin khai báo được bỏ qua với warning; parameter được khai báo mà từ chối giá trị sẽ làm stack dừng.
+   Đồng thời đọc và áp dụng những giá trị YAML khác hiện tại qua ROS parameter services, xác nhận phản hồi trước khi ready. Commit MAVROS đã pin đặt `use_global_arguments(false)` cho plugin nodes, nên file YAML trên CLI không tự áp vào các node này. Các key YAML upstream không còn được plugin khai báo được bỏ qua với warning; parameter được khai báo mà từ chối giá trị sẽ làm stack dừng.
 2. Yêu cầu `LOCAL_POSITION_NED` ID 32, `ATTITUDE` ID 30 ở 10 Hz, kiểm tra service response. Các yêu cầu được thực hiện lần lượt trên mỗi FCU.
 3. Chờ ít nhất ba pose hữu hạn có timestamp khác nhau; lần nhận mới nhất dưới 10 giây wall clock.
 4. Ghi `health.json`, publish `/solo/readiness` và cập nhật Docker health.
 
 State phải mới trong 20 giây wall clock. Khi disconnect, telemetry/pose counters reset và được yêu cầu lại khi reconnect. Deadline khởi tạo mặc định 600 giây; readiness timeout khiến ROS launch dừng stack. Sau khi từng ready, monitor tiếp tục sống và báo mất readiness, không tự ARM/restart FCU.
+
+`dev sim`/`dev wait` kiểm tra container mỗi hai giây. Nếu stack đã dừng, lệnh thoát ngay kèm log gần nhất, kể cả Docker exit code là 0; không tiếp tục lặp `connected=False` từ file health cũ tới hết 600 giây. Health của phiên trước khi restart/resume không được dùng để báo ready cho container mới.
 
 Readiness chỉ xác nhận luồng telemetry/pose, chưa xác nhận prearm, chất lượng EKF, calibration, common ENU hay an toàn bài bay. Với RTF rất thấp, tăng timeout chưa giải quyết việc không đạt tần số control.
 
@@ -83,6 +85,7 @@ ROS launch dừng cả stack khi Gazebo, SITL, MAVROS hoặc readiness process e
 |---|---|
 | Docker socket permission denied | Docker Desktop đang chạy, bật WSL Integration; không đổi quyền socket bằng chmod 777 |
 | MAVROS runtime khác 2.15.1 | Kiểm tra đã chạy solo-entrypoint và source `/opt/mavros_ws/install/setup.bash`; bản APT chỉ làm nền dependency |
+| `connected=False` mãi, log có `setpoint_attitude ... invalid allocator` | Cập nhật source bootstrap: chỉ set parameter khác giá trị hiện tại. Không dùng bản cũ ghi lại `use_quaternion=false` mỗi lần boot; xem DEVELOPMENT.md |
 | TCP opened nhưng disconnected | Log SITL: defaults/PANIC/JSON sensor; cổng mở không chứng minh FCU đã boot |
 | Connected, chưa có pose | Telemetry ACK, EKF và RTF; đọc readiness summary |
 | PreArm Gyros inconsistent | World ổn định, model không chồng nhau, IMU scope đúng, RTF; không force ARM |

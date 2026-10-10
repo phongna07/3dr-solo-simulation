@@ -11,7 +11,9 @@ hardware.launch.py:                         MAVROS + readiness
 
 `solo_bringup` là ament_python package. `configuration.py` kiểm tra fleet, `world.py` sinh world từ pinned upstream, `runtime.py` tạo run và MAVROS frame config. `launching.py` dùng chung MAVROS và shutdown policy cho hai môi trường.
 
-`parameters.py` áp cấu hình plugin bằng `ListParameters`/`SetParameters` vì plugin nodes của commit MAVROS này không dùng global CLI arguments. Readiness đợi cấu hình được áp thành công; không chỉ kiểm tra YAML sinh ra trên đĩa. Frame của UAS được đặt riêng qua `base_link_frame`, `map_frame`, `odom_frame` trên `mavros_node`.
+`parameters.py` áp cấu hình plugin bằng `ListParameters`/`GetParameters`/`SetParameters` vì plugin nodes của commit MAVROS này không dùng global CLI arguments. Bootstrap đọc giá trị hiện tại và chỉ ghi những giá trị khác, tránh chạy lại callback tạo subscription/timer khi cấu hình đã đúng. Readiness đợi cấu hình được áp thành công; không chỉ kiểm tra YAML sinh ra trên đĩa. Frame của UAS được đặt riêng qua `base_link_frame`, `map_frame`, `odom_frame` trên `mavros_node`.
+
+Callback `setpoint_attitude.use_quaternion` trong commit đã pin capture `subscriber_qos` cục bộ bằng reference, nên gọi lại sau constructor có thể gây `invalid allocator` hoặc crash. Bootstrap không gọi setter khi giá trị mặc định `false` đã đúng; nếu YAML yêu cầu đổi mode này, bootstrap báo lỗi rõ ràng. Muốn chuyển sang điều khiển attitude/quaternion cần sửa callback MAVROS để giữ QoS theo giá trị, build và kiểm thử release mới. Điều khiển velocity/position hiện tại không cần đổi mode attitude.
 
 Docker Compose quản lý container và thiết bị; Bash `scripts/dev` là CLI thao tác ngắn; ROS 2 launch viết bằng Python quản lý các tiến trình bên trong. Cách này dùng được namespace/parameters, log theo tiến trình và event shutdown của ROS, không phải tự xây process supervisor bằng `subprocess` hoặc mở terminal bằng script. GUI là client riêng; tmux chỉ dùng khi muốn xem nhiều bảng log cùng lúc. Node readiness và flight dùng API ROS có kiểu thay vì ghép nhiều lệnh `ros2 service call` rồi parse chuỗi.
 

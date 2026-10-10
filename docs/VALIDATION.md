@@ -53,8 +53,16 @@ RTF mẫu ban đầu khoảng **0,23**. Mẫu pose ổn định 15 giây cho c�
 
 GUI client kết nối với server qua WSLg và load scene/plugins; đóng client không dừng simulation server. Đã bổ sung `libqt5svg5` và kiểm tra lại, không còn warning thiếu định dạng SVG. Chưa đánh giá hình ảnh trực quan bằng screenshot, chưa xác nhận hardware GPU acceleration. Topic camera không thay thế kiểm tra video decode/stream hoặc bridge ảnh vào ROS.
 
+## Bổ sung ngày 10/10/2026: sửa lỗi khởi tạo không ổn định
+
+Phiên lỗi `20261010T134923Z-15996` dừng khi readiness set lại `setpoint_attitude.use_quaternion=false`. Callback trong MAVROS giữ reference tới `subscriber_qos` cục bộ của constructor; sau constructor, gọi lại có thể gây `invalid allocator` và crash. ROS launch dừng toàn stack, nhưng phiên bản CLI cũ vẫn đọc health cũ và in `connected=False` tới hết timeout.
+
+Bootstrap đã đổi sang đọc giá trị hiện tại, chỉ ghi những parameter khác, và không gọi lại callback khi cấu hình đã đúng. Đổi `use_quaternion` sang mode khác được chặn rõ ràng cho tới khi callback upstream được sửa; velocity/position không cần đổi parameter này. CLI kiểm tra trạng thái container mỗi hai giây, in log và thoát ngay khi stack đã dừng. Health cũ trước thời điểm restart/resume không được dùng để xác nhận ready.
+
+21 tests pass trong cả image simulation và companion, bao gồm bootstrap không chạy lại callback giữ giá trị cũ, bootstrap lần hai không ghi lại parameter đã đúng, chặn mode attitude chưa an toàn, và báo lỗi container exit code 0. Bài kiểm tra CLI trên container lỗi thoát khoảng 0,14 giây thay vì chờ 600 giây. Phiên đầu sau sửa `20261010T135711Z-25892` đã có cả ba UAV connected, IDs 30/32 và pose, readiness true. Phiên thứ hai `20261010T135943Z-10104` kiểm tra lại bootstrap/heartbeat ba UAV thành công. Phiên cuối `20261010T140111Z-20095` chạy đúng `./scripts/dev sim`, có cả ba UAV ready sau khoảng 90 giây và được giữ chạy cho người dùng; không ARM trong các kiểm tra này. Hai image simulation/companion đã được build lại với bản sửa.
+
 ## Giới hạn của nghiệm thu
 
 Chưa chạy GitHub Actions trên remote runner, image ARM64 trên Pi 4, kết nối FCU Solo thật, firmware upgrade, driver LD19, GoPro vừa stream vừa record, MPC, common ENU hoặc failsafe bay thật. Các bước chuyển phần cứng và thông tin còn thiếu nằm trong [HARDWARE.md](HARDWARE.md). Kiểm tra simulation không xác nhận các hạng mục này.
 
-Sau nghiệm thu, container simulation được dừng; image, source, `.env`, logs và manifests vẫn giữ để chạy lại.
+Sau nghiệm thu ban đầu ngày 09/10, container simulation được dừng. Các kiểm tra lỗi ngày 10/10 chạy phiên mới; trạng thái phiên hiện tại xem bằng `./scripts/dev status`. Image, source, `.env`, logs và manifests được giữ để chạy lại.

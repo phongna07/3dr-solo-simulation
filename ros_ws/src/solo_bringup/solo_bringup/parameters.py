@@ -2,7 +2,7 @@
 from pathlib import Path
 import time
 
-from rcl_interfaces.srv import ListParameters, SetParameters
+from rcl_interfaces.srv import GetParameters, ListParameters, SetParameters
 from rclpy.parameter import Parameter
 import yaml
 
@@ -14,6 +14,19 @@ def flatten_parameters(values, prefix=''):
             yield from flatten_parameters(value, key + '.')
         else:
             yield key, value
+
+
+def changed_parameters(target, parameters, current_values):
+    if len(parameters) != len(current_values):
+        raise RuntimeError(f'{target}: incomplete parameter readback')
+    changed = [parameter for parameter, current in zip(parameters, current_values)
+               if parameter.value != current]
+    # This commit captures constructor-local subscriber_qos by reference in this
+    # callback. Re-entering it after construction can read invalid stack memory.
+    if target.endswith('/setpoint_attitude') and any(p.name == 'use_quaternion' for p in changed):
+        raise RuntimeError(f'{target}: changing use_quaternion at runtime is unsafe in pinned '
+                           'MAVROS; patch its QoS callback before changing the attitude input mode')
+    return changed
 
 
 class PluginParameters:
@@ -33,6 +46,7 @@ class PluginParameters:
                 self.items[target] = {
                     'client': node.create_client(SetParameters, target + '/set_parameters'),
                     'list_client': node.create_client(ListParameters, target + '/list_parameters'),
+                    'get_client': node.create_client(GetParameters, target + '/get_parameters'),
                     'request': SetParameters.Request(parameters=[
                         Parameter(key, value=value).to_parameter_msg()
                         for key, value in flatten_parameters(values)
@@ -63,7 +77,15 @@ class PluginParameters:
                         if obsolete:
                             self.node.get_logger().warning(f'{target}: upstream YAML has undeclared keys; ignored: {obsolete}')
                         item['request'].parameters = [p for p in parameters if p.name in declared]
-                        item['phase'] = 'set'
+                        item['phase'] = 'get'
+                    elif item['phase'] == 'get':
+                        item['request'].parameters = changed_parameters(
+                            target, item['request'].parameters, response.values)
+                        if item['request'].parameters:
+                            item['phase'] = 'set'
+                        else:
+                            item['done'] = True
+                            self.node.get_logger().info(f'{target}: plugin parameters already correct')
                     else:
                         if not all(result.successful for result in response.results):
                             raise RuntimeError(f'{target}: plugin parameters rejected: {response}')
@@ -72,9 +94,14 @@ class PluginParameters:
                 elif now - item['at'] > 20:
                     future.cancel()
                     item['future'] = None
-            elif item['client'].service_is_ready() and item['list_client'].service_is_ready():
-                item['future'] = item['list_client'].call_async(ListParameters.Request(depth=0)) \
-                    if item['phase'] == 'list' else item['client'].call_async(item['request'])
+            elif all(item[key].service_is_ready() for key in ('client', 'list_client', 'get_client')):
+                if item['phase'] == 'list':
+                    item['future'] = item['list_client'].call_async(ListParameters.Request(depth=0))
+                elif item['phase'] == 'get':
+                    item['future'] = item['get_client'].call_async(GetParameters.Request(
+                        names=[parameter.name for parameter in item['request'].parameters]))
+                else:
+                    item['future'] = item['client'].call_async(item['request'])
                 item['at'] = now
         expected = (active & self.items.keys()) | self.required
         return all(self.items[target]['done'] for target in expected)
