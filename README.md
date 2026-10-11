@@ -2,7 +2,9 @@
 
 Môi trường develop cho **ArduCopter 4.5.3 + ROS 2 Jazzy + MAVROS 2.15.1 + Gazebo Harmonic**, một world với ba Iris. Chạy toàn bộ stack bằng một lệnh, không phải mở bảy terminal thủ công.
 
-Thiết kế có image `companion` riêng để tiến tới Raspberry Pi 4 trên 3DR Solo nguyên bản. Hiện tại companion cung cấp MAVROS và readiness; **chưa port MPC, chưa tích hợp driver LD19/GoPro, chưa xác nhận bay trên Solo thật**. GoPro cần xác định model và chế độ hỗ trợ vừa record vừa stream.
+Thiết kế có image `companion` riêng để tiến tới Raspberry Pi 4 trên 3DR Solo nguyên bản. Companion cung cấp MAVROS và readiness; **chưa tích hợp driver LD19/GoPro, chưa xác nhận bay trên Solo thật**. GoPro cần xác định model và chế độ hỗ trợ vừa record vừa stream.
+
+MPC đã được chuyển thành package ROS 2 `solo_mpc` với solver/planner tách khỏi ROS, field `small50_3uav`, camera nhận diện marker và LiDAR Gazebo. Xem [hướng dẫn migration từng bước](docs/MPC_MIGRATION.md). Chạy `./scripts/dev mpc` để khởi động (không ARM), rồi `./scripts/dev mission run` để takeoff/tracking/LAND trong simulation.
 
 ## Bắt đầu trên Windows 11 + Ubuntu WSL2
 

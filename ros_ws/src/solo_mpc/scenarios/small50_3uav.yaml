@@ -1,0 +1,67 @@
+# 50 m wide x 10 m high, inspired by the supplied obstacle-map reference.
+# All three UAVs launch together near the lower-left corner.
+# Run: python main.py --scenario small50_3uav --target-mode manual
+description: 50 x 10 m obstacle map, 3 corner-start UAVs following a target
+xlim: [0, 50]
+ylim: [0, 10]
+viewing_radius: 1.5       # 3 m x 3 m square camera footprint, as in the reference
+tar_max_speed: 0.6       # slower than the UAVs (VMAX = 2 m/s)
+
+starts:                 # [x, y, z], metres; separated by at least 1 m
+  - [2.8, 1.2, 3]
+  - [1.8, 0.6, 3]
+  - [0.6, 0.6, 3]
+
+target:
+  waypoints:            # smooth route through the middle of the obstacle field
+    - [3.8, 2.2]
+    - [6.5, 3.4]
+    - [10, 5]
+    - [13, 5]
+    - [17, 5.6]
+    - [21.8, 5.6]
+    - [25.5, 5]
+    - [28, 3.8]
+    - [33, 4]
+    - [37, 4]
+    - [41, 5.5]
+    - [47, 5.5]
+
+obstacles:              # approximate the rectangles and circles in the reference
+  rects:                # [left, bottom, width, height]
+    - [1, 2, 1.2, 3]
+    - [2.3, 7.5, 2, 2]
+    - [7, 7, 2.5, 1.5]
+    - [8.8, 2.8, 0.8, 0.9]
+    - [16, 0.5, 3, 1.2]
+    - [20, 2, 1.5, 2.5]
+    - [23.4, 6.6, 0.8, 0.9]
+    - [26, 0.5, 2, 2]
+    - [30, 8, 2.5, 1.2]
+    - [37, 6, 2, 2.5]
+  circles:              # [centre x, centre y, radius]
+    - [4.5, 5.5, 1]
+    - [14, 8.5, 1]
+    - [13.5, 1.6, 0.8]
+    - [16, 3.7, 0.75]
+    - [20, 8, 0.6]
+    - [23.3, 2.2, 0.8]
+    - [26, 8.8, 0.8]
+    - [30, 6, 1]
+    - [33.6, 6.8, 0.75]
+    - [33.5, 1.9, 0.7]
+
+params:
+  CORRIDOR_BOX: 2.0      # covers the 2 m MPC horizon reach
+  SENSING_NEIGHBOR: 5.0  # covers two approaching UAVs over the horizon
+  GRID_RESOLUTION: 0.15 # resolve the metre-scale passages
+  INFLATE_MARGIN: 0.05 # 0.25 m inflation, rounded to 0.30 m on this grid
+  GOAL_CLAMP_MARGIN: 0.5
+  LOCAL_PLAN_RADIUS: 10
+  UNKNOWN_POLICY: optimistic
+  UNKNOWN_COST: 1.5
+  TARGET_REPLAN_THRESHOLD: 0.6
+  PATH_DEVIATION_THRESHOLD: 1.0
+  TAR_SMOOTH_ENABLE: true
+  TAR_SPLINE_DS: 0.1
+  GRID_CELLS: [[0, 1], [0, -1]]  # two satellites beside the leader

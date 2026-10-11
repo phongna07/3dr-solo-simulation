@@ -48,7 +48,7 @@ RUN mkdir -p /opt/solo && \
     dpkg-query -W -f='${binary:Package}=${Version}\n' | sort > /opt/solo/apt-packages.lock
 CMD ["ros2", "launch", "/workspace/ros_ws/src/solo_bringup/launch/hardware.launch.py"]
 
-FROM common AS simulation
+FROM common AS simulation_dependencies
 ARG ARDUPILOT_COMMIT=ee14ff3822161368ec403700bf96d02b84def06c
 ARG GAZEBO_PLUGIN_COMMIT=082a0fe231f6e63bc8d1598f1cba461d9e2ea7f5
 ARG BUILD_JOBS=4
@@ -97,8 +97,30 @@ RUN dpkg-query -W -f='${binary:Package}=${Version}\n' | sort > /opt/solo/apt-pac
     sha256sum /usr/share/GeographicLib/geoids/egm96-5.pgm > /opt/solo/geoid.sha256 && \
     test -x /opt/ardupilot/build/sitl/bin/arducopter && \
     test -f /opt/ardupilot_gazebo/build/libArduPilotPlugin.so
+FROM simulation_dependencies AS simulation
 COPY --from=application /opt/solo_ws /opt/solo_ws
 COPY --from=application /workspace /workspace
 COPY --from=application /opt/solo/versions.json /opt/solo/versions.json
 COPY --from=application /usr/local/bin/solo-entrypoint /usr/local/bin/solo-entrypoint
+CMD ["ros2", "launch", "/workspace/ros_ws/src/solo_bringup/launch/simulation.launch.py"]
+
+# Keep numerical / bridge dependencies independent of live application sources.
+FROM simulation_dependencies AS simulation_mpc_dependencies
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-jazzy-ros-gz-bridge python3-opencv && rm -rf /var/lib/apt/lists/*
+COPY locks/mpc-requirements.txt /opt/solo/mpc-requirements.txt
+COPY locks/mpc-py312.lock /opt/solo/mpc-py312.lock
+RUN python3 -m venv --system-site-packages /opt/venvs/mpc && \
+    uv pip install --python /opt/venvs/mpc/bin/python --require-hashes -r /opt/solo/mpc-py312.lock
+ENV PYTHONPATH=/opt/venvs/mpc/lib/python3.12/site-packages \
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1
+FROM simulation_mpc_dependencies AS simulation_mpc
+COPY --from=application /opt/solo_ws /opt/solo_ws
+COPY --from=application /workspace /workspace
+COPY --from=application /opt/solo/versions.json /opt/solo/versions.json
+COPY --from=application /usr/local/bin/solo-entrypoint /usr/local/bin/solo-entrypoint
+RUN source /opt/ros/jazzy/setup.bash && source /opt/mavros_ws/install/setup.bash && \
+    cd /opt/solo_ws && colcon build --symlink-install --event-handlers console_direct+ && \
+    dpkg-query -W -f='${binary:Package}=${Version}\n' | sort > /opt/solo/apt-packages.lock
 CMD ["ros2", "launch", "/workspace/ros_ws/src/solo_bringup/launch/simulation.launch.py"]

@@ -3,6 +3,8 @@
 .codex
 .aws
 .env
+.venv
+.pytest_cache
 runs
 artifacts
 **/__pycache__

@@ -17,7 +17,7 @@ Callback `setpoint_attitude.use_quaternion` trong commit đã pin capture `subsc
 
 Docker Compose quản lý container và thiết bị; Bash `scripts/dev` là CLI thao tác ngắn; ROS 2 launch viết bằng Python quản lý các tiến trình bên trong. Cách này dùng được namespace/parameters, log theo tiến trình và event shutdown của ROS, không phải tự xây process supervisor bằng `subprocess` hoặc mở terminal bằng script. GUI là client riêng; tmux chỉ dùng khi muốn xem nhiều bảng log cùng lúc. Node readiness và flight dùng API ROS có kiểu thay vì ghép nhiều lệnh `ros2 service call` rồi parse chuỗi.
 
-Repo hiện tại không có MPC source. Tránh xây controller placeholder tự tích phân state rồi coi là pose thật. Thêm solver/planner bằng ROS package riêng khi đã có source và xác định dependencies.
+MPC source hiện nằm trong package ROS 2 `solo_mpc`; solver/planner tách khỏi ROS adapters và sử dụng pose/velocity đo từ MAVROS. Xem [MPC_MIGRATION.md](MPC_MIGRATION.md) cho cấu trúc, interfaces, cấu hình và từng bước chạy. Không dùng state tự tích phân làm pose thật.
 
 ## Sửa source
 

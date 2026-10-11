@@ -20,6 +20,9 @@ Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim|companion]           Build an image (sim by default)
   sim [--profile control|reference] [--gui] [--no-wait] [--resume RUN_ID]
+  mpc [--gui] [--no-wait]         Start the obstacle-field MPC stack (no automatic ARM)
+  mission run|start|stop|status|reset [--seconds WALL_SECONDS]
+  evaluate                       Evaluate the latest MPC flight log
   wait [TIMEOUT]                 Wait for current simulation readiness
   status                         Show Docker state and live readiness
   logs                           Follow process logs (Ctrl+C only stops tail)
@@ -56,7 +59,11 @@ case "$command" in
   build)
     "${dc[@]}" --profile hardware build "${1:-sim}"
     ;;
-  sim)
+  sim|mpc)
+    if [[ "$command" == mpc ]]; then
+      export SIM_LAUNCH=/workspace/ros_ws/src/solo_mpc/launch/mpc.launch.py
+      export SIM_PROFILE=mpc
+    fi
     show_gui=false
     wait_ready=true
     resume=false
@@ -107,8 +114,11 @@ case "$command" in
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3 ;;
   flight) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight "$@" ;;
+  mission) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@" ;;
+  evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)
     if [[ "${1:-}" != --force ]]; then
+      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/release_mpc.py
       "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight land
     fi
     "${dc[@]}" stop sim

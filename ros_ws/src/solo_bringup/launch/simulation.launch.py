@@ -17,6 +17,14 @@ def start(context):
     get = lambda name: LaunchConfiguration(name).perform(context)
     config = load_config(get('fleet'))
     profile = get('profile')
+    if profile == 'mpc':
+        from solo_mpc.settings import load_settings
+        scenario, _, _ = load_settings(get('scenario'), get('settings'))
+        if len(config['uavs']) != len(scenario['starts']):
+            raise ValueError('Fleet/scenario UAV count mismatch')
+        config['world_name'] = 'mpc_small50'
+        for uav, point in zip(config['uavs'], scenario['starts']):
+            uav['spawn'] = [point[0], point[1], 0.195, 0, 0, 90]
     # All ports live inside one container; no host port mapping is needed.
     for uav in config['uavs']:
         for kind, port in ((socket.SOCK_STREAM, uav['tcp_port']),
@@ -27,14 +35,19 @@ def start(context):
                 except OSError as error:
                     raise RuntimeError(f"{uav['name']}: port {port} occupied") from error
     run = create_run(config, 'simulation', profile, get('run_id'), get('resume') == 'true')
-    world = generate_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf', profile)
+    if profile == 'mpc':
+        from solo_mpc.world import generate_mpc_world
+        world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf',
+                                      get('scenario'), get('settings'))
+    else:
+        world = generate_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf', profile)
     defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
                         for name in ('copter.parm', 'gazebo-iris.parm'))
     for path in defaults.split(','):
         if not Path(path).is_file():
             raise RuntimeError(f'Missing defaults: {path}')
     gz_command = ['gz', 'sim', '-s', '-r', '-v', '3', str(world)]
-    if profile == 'reference':
+    if profile in ('reference', 'mpc'):
         gz_command.insert(2, '--headless-rendering')
     gazebo = ExecuteProcess(cmd=gz_command, name='gazebo-server', output='both')
     actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs')),
@@ -63,6 +76,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('fleet', default_value=os.environ.get('FLEET_CONFIG', '/workspace/config/fleet.yaml')),
         DeclareLaunchArgument('profile', default_value=os.environ.get('SIM_PROFILE', 'control')),
+        DeclareLaunchArgument('scenario', default_value=os.environ.get('MPC_SCENARIO', '')),
+        DeclareLaunchArgument('settings', default_value=os.environ.get('MPC_SETTINGS', '')),
         DeclareLaunchArgument('run_id', default_value=os.environ.get('RUN_ID', '')),
         DeclareLaunchArgument('resume', default_value=os.environ.get('SIM_RESUME', 'false'), choices=['true', 'false']),
         DeclareLaunchArgument('readiness_timeout', default_value=os.environ.get('READINESS_TIMEOUT', '600')),

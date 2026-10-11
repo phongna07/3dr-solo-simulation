@@ -1,0 +1,12 @@
+{
+  "source": "motion_planning_MPC",
+  "commit": "eced7cf (working tree inspected on 2026-10-11)",
+  "sha256": {
+    "dynamics.py": "26eefe78f3a9a0ca06499aa71599a72e02f219019b0d1992fdacebbee86b7d81",
+    "mpc_problem.py": "5365a6ad5554cb070553b4d6af9899cbbcc4894faf1a111e78594f4559281ed7",
+    "planner_grid.py": "7f00bbc0d2ac3bfd40ec3beabd143452a35c9c5a856d9d9d7505c437f37d0db1",
+    "planner_jps.py": "41790ac67d684d0968addd5e13db95170d0ab7606d18418a548a46f877435be3",
+    "geometry.py": "4c4b6928193243c02bbf5cebceed370568d0c696f20ab500d250e95d1700c509"
+  },
+  "adaptations": "relative imports, explicit grid defaults; solver and dynamics retained"
+}
