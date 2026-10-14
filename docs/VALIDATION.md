@@ -2,9 +2,9 @@
 
 [Back to the project overview](../README.md)
 
-This document consolidates the recorded simulation validation from **9–11 October
-2026**. These are historical results for the configurations described below,
-not a new acceptance run of the current working tree. Generated evidence in
+This document consolidates recorded simulation validation from **9–14 October
+2026**. Each entry identifies its configuration and scope. The 14 October entry
+covers the parallel execution change with a short flight. Generated evidence in
 `runs/` and `artifacts/` is Git-ignored and may be absent from a fresh clone.
 
 ## Test environment
@@ -101,12 +101,33 @@ stages matched the canonical Dockerfile; two dependency install steps differed.
 Evidence: `artifacts/mpc-build-final.log`. The normal build remains
 `./scripts/dev build sim`; the temporary caches are not runtime dependencies.
 
+## Parallel execution check, 14 October
+
+The default now uses one persistent spawned mapping/planning/corridor/MPC worker
+per UAV and one camera detector process per UAV. The ten-step horizon, 16-face
+initial allocation, solver settings and two-neighbor avoidance constraints are
+retained. Formation checks use all workers' current maps, and all solves receive
+the same frozen neighbor snapshot. This is local multiprocessing; physical
+three-Pi networking and neural detection remain unimplemented.
+
+All **67 tests passed** inside `solo-simulation:gd0` (three dependency warnings).
+New regression coverage checks real solve overlap, command/trajectory parity with
+the sequential reference, persistent occupancy maps, measured-state ownership,
+single-UAV operation, stalled/disconnected workers, shutdown and camera isolation.
+Python syntax, Compose configuration and whitespace checks also passed.
+
+Headless run `runs/20261014T044239Z-15013` used the default three-UAV camera
+scenario with `gz sim --headless-rendering -s -r`; no GUI was opened. The fleet
+tracked the target, then landed and disarmed. The simulator was stopped afterward.
+A full Gazebo forward route and physical Pi/neural-detector validation remain
+outstanding.
+
 ## Remaining validation
 
 - Validate hardware GPU rendering and achieved sensor/control rates. The recorded
   mission workloads ran at approximately 0.17–0.19 real-time factor in software.
-- Reduce/profile whole-fleet computation before claiming a 100 ms deadline,
-  especially on the Pi. Measure tail latency and publisher jitter under load.
+- Confirm the 100 ms deadline on physical Pis with the selected neural detector.
+  Measure tail latency and publisher jitter under the complete hardware load.
 - Rerun the full moving-target route with the current defaults and record source,
   input snapshots, image identity, solver failures, and landing outcome.
 - Validate any new fleet size independently. The planner remains fixed-altitude

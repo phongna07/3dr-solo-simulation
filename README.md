@@ -5,6 +5,8 @@ obstacles using model predictive control (MPC). The default mission uses three
 Iris vehicles, horizontal LiDAR scans, and downward cameras in a 50 × 10 m field.
 Vehicle state comes from MAVROS telemetry; the cameras detect a magenta target
 marker. The controller plans horizontal motion at a fixed flight altitude.
+Each UAV's mapping, planning, and MPC runs in its own persistent process, with
+shared formation coordination and a separate camera detector process per UAV.
 
 Docker supplies **ROS 2 Jazzy, ArduCopter 4.5.3, MAVROS 2.15.1, and Gazebo
 Harmonic**. Python launch files manage the processes, and `scripts/dev` provides

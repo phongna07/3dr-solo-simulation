@@ -15,7 +15,8 @@ solo_mpc/launch/mpc.launch.py
   ├─ solo_bringup/launch/simulation.launch.py
   │    └─ world generation → Gazebo + per-UAV SITL/MAVROS + readiness
   ├─ ros_gz sensor, pose, and clock bridge
-  └─ frames + marker_detector + target + controller + setpoints
+  └─ frames + per-UAV marker detectors + target + controller + setpoints
+       └─ controller → one persistent mapping/planning/MPC worker per UAV
 
 solo_bringup/launch/hardware.launch.py
   └─ MAVROS + readiness (physical sensor/controller integration pending)
@@ -38,6 +39,7 @@ used by the mission supervisor; it has no standalone manual flight CLI.
 | `core/mpc_problem.py`, `core/dynamics.py` | CasADi/IPOPT optimization and acceleration-lag dynamics |
 | `core/planner_grid.py`, `core/planner_jps.py`, `core/geometry.py` | Grid/local planning and geometry helpers |
 | `core/controller.py` | Measured-state coordination, committed paths, leader selection, follower assignment, corridors |
+| `core/parallel_controller.py` | Persistent per-UAV processes, map snapshots, concurrent solves, worker deadlines and cleanup |
 | `core/mapping.py` | Scan validity, occupancy updates, clearing, and teammate filtering |
 | `core/tracking.py`, `core/sensors.py` | Target filtering, scan projection, camera geometry, pose history |
 | `controller_node.py` | ROS inputs, references, predictions, diagnostics, and measured-state logs |
@@ -54,6 +56,38 @@ simulation orchestration was replaced. Source provenance is recorded in
 [UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json), with the upstream license in
 [LICENSE-MPC](../ros_ws/src/solo_mpc/LICENSE-MPC). The original external
 `motion_planning_MPC` checkout is not required at runtime.
+
+The ROS controller defaults to `ParallelTeamController`, with one spawned Python
+process per configured UAV. Each worker constructs only its own occupancy map,
+planner, corridor and IPOPT solver, retaining its path and warm start between
+cycles. All workers integrate and inflate maps concurrently. The coordinator
+uses their current inflated maps for the existing fleet-wide slot checks, then
+dispatches all planning/corridor/MPC jobs before collecting responses. Every
+solve receives the same measured states, formation assignment and frozen neighbor
+predictions, including the other two UAVs' avoidance constraints. New predictions
+are committed for the next cycle after collection.
+
+The fleet wall time includes the slowest local job in each phase, formation
+assignment and IPC overhead, rather than the sum of three solves. Camera
+callbacks run in separate per-UAV ROS processes. Target filtering, formation
+assignment, scan projection, frame handling and setpoint publication remain
+lightweight shared services. This simulates one compute owner per UAV on one
+host; deploying on three Pis still needs a network transport, common frames and
+synchronized timestamps. The camera algorithm remains the marker detector;
+a neural-network model has not been added.
+
+Spawn avoids inheriting ROS/DDS state or native solver objects. A shared wall
+deadline bounds each worker phase. A disconnected or timed-out worker is stopped
+and stays unavailable until controller restart; no late reply is reused. Missing
+map data suppresses the fleet decision because formation checks need every map.
+A failed solve suppresses that UAV's reference. The independent publisher still
+expires references and the mission supervisor can LAND. Normal node shutdown
+closes all workers, including a worker stuck in native code.
+
+`mpc.jsonl` and `/mpc/status` report the execution mode, worker PID and cycle,
+mapping, planning, corridor and solve durations, plus worker phase intervals.
+These intervals can establish real overlap. Select `controller_execution:
+sequential` in the settings YAML for a reference run using the same algorithm.
 
 ## Edit and rebuild
 

@@ -6,6 +6,7 @@ so they can be modified independently of transport and vehicle operation.
 """
 
 from dataclasses import dataclass
+import time
 
 import _pydecomp as pdc
 import numpy as np
@@ -31,8 +32,11 @@ class VehicleState:
 
 
 class TeamController:
-    def __init__(self, names, cfg):
+    def __init__(self, names, cfg, local_names=None):
         self.names, self.cfg = list(names), dict(cfg)
+        self.local_names = self.names if local_names is None else list(local_names)
+        if not set(self.local_names) <= set(self.names):
+            raise ValueError("Local vehicles must belong to the fleet")
         self.track = TargetTracker()
         self.leader = None
         self.assignment = {}
@@ -40,7 +44,7 @@ class TeamController:
         self.planners, self.solvers, self.warm, self.paths = {}, {}, {}, {}
         self.path_goals, self.path_age = {}, {}
         self.last_scans = {n: -np.inf for n in names}
-        for n in names:
+        for n in self.local_names:
             planner = LocalGridPlanner(
                 cfg["WORLD_BOUNDS"],
                 grid_resolution=cfg["GRID_RESOLUTION"],
@@ -62,10 +66,12 @@ class TeamController:
             self.solvers[n] = MPCProblem(len(names) - 1, cfg["CORRIDOR_MAX_FACES"], cfg)
         self.predictions = {n: None for n in names}
         self.prediction_stamps = {n: -np.inf for n in names}
-        warmup()
-        warmup_scan_integration()
+        if self.local_names:
+            warmup()
+            warmup_scan_integration()
 
     def _slots(self, states, seers):
+        seers = [n for n in self.names if n in seers]
         if self.leader not in seers:
             self.leader = (
                 min(
@@ -183,17 +189,16 @@ class TeamController:
             raise ValueError("Corridor decomposition returned no finite polytope")
         return min(valid, key=lambda ab: np.max(ab[0] @ position[:2] - ab[1]))
 
-    def step(self, states, scans, stamp, seers):
-        cfg = self.cfg
-        H = cfg["HORIZON_LENGTH"]
-        dt = cfg["TIMESTEP"]
-        target = self.track.trajectory(stamp, H, dt, cfg["VMAX"])
-        for n in self.names:
+    def integrate_scans(self, scans):
+        """Update only maps owned by this instance."""
+        for n in self.local_names:
             if scans[n].stamp > self.last_scans[n]:
                 self.planners[n].gmap.integrate(scans[n])
                 self.last_scans[n] = scans[n].stamp
-        slots = self._slots(states, seers)
-        # Freeze neighbor predictions for the entire solve cycle.
+
+    def neighbor_predictions(self, states, stamp):
+        """Freeze neighbor predictions before any vehicle solve updates them."""
+        H, dt = self.cfg["HORIZON_LENGTH"], self.cfg["TIMESTEP"]
         predictions = {}
         for n, s in states.items():
             old = self.predictions[n]
@@ -206,82 +211,101 @@ class TeamController:
                 # Predictions describe current measured states, even when the
                 # FCU response differs from the nominal acceleration-lag model.
                 predictions[n] = shifted + (s.position[:2] - shifted[0])
-        results = {}
-        for n in self.names:
-            state = states[n]
-            goal = slots.get(n, target[-1])
-            ok, path = self._path(n, state.position, goal)
-            self.paths[n] = path
-            if not ok or len(path) < 2:
-                results[n] = {"ok": False, "reason": "planner_failed"}
-                continue
-            try:
-                A, b = self._corridor(n, state.position, path)
-                if len(b) > self.solvers[n].n_faces:
-                    self.solvers[n] = MPCProblem(len(self.names) - 1, len(b) + 4, cfg)
-                    self.warm.pop(n, None)
-            except Exception as exc:
-                results[n] = {"ok": False, "reason": f"corridor_failed: {exc}"}
-                continue
-            x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
-            X, U = self.warm.get(n, (np.tile(x0, (H + 1, 1)), np.zeros((H, 2))))
-            others = [k for k in self.names if k != n]
-            # Guide satellites along the path; switch to the moving slot nearby.
-            guide = len(path) > 2
-            slot = np.asarray(path[1]) if guide else slots.get(n, np.zeros(2))
-            ok, X, U = self.solvers[n].solve(
-                x0=x0,
-                A_hard=A,
-                b_hard=b,
-                A_cost=A,
-                b_cost=b,
-                use_corr_cost=True,
-                others=[predictions[k] for k in others],
-                nb_flags=[
-                    float(
-                        np.linalg.norm(states[k].position - state.position)
-                        < cfg["SENSING_NEIGHBOR"]
-                    )
-                    for k in others
-                ],
-                tgt=target,
-                w_search=cfg["W_search_track"] if self.leader is None else 0.0,
-                slot=slot,
-                w_slot=cfg["W_sat_slot"] if n in slots else 0.0,
-                leader=n == self.leader,
-                ref=path[1],
-                trk_goal=target[-1],
-                s_ref=float(guide),
-                X_init=X,
-                U_init=U,
-                w_tra=0.0 if n in slots else cfg["W_tra"],
-            )
-            try:
-                solver_status = (
-                    self.solvers[n].opti.stats().get("return_status", "unknown")
+        return predictions
+
+    def step(self, states, scans, stamp, seers):
+        cfg = self.cfg
+        target = self.track.trajectory(
+            stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"], cfg["VMAX"]
+        )
+        self.integrate_scans(scans)
+        slots = self._slots(states, seers)
+        predictions = self.neighbor_predictions(states, stamp)
+        return {
+            n: self.solve_vehicle(n, states, predictions, target, slots, stamp)
+            for n in self.local_names
+        }
+
+    def solve_vehicle(self, n, states, predictions, target, slots, stamp):
+        """Local planning and solve against an immutable fleet-cycle snapshot."""
+        cfg = self.cfg
+        H = cfg["HORIZON_LENGTH"]
+        state = states[n]
+        goal = slots.get(n, target[-1])
+        started = time.perf_counter()
+        ok, path = self._path(n, state.position, goal)
+        metrics = {"path_ms": (time.perf_counter() - started) * 1000}
+        self.paths[n] = path
+        if not ok or len(path) < 2:
+            return {"ok": False, "reason": "planner_failed", **metrics}
+        started = time.perf_counter()
+        try:
+            A, b = self._corridor(n, state.position, path)
+            if len(b) > self.solvers[n].n_faces:
+                self.solvers[n] = MPCProblem(len(self.names) - 1, len(b) + 4, cfg)
+                self.warm.pop(n, None)
+        except Exception as exc:
+            return {"ok": False, "reason": f"corridor_failed: {exc}", **metrics}
+        metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
+        x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
+        X, U = self.warm.get(n, (np.tile(x0, (H + 1, 1)), np.zeros((H, 2))))
+        others = [k for k in self.names if k != n]
+        # Guide satellites along the path; switch to the moving slot nearby.
+        guide = len(path) > 2
+        slot = np.asarray(path[1]) if guide else slots.get(n, np.zeros(2))
+        ok, X, U = self.solvers[n].solve(
+            x0=x0,
+            A_hard=A,
+            b_hard=b,
+            A_cost=A,
+            b_cost=b,
+            use_corr_cost=True,
+            others=[predictions[k] for k in others],
+            nb_flags=[
+                float(
+                    np.linalg.norm(states[k].position - state.position)
+                    < cfg["SENSING_NEIGHBOR"]
                 )
-            except RuntimeError:
-                solver_status = "unavailable"
-            solver_ms = self.solvers[n].solve_times[-1] * 1000
-            if not ok or not np.isfinite(X).all() or not np.isfinite(U).all():
-                results[n] = {
-                    "ok": False,
-                    "reason": "mpc_failed",
-                    "solver_status": solver_status,
-                    "solver_ms": solver_ms,
-                }
-                continue
-            self.predictions[n] = X[:, :2].copy()
-            self.prediction_stamps[n] = stamp
-            self.warm[n] = (np.vstack([X[1:], X[-1:]]), np.vstack([U[1:], U[-1:]]))
-            results[n] = {
-                "ok": True,
-                "position": X[1, :2],
-                "velocity": X[1, 2:4],
-                "acceleration": U[0],
-                "prediction": X,
-                "reason": "tracking" if self.leader else "search",
+                for k in others
+            ],
+            tgt=target,
+            w_search=cfg["W_search_track"] if self.leader is None else 0.0,
+            slot=slot,
+            w_slot=cfg["W_sat_slot"] if n in slots else 0.0,
+            leader=n == self.leader,
+            ref=path[1],
+            trk_goal=target[-1],
+            s_ref=float(guide),
+            X_init=X,
+            U_init=U,
+            w_tra=0.0 if n in slots else cfg["W_tra"],
+        )
+        try:
+            stats = self.solvers[n].opti.stats()
+            solver_status = stats.get("return_status", "unknown")
+            metrics["solver_iterations"] = stats.get("iter_count", 0)
+        except RuntimeError:
+            solver_status = "unavailable"
+        solver_ms = self.solvers[n].solve_times[-1] * 1000
+        if not ok or not np.isfinite(X).all() or not np.isfinite(U).all():
+            return {
+                "ok": False,
+                "reason": "mpc_failed",
                 "solver_status": solver_status,
                 "solver_ms": solver_ms,
+                **metrics,
             }
-        return results
+        self.predictions[n] = X[:, :2].copy()
+        self.prediction_stamps[n] = stamp
+        self.warm[n] = (np.vstack([X[1:], X[-1:]]), np.vstack([U[1:], U[-1:]]))
+        return {
+            "ok": True,
+            "position": X[1, :2],
+            "velocity": X[1, 2:4],
+            "acceleration": U[0],
+            "prediction": X,
+            "reason": "tracking" if self.leader else "search",
+            "solver_status": solver_status,
+            "solver_ms": solver_ms,
+            **metrics,
+        }

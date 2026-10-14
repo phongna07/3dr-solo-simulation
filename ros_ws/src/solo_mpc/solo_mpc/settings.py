@@ -103,6 +103,13 @@ def validate(scenario, settings, cfg):
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
     if settings["target_mode"] not in ("camera", "ground_truth"):
         raise ValueError("target_mode must be camera or ground_truth")
+    if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
+        raise ValueError("controller_execution must be parallel or sequential")
+    for key, default in [("controller_worker_timeout_wall", 1.0),
+                         ("controller_worker_startup_timeout_wall", 30.0)]:
+        value = settings.get(key, default)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{key} must be finite and positive")
     if (
         not settings["obstacle_height"]
         > settings["flight_altitude"] + cfg["ROBOT_RADIUS"]

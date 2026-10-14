@@ -58,6 +58,23 @@ def node_args(tmp_path):
     )
 
 
+def test_per_vehicle_camera_subscribes_only_to_its_own_topics(tmp_path):
+    args = node_args(tmp_path)
+    args.names = ["alpha", "bravo", "charlie"]
+    args.vehicle = "bravo"
+    rclpy.init()
+    node = MarkerDetector(args)
+    try:
+        assert set(node.history) == {"bravo"}
+        assert set(node.publishers_keep) == {"bravo"}
+        assert {s.topic_name for s in node.subscriptions_keep} == {
+            "/bravo/mpc/pose", "/bravo/camera/image_raw", "/bravo/camera/camera_info",
+        }
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 def test_compass_error_does_not_rotate_enu_position_axes(tmp_path):
     import numpy as np
     from mavros_msgs.msg import State

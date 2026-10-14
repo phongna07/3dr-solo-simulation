@@ -14,6 +14,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 from .core.controller import TeamController, VehicleState
+from .core.parallel_controller import ParallelTeamController
 from .core.sensors import PoseHistory, project_scan
 from .ros_utils import (
     pose_arrays,
@@ -28,7 +29,7 @@ class Controller(Node):
     def __init__(self, args):
         super().__init__("mpc_controller")
         self.args = args
-        self.team = TeamController(args.names, args.cfg)
+        self.execution = args.settings_data.get("controller_execution", "parallel")
         self.poses = {}
         self.velocities = {}
         self.accelerations = {}
@@ -89,7 +90,20 @@ class Controller(Node):
                     10,
                 )
             )
-        self.create_timer(args.settings_data["control_period"], self.tick)
+        if self.execution == "parallel":
+            self.team = ParallelTeamController(
+                args.names, args.cfg,
+                timeout=args.settings_data.get("controller_worker_timeout_wall", 1.0),
+                startup_timeout=args.settings_data.get("controller_worker_startup_timeout_wall", 30.0),
+            )
+        else:
+            self.team = TeamController(args.names, args.cfg)
+        try:
+            self.create_timer(args.settings_data["control_period"], self.tick)
+        except BaseException:
+            if isinstance(self.team, ParallelTeamController):
+                self.team.close()
+            raise
 
     def pose(self, n, msg):
         if msg.header.frame_id != "world":
@@ -249,6 +263,7 @@ class Controller(Node):
             "stamp": stamp,
             "wall": time.time(),
             "compute_ms": 1000 * (time.perf_counter() - start),
+            "execution": self.execution,
             "reason": reason,
             "leader": self.team.leader,
             "target_mode": settings["target_mode"],
@@ -265,6 +280,15 @@ class Controller(Node):
                     "result": results.get(n, {}).get("reason", reason),
                     "solver_status": results.get(n, {}).get("solver_status"),
                     "solver_ms": results.get(n, {}).get("solver_ms"),
+                    **{
+                        key: results.get(n, {}).get(key)
+                        for key in (
+                            "worker_pid", "cycle", "mapping_ms", "path_ms", "corridor_ms",
+                            "solver_iterations", "planning_and_solve_ms",
+                            "map_started_wall", "map_finished_wall",
+                            "solve_started_wall", "solve_finished_wall", "corridor_faces",
+                        )
+                    },
                     "armed": bool(n in self.fcu and self.fcu[n].armed),
                     "mode": self.fcu[n].mode if n in self.fcu else None,
                 }
@@ -277,6 +301,8 @@ class Controller(Node):
             self.log.write(text + "\n")
 
     def destroy_node(self):
+        if isinstance(self.team, ParallelTeamController):
+            self.team.close()
         if self.log:
             self.log.close()
         return super().destroy_node()

@@ -85,7 +85,6 @@ def start(context):
     ]
     for executable in (
         "frames",
-        "marker_detector",
         "target",
         "controller",
         "setpoints",
@@ -100,6 +99,14 @@ def start(context):
         # Keep SITL and MAVROS alive if a controller/perception process exits.
         # The independent publisher expires references; mission run can LAND.
         actions.append(node)
+    # Each camera callback runs in its own process, independently of the other
+    # vehicles and of all optimization workers. Reuse the installed executable.
+    for uav in fleet["uavs"]:
+        actions.append(Node(
+            package="solo_mpc", executable="marker_detector",
+            arguments=args + ["--vehicle", uav["name"]],
+            parameters=[{"use_sim_time": True}], output="both",
+        ))
     return actions
 
 

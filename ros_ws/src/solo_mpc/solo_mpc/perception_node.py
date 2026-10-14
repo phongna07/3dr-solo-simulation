@@ -19,17 +19,19 @@ from .ros_utils import (
 
 class MarkerDetector(Node):
     def __init__(self, args):
-        super().__init__("mpc_marker_detector")
+        vehicle = getattr(args, "vehicle", None)
+        super().__init__(f"mpc_marker_detector_{vehicle}" if vehicle else "mpc_marker_detector")
+        names = [vehicle] if vehicle else args.names
         self.args = args
         self.bridge = CvBridge()
         self.history = {
             n: PoseHistory(args.settings_data["frame_history_tolerance"])
-            for n in args.names
+            for n in names
         }
         self.intrinsics = {}
         self.publishers_keep = {}
         self.subscriptions_keep = []
-        for n in args.names:
+        for n in names:
             self.publishers_keep[n] = self.create_publisher(
                 PoseStamped, f"/{n}/target/observation", 10
             )

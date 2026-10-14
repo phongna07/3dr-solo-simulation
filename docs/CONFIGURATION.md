@@ -146,6 +146,9 @@ arbitrary 3D obstacles. The camera detector assumes a known flat target plane.
 
 | Setting | Default | Purpose |
 |---|---:|---|
+| `controller_execution` | `parallel` | One persistent local compute worker per UAV; `sequential` for comparison |
+| `controller_worker_timeout_wall` | 1 s | Shared deadline per mapping/solve phase; timeout stops the worker |
+| `controller_worker_startup_timeout_wall` | 30 s | Shared worker initialization deadline |
 | `state_timeout_sim`, `sensor_timeout_sim` | 0.5 s each | Controller input freshness |
 | `target_timeout_sim` | 1.5 s | Observation age before target-loss handling |
 | `target_search_timeout_sim` | 8 s | Supervisor's reacquisition deadline |
@@ -159,3 +162,7 @@ arbitrary 3D obstacles. The camera detector assumes a known flat target plane.
 real-time factor below 1, these are different budgets. Increasing timeouts does
 not restore sensor or control rates. See [Development](DEVELOPMENT.md#frames-and-clocks)
 for frame alignment and timestamp handling.
+
+Worker timeouts bound failures; they are not the 100 ms decision target. The first
+native solve can be slower than later warm solves. See [Development](DEVELOPMENT.md#architecture)
+for worker ownership, synchronization and shutdown behavior.

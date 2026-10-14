@@ -16,6 +16,7 @@ def arguments(description):
     parser.add_argument("--fleet", required=True)
     parser.add_argument("--run-dir", default="")
     parser.add_argument("--world", default="mpc_small50")
+    parser.add_argument("--vehicle", help="Run the camera detector for one fleet vehicle")
     args, ros = parser.parse_known_args()
     from pathlib import Path
 
@@ -24,6 +25,8 @@ def arguments(description):
     args.names = [
         u["name"] for u in yaml.safe_load(Path(args.fleet).read_text())["uavs"]
     ]
+    if args.vehicle is not None and args.vehicle not in args.names:
+        parser.error("--vehicle must name a vehicle in --fleet")
     args.scenario_data, args.settings_data, args.cfg = load_settings(
         args.scenario, args.settings
     )

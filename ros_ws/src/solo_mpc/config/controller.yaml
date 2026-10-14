@@ -10,6 +10,9 @@ camera_hfov: 0.927295218  # 53.13 degrees: 3 m footprint at 3 m over the ground
 lidar_rate: 10.0
 lidar_samples: 180
 control_period: 0.1
+controller_execution: parallel  # one persistent worker process per UAV; sequential for comparison
+controller_worker_timeout_wall: 1.0
+controller_worker_startup_timeout_wall: 30.0
 publish_rate: 20.0
 state_timeout_sim: 0.5
 sensor_timeout_sim: 0.5
