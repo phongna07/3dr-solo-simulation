@@ -1,4 +1,4 @@
-"""Configuration validation shared by generator, launch and flight commands."""
+"""Configuration validation shared by world generation and mission launch."""
 import math
 import re
 from pathlib import Path

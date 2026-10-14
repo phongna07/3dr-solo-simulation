@@ -13,6 +13,5 @@ setup(
     description='SITL and hardware companion bringup', license='Apache-2.0',
     entry_points={'console_scripts': [
         'readiness = solo_bringup.readiness:main',
-        'flight = solo_bringup.flight:main',
     ]},
 )

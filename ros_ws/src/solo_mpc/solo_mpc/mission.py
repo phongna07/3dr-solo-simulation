@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
@@ -16,14 +17,16 @@ from std_srvs.srv import SetBool, Trigger
 from .ros_utils import pose_arrays, qos_profile_sensor_data, seconds
 
 
-def main():
+def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["run", "start", "stop", "status", "reset"])
     parser.add_argument("--run-dir", default="/workspace/runs/latest")
     parser.add_argument(
         "--seconds", type=float, default=0.0, help="run only: optional wall-time limit"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(args)
+    if not math.isfinite(args.seconds) or args.seconds < 0:
+        parser.error("--seconds must be finite and nonnegative")
     run = Path(args.run_dir)
     manifest = json.loads((run / "manifest.json").read_text())
     if manifest["mode"] != "simulation" or manifest["profile"] != "mpc":

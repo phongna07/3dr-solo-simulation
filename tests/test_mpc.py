@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 from solo_bringup.configuration import load_config
 from solo_mpc.core.mapping import SensorGrid
 from solo_mpc.core.sensors import ScanRays, pixel_to_ground, project_scan
@@ -161,3 +162,14 @@ def test_gazebo_cli_remains_available_after_ros_vendor_setup():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert any(line.strip().startswith("8.") for line in result.stdout.splitlines())
+
+
+@pytest.mark.parametrize("cells", [[[0, 1], [0, -1]], [[0, 1], [0, -1], [0, 0]]])
+def test_larger_fleet_requires_valid_follower_slots(tmp_path, cells):
+    scenario = yaml.safe_load((PKG / "scenarios/small50_3uav.yaml").read_text())
+    scenario["starts"].append([0.6, 1.8, 3])
+    scenario["params"]["GRID_CELLS"] = cells
+    path = tmp_path / "scenario.yaml"
+    path.write_text(yaml.safe_dump(scenario))
+    with pytest.raises(ValueError, match="GRID_CELLS"):
+        load_settings(path, PKG / "config/controller.yaml")

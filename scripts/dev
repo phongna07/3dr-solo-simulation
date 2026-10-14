@@ -19,8 +19,8 @@ usage() {
 Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim|companion]           Build an image (sim by default)
-  sim [--profile control|reference] [--gui] [--no-wait] [--resume RUN_ID]
-  mpc [--gui] [--no-wait]         Start the obstacle-field MPC stack (no automatic ARM)
+  mpc [--gui] [--no-wait]         Start LiDAR + camera mission stack (3 UAVs by default)
+      [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
   mission run|start|stop|status|reset [--seconds WALL_SECONDS]
   evaluate                       Evaluate the latest MPC flight log
   wait [TIMEOUT]                 Wait for current simulation readiness
@@ -28,7 +28,6 @@ Usage: ./scripts/dev COMMAND [arguments]
   logs                           Follow process logs (Ctrl+C only stops tail)
   shell                          Bash inside simulation container
   gui                            Gazebo GUI client; server keeps running on GUI exit
-  flight takeoff|land|velocity|position [options]
   stop                           LAND, await disarm, then stop simulation
   stop --force                   Stop processes immediately, no LAND
   test                           Unit/config tests inside image
@@ -59,23 +58,19 @@ case "$command" in
   build)
     "${dc[@]}" --profile hardware build "${1:-sim}"
     ;;
-  sim|mpc)
-    if [[ "$command" == mpc ]]; then
-      export SIM_LAUNCH=/workspace/ros_ws/src/solo_mpc/launch/mpc.launch.py
-      export SIM_PROFILE=mpc
-    fi
+  mpc)
     show_gui=false
     wait_ready=true
-    resume=false
     RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
     export RUN_ID
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --profile) export SIM_PROFILE="${2:?profile required}"; shift 2 ;;
+        --fleet) export FLEET_CONFIG="${2:?fleet path required}"; shift 2 ;;
+        --scenario) export MPC_SCENARIO="${2:?scenario path required}"; shift 2 ;;
+        --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
         --no-wait) wait_ready=false; shift ;;
-        --resume) export RUN_ID="${2:?run ID required}"; resume=true; shift 2 ;;
-        *) printf 'Unknown sim argument: %s\n' "$1" >&2; exit 2 ;;
+        *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
       esac
     done
     if [[ -n "$("${dc[@]}" ps --status running -q sim)" ]]; then
@@ -83,13 +78,6 @@ case "$command" in
       exit 1
     fi
     mkdir -p runs
-    if "$resume"; then
-      # Compose run with service command override would lose health/GUI access.
-      # A small override keeps the same service lifecycle and arguments.
-      export SIM_RESUME=true
-    else
-      export SIM_RESUME=false
-    fi
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
@@ -103,23 +91,21 @@ case "$command" in
     ;;
   wait)
     TASK_CONTAINER="$("${dc[@]}" ps -a -q sim)"
-    [[ -n "$TASK_CONTAINER" ]] || { printf 'No simulation container. Start with ./scripts/dev sim.\n' >&2; exit 1; }
+    [[ -n "$TASK_CONTAINER" ]] || { printf 'No simulation container. Start with ./scripts/dev mpc.\n' >&2; exit 1; }
     python3 scripts/wait_ready.py --container "$TASK_CONTAINER" --timeout "${1:-600}"
     ;;
   status)
     "${dc[@]}" ps
-    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight status
+    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c 'import json; from pathlib import Path; print(json.dumps(json.loads(Path("/workspace/runs/latest/health.json").read_text()), indent=2))'
     ;;
   logs) "${dc[@]}" logs -f --tail 100 sim ;;
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3 ;;
-  flight) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight "$@" ;;
   mission) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@" ;;
   evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)
     if [[ "${1:-}" != --force ]]; then
-      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/release_mpc.py
-      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_bringup flight land
+      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop
     fi
     "${dc[@]}" stop sim
     ;;

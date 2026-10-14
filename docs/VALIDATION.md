@@ -1,68 +1,119 @@
-# Kết quả kiểm tra thực tế
+# Validation record
 
-Kiểm thử ngày **09/10/2026**, trong Ubuntu WSL2 / Docker Desktop 29.8.2, Compose 5.5.1, Linux amd64. Docker được cấp 14 CPU và khoảng 15,37 GiB RAM. WSLg hoạt động; `glxinfo -B` nhận diện **llvmpipe, Accelerated: no**, nên camera dùng rendering phần mềm.
+[Back to the project overview](../README.md)
 
-## Build và phiên bản
+This document consolidates the recorded simulation validation from **9–11 October
+2026**. These are historical results for the configurations described below,
+not a new acceptance run of the current working tree. Generated evidence in
+`runs/` and `artifacts/` is Git-ignored and may be absent from a fresh clone.
 
-Cả `solo-simulation:gd0` và `solo-companion:gd0` build thành công. Simulation khoảng 6,98 GB; companion khoảng 3,33 GB theo Docker image inspect, chưa tính build cache và dữ liệu run. Image ID xuất vào `artifacts/simulation-image.json`; registry chưa được publish.
+## Test environment
 
-| Thành phần runtime | Kết quả |
+The recorded host ran Ubuntu WSL2 with Docker Desktop 29.8.2, Compose 5.5.1,
+Linux amd64, 14 allocated CPUs, and about 15.37 GiB RAM. WSLg display access
+worked, but the inspected renderer was `llvmpipe` with no hardware acceleration.
+Runtime components were ROS 2 Jazzy, ArduCopter 4.5.3, MAVROS source overlay
+2.15.1, Gazebo Harmonic / gz-sim 8.15.0, ROS Python 3.12.3, and Waf Python 3.11.16.
+Exact source pins are in [versions.json](../locks/versions.json); APT patch versions
+can change on rebuild.
+
+## Complete camera-driven route
+
+Run: `runs/20261011T055529Z-29926`. Evidence: the run's `evaluation.json`,
+`artifacts/mpc-camera-flight.log`, and `artifacts/mpc-camera-evaluation.json`.
+
+Three UAVs took off to approximately 3 m, tracked the moving magenta marker
+through the obstacle field using camera detections, reached the final target
+waypoint near `(47, 5.5)`, and landed/disarmed. LiDAR input came from Gazebo sensors.
+The camera-mode controller did not subscribe to target ground truth; evaluation
+used independent Gazebo vehicle poses.
+
+| Metric | Recorded result |
+|---|---:|
+| Airborne controller samples | 747 |
+| Minimum sampled obstacle body clearance, including 0.36 m radius | 0.361 m |
+| Minimum sampled inter-UAV center distance | 1.135 m |
+| Nearest UAV-to-target distance, median / p95 / maximum | 1.080 / 1.553 / 1.829 m |
+| Target estimate error, median / p95 / maximum | 0.094 / 0.311 / 0.922 m |
+| Whole-fleet compute, median / p95 / maximum | 156 / 199 / 270 ms |
+| Cycles with successful solutions for all three UAVs | 58.8% |
+| Simulation seconds per wall second | 0.172 |
+
+This route used the initial **32-face** solver allocation. During disarmed
+bringup, the controller was restarted to apply corrected ENU alignment and
+compiled scan integration; the forward route used those corrections. Its initial
+source manifest predates that restart. Current controllers additionally record
+startup hashes/settings in `controller_sources.jsonl`.
+
+These sampled clearances do not establish continuous collision avoidance.
+Separation constraints are soft, and the independent publisher expires references
+and brakes after failed solves. Compute time exceeded the 100 ms target period;
+this run establishes functional simulation integration, not real-time readiness.
+
+## Checks of the 16-face allocation and heartbeat fix
+
+The current initial corridor allocation is 16 faces, growing when a measured
+corridor requires more. The recorded follow-up checks were:
+
+| Check | Evidence and outcome |
 |---|---|
-| ROS 2 | Jazzy / Ubuntu 24.04 |
-| MAVROS | Source overlay 2.15.1, prefix `/opt/mavros_ws/install/mavros` |
-| ArduCopter | 4.5.3, FCU báo `040503ff (ee14ff38)` cho cả ba UAV |
-| Gazebo | gz-sim 8.15.0 / Harmonic |
-| Python ROS | 3.12.3 |
-| Python Waf | 3.11.16, venv riêng |
+| Pure-controller forward route | `artifacts/mpc-core-route-16.log`: 850 steps, 0.402 m minimum body clearance, 1.145 m minimum separation, 55 failed individual solves out of 2,550 attempts |
+| Gazebo stationary endpoint flight | `runs/mpc-endpoint-verification`, `artifacts/mpc-endpoint-flight.log`: 22 wall seconds of publishing, then LAND/disarm; 43 airborne cycles, 90.7% whole-fleet successful cycles, 127 ms median / 157 ms p95 compute, 0.030 m median target estimate error |
 
-Source commits và base image digests nằm trong `locks/versions.json`. APT manifests, submodule commits và geoid checksum nằm trong image, được xuất bởi `./scripts/dev lock`. APT lấy package từ kho hiện hành khi rebuild; dùng cùng image digest/archive để thống nhất tuyệt đối giữa các máy.
+The pure-controller route used synthetic scans and the algorithm's dynamics,
+not Gazebo physics or camera images. The stationary endpoint is a different
+workload from the moving obstacle route, so its metrics are not a direct speed
+comparison.
 
-## Các kiểm tra đã pass
+The endpoint run exposed false FCU-staleness braking under slow SITL. FCU status
+now has separate 2.5 s simulation / 10 s wall limits; pose freshness remains 3 wall
+seconds and command expiry remains 0.4 simulation / 3 wall seconds. ROS regression
+tests verified this distinction. **A complete Gazebo forward route with the
+16-face configuration and final heartbeat correction has not been rerun.**
 
-- 16 pytest trong container simulation và companion: fleet/ports, world transformation, state isolation/resume, chặn flight trên hardware hoặc health cũ, và khởi tạo ROS flight node.
-- Bash syntax và shellcheck cho entrypoint/CLI; Compose overrides baseline, WSLg, DRM, NVIDIA, hardware serial parse hợp lệ. Parse không xác nhận GPU/serial thật.
-- World ba UAV `control` và `reference` sinh từ plugin đã pin được `gz sdf -k` chấp nhận. Có warning `gz_frame_id` extension từ upstream.
-- Khởi động bằng `./scripts/dev sim`, xuất manifests bằng `./scripts/dev lock`, dừng qua `./scripts/dev stop` đã chạy thực tế. CLI tự chọn WSLg override.
-- Ba namespace/SYSID/FCU TCP và JSON UDP độc lập; mỗi run có thư mục SITL riêng và phiên mới không dùng lại eeprom của phiên trước.
-- Telemetry IDs 30/32 ACK, pose hữu hạn liên tục; frame runtime xác nhận `uav1/map`, `uav2/map`, `uav3/map`.
-- Plugin YAML được áp qua parameter services trước readiness. Key upstream cũ như `timesync_avg_alpha`, `tf.send_fcu` không còn được plugin khai báo được bỏ qua với warning. Giá trị bị từ chối trên parameter còn được khai báo là lỗi khởi tạo.
+## Earlier bringup and automated checks
 
-## Profile control: bài bay đủ ba UAV
+The 9 October baseline verified isolated FCU links and SITL state, telemetry
+IDs 30/32, finite local pose, prefixed frames, takeoff/velocity/position control,
+and LAND/disarm for three UAVs. A sensor-light control profile achieved about
+9.94 Hz wall pose rates and real-time factor 1.0. The original camera/gimbal
+reference profile ran around 0.23 real-time factor with readiness dropouts under
+render load. These historical profiles are not the current mission CLI workflow.
 
-Phiên `20261009T110032Z-27038` đạt readiness sau khoảng 90 giây wall clock, rồi lần lượt GUIDED → ARM → takeoff 3 m, có xác nhận độ cao từ pose.
+The 10 October regression fixed the pinned MAVROS parameter-callback crash and
+host waiting on an exited container. Bootstrap reads current parameters and
+writes only differences; unsupported attitude-mode changes are rejected. Fresh
+three-UAV readiness was observed after the fix. The mechanism is documented in
+[Development](DEVELOPMENT.md#mavros-parameter-bootstrap).
 
-| UAV | Độ cao hover quan sát | Pose rate wall clock | Frame |
-|---|---:|---:|---|
-| uav1 | 2,981 m | 9,940 Hz | uav1/map |
-| uav2 | 2,982 m | 9,939 Hz | uav2/map |
-| uav3 | 2,977 m | 9,939 Hz | uav3/map |
+On 11 October, all **37 tests in the then-current suite** passed inside the
+simulation image. They covered controller/state ownership, scans and mapping,
+camera projection, target filtering, frame/setpoint conversion, command and FCU
+freshness, ROS construction, and bringup configuration. Three warnings came from
+Gazebo/protobuf dependencies. Evidence: `artifacts/mpc-final-image-tests.log`.
+Generated SDF validation, shell syntax, Compose parsing, and whitespace checks
+also passed, and sensor/truth/observation streams were observed in ROS.
 
-Mẫu pose dài 15 giây. RTF mẫu 5 giây sau takeoff, GUI đóng: trung bình **0,99965**, khoảng **0,99797–1,00124**. Đây là số đo trên máy kiểm thử, không bảo đảm cho máy khác hay workload MPC tương lai.
+Simulation and companion amd64 images were built. The MPC validation build used
+`artifacts/Dockerfile.mpc-validation` with host-downloaded, hash-checked Python and
+ROS Debian packages because container downloads stalled. Application/base/compiler
+stages matched the canonical Dockerfile; two dependency install steps differed.
+Evidence: `artifacts/mpc-build-final.log`. The normal build remains
+`./scripts/dev build sim`; the temporary caches are not runtime dependencies.
 
-Velocity `(0.5, 0, 0)` được phát cho ba UAV trong 6 giây, sau đó zero velocity 2 giây. Position UAV1 `(3, 0, 3)` được phát 10 giây; pose sau bài là **(3,022; 0,013; 3,000)** m trong ENU local. LAND cho cả ba UAV có xác nhận disarm, rồi container dừng sạch qua `dev stop`.
+## Remaining validation
 
-Bằng chứng local: `artifacts/takeoff-release.log`, `control-release-airborne.json`, `control-release-stats.txt`, `position-release-observed.yaml`, `stop-release.log`; run lưu world/config/ROS logs/flight logs. `artifacts/` và `runs/` được gitignore để không đưa dữ liệu lớn vào source control.
+- Validate hardware GPU rendering and achieved sensor/control rates. The recorded
+  mission workloads ran at approximately 0.17–0.19 real-time factor in software.
+- Reduce/profile whole-fleet computation before claiming a 100 ms deadline,
+  especially on the Pi. Measure tail latency and publisher jitter under load.
+- Rerun the full moving-target route with the current defaults and record source,
+  input snapshots, image identity, solver failures, and landing outcome.
+- Validate any new fleet size independently. The planner remains fixed-altitude
+  and planar; 2D scans do not represent arbitrary vertical geometry.
+- Run remote CI and physical ARM64/FCU/sensor validation. Pi performance, Solo
+  firmware compatibility, LD19 integration, concurrent GoPro recording/streaming,
+  common localization, and real-flight failsafes remain unverified.
 
-## Profile reference: camera/gimbal nguyên bản
-
-Phiên `20261009T110529Z-27913` đạt readiness cả ba UAV sau khoảng 220 giây. Gazebo có ba topic camera image/camera_info riêng, gimbal command topics và video ports độc lập. Camera upstream 640×480, update rate 10 Hz theo simulation time. Camera zoom command cũng được cấu hình riêng theo UAV.
-
-RTF mẫu ban đầu khoảng **0,23**. Mẫu pose ổn định 15 giây cho cả ba UAV khoảng **1,92 Hz wall clock**. Có giai đoạn tải render làm pose giảm xuống khoảng **0,22 Hz**, heartbeat hết timeout, readiness chuyển false rồi tự khôi phục. Không ARM trong bài reference này.
-
-`reference` chạy được và giữ camera/gimbal, nhưng **chưa đạt môi trường điều khiển ổn định trên renderer phần mềm này**. Dùng `control` làm baseline develop; nghiệm thu lại reference trên GPU phù hợp hoặc cấu hình camera giảm tải có ghi nhận thay đổi. Tăng timeout không chứng minh đã đáp ứng tần số controller.
-
-GUI client kết nối với server qua WSLg và load scene/plugins; đóng client không dừng simulation server. Đã bổ sung `libqt5svg5` và kiểm tra lại, không còn warning thiếu định dạng SVG. Chưa đánh giá hình ảnh trực quan bằng screenshot, chưa xác nhận hardware GPU acceleration. Topic camera không thay thế kiểm tra video decode/stream hoặc bridge ảnh vào ROS.
-
-## Bổ sung ngày 10/10/2026: sửa lỗi khởi tạo không ổn định
-
-Phiên lỗi `20261010T134923Z-15996` dừng khi readiness set lại `setpoint_attitude.use_quaternion=false`. Callback trong MAVROS giữ reference tới `subscriber_qos` cục bộ của constructor; sau constructor, gọi lại có thể gây `invalid allocator` và crash. ROS launch dừng toàn stack, nhưng phiên bản CLI cũ vẫn đọc health cũ và in `connected=False` tới hết timeout.
-
-Bootstrap đã đổi sang đọc giá trị hiện tại, chỉ ghi những parameter khác, và không gọi lại callback khi cấu hình đã đúng. Đổi `use_quaternion` sang mode khác được chặn rõ ràng cho tới khi callback upstream được sửa; velocity/position không cần đổi parameter này. CLI kiểm tra trạng thái container mỗi hai giây, in log và thoát ngay khi stack đã dừng. Health cũ trước thời điểm restart/resume không được dùng để xác nhận ready.
-
-21 tests pass trong cả image simulation và companion, bao gồm bootstrap không chạy lại callback giữ giá trị cũ, bootstrap lần hai không ghi lại parameter đã đúng, chặn mode attitude chưa an toàn, và báo lỗi container exit code 0. Bài kiểm tra CLI trên container lỗi thoát khoảng 0,14 giây thay vì chờ 600 giây. Phiên đầu sau sửa `20261010T135711Z-25892` đã có cả ba UAV connected, IDs 30/32 và pose, readiness true. Phiên thứ hai `20261010T135943Z-10104` kiểm tra lại bootstrap/heartbeat ba UAV thành công. Phiên cuối `20261010T140111Z-20095` chạy đúng `./scripts/dev sim`, có cả ba UAV ready sau khoảng 90 giây và được giữ chạy cho người dùng; không ARM trong các kiểm tra này. Hai image simulation/companion đã được build lại với bản sửa.
-
-## Giới hạn của nghiệm thu
-
-Chưa chạy GitHub Actions trên remote runner, image ARM64 trên Pi 4, kết nối FCU Solo thật, firmware upgrade, driver LD19, GoPro vừa stream vừa record, MPC, common ENU hoặc failsafe bay thật. Các bước chuyển phần cứng và thông tin còn thiếu nằm trong [HARDWARE.md](HARDWARE.md). Kiểm tra simulation không xác nhận các hạng mục này.
-
-Sau nghiệm thu ban đầu ngày 09/10, container simulation được dừng. Các kiểm tra lỗi ngày 10/10 chạy phiên mới; trạng thái phiên hiện tại xem bằng `./scripts/dev status`. Image, source, `.env`, logs và manifests được giữ để chạy lại.
+Use [Operations](OPERATIONS.md#logs-and-evaluation) to collect current evidence and
+[Hardware migration](HARDWARE.md) for the staged physical deployment plan.

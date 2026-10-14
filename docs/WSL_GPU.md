@@ -1,62 +1,102 @@
-# Windows 11 / WSL2 / GUI và GPU
+# WSL, GUI, and GPU rendering
 
-Repo ở `/home/<user>/...` của Ubuntu WSL2. VS Code Windows + extension WSL có thể mở bằng `code .`. Docker Desktop dùng Linux containers và bật integration cho distro. Không chạy Compose từ PowerShell với repo Linux này.
+[Back to the project overview](../README.md)
 
-## Không GUI
+Gazebo's server runs without a GUI by default, but the mission cameras and GPU
+LiDAR still require rendering. A working display connection does not prove GPU
+acceleration. Measure the renderer, sensor rates, and real-time factor before
+running or comparing missions.
 
-```bash
-./scripts/dev sim --profile control
-```
+## Windows 11 with WSL2
 
-Control bỏ camera/gimbal và rendering sensors; đây là đường kiểm tra cơ bản không phụ thuộc GUI/GPU. Gazebo server vẫn có physics/IMU/NavSat. Có thể mở GUI sau khi ready.
+Use Ubuntu WSL2, enable Docker Desktop's integration for that distribution, and
+run `scripts/dev` from the Linux repository filesystem. Keep the repository under
+`/home/<user>/...` rather than `/mnt/c/...`. VS Code's WSL extension can open the
+project with `code .`.
 
-## WSLg
+When both `/mnt/wslg` and `/tmp/.X11-unix` exist, the CLI automatically adds
+[compose.wslg.yaml](../compose.wslg.yaml). This maps display sockets and related
+environment variables into the same container as the simulator. The entrypoint
+creates a writable runtime directory. No `xhost +` is needed.
 
-`scripts/dev` tự thêm `compose.wslg.yaml` khi có `/mnt/wslg` và `/tmp/.X11-unix`. Override map X11/WSLg sockets và DISPLAY vào container; không dùng `xhost +`.
+Attach a GUI to an existing stack:
 
 ```bash
 ./scripts/dev gui
 ```
 
-Entrypoint sử dụng runtime directory writable của container. X11 là đường GUI cơ bản; Wayland socket có thể không được sử dụng bởi cấu hình Qt đó. WSLg mount không tự cấp GPU hay đảm bảo render acceleration. Các driver GPU thuộc Windows/WSL/Docker host, không được đóng gói hoàn toàn trong image.
+Or use `./scripts/dev mpc --gui` to start the stack and attach after readiness.
+Closing the client leaves the server running. WSLg supplies display access;
+host GPU drivers and container GPU access require separate verification.
 
-Nếu GUI/reference không render được, thử fallback phần mềm:
+## Check rendering or use software fallback
 
-```bash
-LIBGL_ALWAYS_SOFTWARE=1 ./scripts/dev sim --profile reference --gui
-```
-
-Dừng phiên cũ trước khi chạy lệnh trên. Software rendering có thể rất chậm; benchmark RTF. Kiểm tra từ shell:
+From `./scripts/dev shell`:
 
 ```bash
 glxinfo -B
 gz sim --versions
+timeout 5s gz topic -e -t /world/mpc_small50/stats
+ros2 topic hz /uav1/camera/image_raw
+ros2 topic hz /uav1/scan
 ```
 
-## Native Linux Intel/AMD
+`glxinfo` helps inspect the display renderer; also check the Gazebo server's
+render logs because its headless rendering path can differ. `llvmpipe` indicates
+software rendering. Compare simulation and real time in Gazebo statistics;
+simulation sensor rates can be much lower on wall time when real-time factor is
+low.
 
-Nếu Docker host có `/dev/dri`, dùng:
+After stopping the previous simulation, try a software fallback if hardware
+rendering fails:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 ./scripts/dev mpc --gui
+```
+
+You can also set this variable in `.env`. Software rendering is functional on the
+recorded host, but the three-camera/LiDAR mission ran at roughly 0.17–0.19 of real
+time. See [Validation](VALIDATION.md) for the measured workload and its limits.
+
+## Native Linux Intel or AMD
+
+When `/dev/dri` exists on the Docker host, supply DRM devices and the actual group
+IDs:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.gpu.yaml
 export RENDER_GID=$(getent group render | cut -d: -f3)
 export VIDEO_GID=$(getent group video | cut -d: -f3)
-./scripts/dev sim
+./scripts/dev mpc
 ```
 
-Để GUI trên native Linux, tạo override map X11 socket + DISPLAY và Xauthority tương ứng host. Không map `/mnt/wslg` nếu nó không tồn tại. `compose.gpu.yaml` chỉ cấp DRM, không cấu hình X11.
+[compose.gpu.yaml](../compose.gpu.yaml) grants DRM access but does not configure
+the display. A native Linux GUI needs a local override for X11 sockets, `DISPLAY`,
+and Xauthority matching the host. Do not mount `/mnt/wslg` where it does not exist.
 
 ## NVIDIA
 
-Chỉ dùng sau khi xác nhận NVIDIA Container Toolkit hoặc Docker Desktop GPU support hoạt động:
+After confirming host driver and NVIDIA container GPU support, use the matching
+override. For a WSLg host:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.wslg.yaml:compose.nvidia.yaml
-./scripts/dev sim --profile reference
+./scripts/dev mpc
 ```
 
-NVIDIA override không thay thế việc cài host driver/toolkit. Không mặc định `/dev/dri` của Ubuntu WSL tồn tại trong Docker Desktop VM. Bản setup này chưa xác nhận hardware GPU acceleration; xem kết quả đo cụ thể ở VALIDATION.md.
+On native Linux, omit the WSLg file and configure display access separately.
+[compose.nvidia.yaml](../compose.nvidia.yaml) requests a GPU and graphics driver
+capabilities; it does not install the host driver or toolkit. The recorded
+validation does not confirm hardware acceleration for this setup. Do not assume
+WSL devices are visible in Docker Desktop's VM.
 
-## Networking
+## Override selection and networking
 
-Simulation dùng bridge network và localhost discovery bên trong một container, tránh yêu cầu Docker Desktop host networking. Truy cập ROS qua `dev shell`. Khi test Pi ↔ laptop, localhost TCP trong container không dùng được từ Pi; phải tạo endpoint MAVLink UDP/TCP rõ ràng và routing/port mapping cho địa chỉ LAN. Xem HARDWARE.md.
+When `COMPOSE_FILE` is set, the CLI uses it as supplied and does not automatically
+add WSLg. Include every override you need, and keep the same selection for start,
+inspection, and stop. Use `unset COMPOSE_FILE` to return to automatic selection.
+
+ROS and FCU links stay inside the simulation container, so host discovery and
+Docker Desktop host networking are unnecessary for the default workflow. Access
+ROS through `dev shell`. A Pi-to-laptop experiment needs explicit LAN endpoints
+and discovery/routing changes; see [Hardware migration](HARDWARE.md#2-test-pi-to-laptop-sitl-before-connecting-solo).

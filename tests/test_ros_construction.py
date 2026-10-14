@@ -1,4 +1,4 @@
-"""Catch conflicts with rclpy Node APIs before attempting a flight command."""
+"""Catch conflicts with rclpy Node APIs before starting a mission."""
 import pytest
 
 rclpy = pytest.importorskip('rclpy')

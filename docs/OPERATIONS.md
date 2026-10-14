@@ -1,102 +1,161 @@
-# Vận hành simulation
+# Simulation operations
 
-## Topology
+[Back to the project overview](../README.md)
 
-Một container `sim` chứa Gazebo server, ba SITL, ba MAVROS và readiness node. TCP/UDP trao đổi trên localhost **trong container**. Compose không publish cổng FCU ra host, ROS discovery mặc định localhost. Dùng ROS CLI qua `./scripts/dev shell` hoặc `docker compose exec`, không cần discovery qua NAT của WSL/Docker Desktop.
+Complete the [first-run setup](../README.md#first-run) before using this guide.
+Run host commands from the repository root. Commands under “Inspect ROS and
+Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 
-| UAV | Instance | SYSID | JSON UDP | MAVLink TCP | Topic prefix |
+## Mission control
+
+| Command | Behavior |
+|---|---|
+| `./scripts/dev mpc` | Start a fresh stack and wait for fleet readiness; no arming |
+| `./scripts/dev mpc --gui` | Wait for readiness, then attach the GUI |
+| `./scripts/dev mpc --no-wait` | Start without waiting; use `dev wait` before a mission |
+| `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
+| `./scripts/dev mission run` | Take off, supervise tracking, LAND, and wait for disarm |
+| `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds after initialization |
+| `./scripts/dev mission start` | Take off and enable tracking, then return to the caller |
+| `./scripts/dev mission status` | Print controller diagnostics |
+| `./scripts/dev mission stop` | Release publishing, pause the target, LAND, and wait for disarm |
+| `./scripts/dev mission reset` | Reset the target to the start of its route and pause it |
+| `./scripts/dev stop` | Run mission stop successfully before stopping the container |
+| `./scripts/dev stop --force` | Stop simulation processes immediately, without LAND |
+
+`mission run` checks fresh readiness and common-frame alignment before takeoff.
+It keeps the target paused and the setpoint publisher disabled during takeoff,
+then waits for usable controller inputs before enabling tracking. It finishes
+when the target and fleet reach the route endpoint, or the requested duration
+expires. Controller/publisher failure, prolonged target loss, loss of
+GUIDED/armed/connection state, or departure from the altitude envelope triggers
+an attempt to land.
+
+During camera occlusion the target estimate briefly coasts, then the controller
+searches near the last plausible position. The supervisor pauses the simulated
+target during prolonged loss and aborts if it cannot be reacquired in time. This
+policy assumes a cooperative simulation target.
+
+`mission start` returns after enabling tracking. It does not leave the mission
+supervisor running in the background, and does not record the supervisor's
+`truth.jsonl`. The caller must monitor the mission and invoke `mission stop`.
+Prefer `mission run` for supervised experiments and independent evaluation.
+
+Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
+disarm; cleanup can fail if required services or processes have already stopped.
+Normal `dev stop` leaves the container running if mission stop fails. Use
+`stop --force` for a crashed or failed simulation when landing cannot complete.
+Hardware shutdown is different; see [Hardware migration](HARDWARE.md).
+
+Closing the GUI only closes its client. Ctrl+C in `dev logs` only stops log
+following. Stop an existing run before launching another; every `dev mpc` creates
+new simulator state, and MPC runs do not support resume.
+
+## Topology and readiness
+
+One `sim` container contains Gazebo, the fleet's SITL/MAVROS instances, readiness,
+sensor bridges, and MPC nodes. ROS discovery is localhost within the container;
+FCU ports are not published to the host. Inspect ROS through `dev shell`.
+
+| UAV | SITL instance | SYSID | JSON UDP | MAVLink TCP | MAVROS namespace |
 |---|---:|---:|---:|---:|---|
 | uav1 | 0 | 1 | 9002 | 5760 | /uav1/mavros |
 | uav2 | 1 | 2 | 9012 | 5770 | /uav2/mavros |
 | uav3 | 2 | 3 | 9022 | 5780 | /uav3/mavros |
 
-Launch kiểm tra port chưa bị chiếm, tạo world từ model/plugin đã pin, chạy binary trực tiếp với hai defaults tuyệt đối. Không dùng launcher `sim_vehicle.py --count` có bug đường dẫn của tag cũ.
+Readiness uses typed ROS subscriptions and services. For each UAV it requires:
 
-## Readiness
+1. A connected FCU and successfully applied MAVROS plugin parameters.
+2. Acknowledged requests for `LOCAL_POSITION_NED` (ID 32) and `ATTITUDE` (ID 30)
+   at 10 Hz. Requests are serialized per FCU.
+3. At least three finite pose messages with distinct timestamps, with the latest
+   received less than 10 wall seconds ago. FCU state must be less than 20 wall
+   seconds old.
 
-Node sử dụng subscription/service ROS có kiểu, không parse output CLI. Với mỗi UAV:
+The monitor writes live `health.json`, updates `ready.json` while ready, and
+publishes `/solo/readiness`. Docker health uses the live report. On disconnect,
+telemetry/pose counters reset and are requested again after reconnect. Initial
+readiness has a 600 s default deadline; timeout stops the stack. After becoming
+ready, the monitor keeps reporting losses and recovery without arming or
+restarting an FCU.
 
-1. Chờ state connected.
-   Đồng thời đọc và áp dụng những giá trị YAML khác hiện tại qua ROS parameter services, xác nhận phản hồi trước khi ready. Commit MAVROS đã pin đặt `use_global_arguments(false)` cho plugin nodes, nên file YAML trên CLI không tự áp vào các node này. Các key YAML upstream không còn được plugin khai báo được bỏ qua với warning; parameter được khai báo mà từ chối giá trị sẽ làm stack dừng.
-2. Yêu cầu `LOCAL_POSITION_NED` ID 32, `ATTITUDE` ID 30 ở 10 Hz, kiểm tra service response. Các yêu cầu được thực hiện lần lượt trên mỗi FCU.
-3. Chờ ít nhất ba pose hữu hạn có timestamp khác nhau; lần nhận mới nhất dưới 10 giây wall clock.
-4. Ghi `health.json`, publish `/solo/readiness` và cập nhật Docker health.
+The host readiness helper polls container state every two seconds, rejects health
+from an earlier container start, and reports exited stacks promptly. Readiness
+confirms telemetry flow; it does not prove prearm acceptance, localization quality,
+sensor performance, or flight safety. Mission checks add alignment and controller
+input requirements.
 
-State phải mới trong 20 giây wall clock. Khi disconnect, telemetry/pose counters reset và được yêu cầu lại khi reconnect. Deadline khởi tạo mặc định 600 giây; readiness timeout khiến ROS launch dừng stack. Sau khi từng ready, monitor tiếp tục sống và báo mất readiness, không tự ARM/restart FCU.
+Gazebo, SITL, MAVROS, readiness, and the sensor bridge are critical processes;
+exit of one shuts down the launch. MPC/perception/target adapter exit leaves the
+flight stack alive so supervised cleanup can attempt LAND. No automatic FCU
+respawn occurs during an experiment.
 
-`dev sim`/`dev wait` kiểm tra container mỗi hai giây. Nếu stack đã dừng, lệnh thoát ngay kèm log gần nhất, kể cả Docker exit code là 0; không tiếp tục lặp `connected=False` từ file health cũ tới hết 600 giây. Health của phiên trước khi restart/resume không được dùng để báo ready cho container mới.
+## Inspect ROS and Gazebo
 
-Readiness chỉ xác nhận luồng telemetry/pose, chưa xác nhận prearm, chất lượng EKF, calibration, common ENU hay an toàn bài bay. Với RTF rất thấp, tăng timeout chưa giải quyết việc không đạt tần số control.
-
-## Quan sát và ROS CLI
+On the host:
 
 ```bash
 ./scripts/dev status
+./scripts/dev mission status
 ./scripts/dev logs
 ./scripts/dev shell
 ```
 
-Trong shell container (đã source ROS):
+Inside the container:
 
 ```bash
 ros2 topic echo /uav1/mavros/state --once
 ros2 topic echo /uav1/mavros/local_position/pose --qos-reliability best_effort --once
 ros2 topic hz /uav1/mavros/local_position/pose
+ros2 topic hz /uav1/scan
+ros2 topic hz /uav1/camera/image_raw
 ros2 topic echo /solo/readiness --once
-timeout 5s gz topic -e -t /world/iris_3uav/stats
+ros2 topic echo /mpc/setpoint_status --once
+timeout 5s gz topic -e -t /world/mpc_small50/stats
 gz sdf -k /workspace/runs/latest/world.sdf
 ```
 
-`timeout` trả 124 khi kết thúc thời gian giới hạn là bình thường. Tất cả tiến trình ROS launch xuất screen và log vào `runs/<id>/logs`. Binary SITL lưu eeprom/flight log trong `sitl/<instance>`. `docker compose logs` có prefix service; ROS launch có prefix process để nhận diện UAV.
+Exit code 124 from the timed Gazebo command is expected. Compare simulation time
+with wall time to measure real-time factor. Requested sensor/telemetry rates are
+not necessarily achieved on wall time. Multiple terminals can each use `dev shell`;
+there is no need to launch extra MAVROS instances for observation.
 
-Nhiều terminal không cần chạy lại môi trường: mỗi terminal dùng `./scripts/dev shell`. Có thể dùng tmux bên trong một shell, tạo pane cho state, pose, Gazebo stats và CLI. Đừng chạy thêm MAVROS vào cùng FCU chỉ để xem dữ liệu.
+## Logs and evaluation
 
-## Clock, frame và setpoint
-
-Phiên mặc định giữ hành vi hướng dẫn gốc: ROS `use_sim_time=false`, không bridge `/clock`. SITL JSON physics vẫn theo Gazebo. Tần số 10 Hz được yêu cầu từ FCU có thể thấp hơn trên wall clock khi RTF thấp.
-
-Các frame MAVROS được prefix như `uav1/map`, `uav1/base_link` để tránh trùng TF. Đây vẫn là origin riêng của FCU; không tạo transform `world → uavN/map` từ spawn một cách tự động. Muốn MPC formation, phải hiệu chuẩn common ENU và rotation/translation.
-
-Flight helper chỉ dùng simulation, xác nhận service ACK **và** state/pose cho mode/takeoff. `position` yêu cầu chọn một UAV. Velocity/position dùng ENU và stamp ROS wall time. Một publisher điều khiển cho mỗi loại/UAV; tắt controller/publisher khác trước bài CLI.
-
-```bash
-./scripts/dev flight takeoff --uav uav1 --altitude 3
-./scripts/dev flight velocity --uav uav1 --xyz 0.5 0 0 --seconds 6
-./scripts/dev flight position --uav uav1 --xyz 3 0 3 --seconds 10
-./scripts/dev flight land
-```
-
-Nếu takeoff thất bại giữa fleet, các UAV trước đó có thể đã bay: đọc state rồi thực hiện LAND. Không tắt arming checks để che lỗi. Flight helper không tự bay lại sau lỗi.
-
-## Dừng và restart
-
-```bash
-./scripts/dev stop
-./scripts/dev sim
-```
-
-Stop gửi LAND cho mọi UAV, chờ disarm, rồi dừng ROS launch/container. Ctrl+C khi tail log chỉ dừng tail. Đóng GUI chỉ đóng client. `stop --force` dừng tiến trình ngay, dùng khi stack boot lỗi/crash hoặc muốn kết thúc mô phỏng cưỡng bức. Không sử dụng lệnh này như chính sách dừng drone thật.
-
-ROS launch dừng cả stack khi Gazebo, SITL, MAVROS hoặc readiness process exit. Không tự respawn FCU giữa thí nghiệm. Compose `init: true` hỗ trợ thu hồi child processes; stop grace period 30 giây.
-
-## Lỗi thường gặp
-
-| Dấu hiệu | Kiểm tra |
+| Run output | Contents |
 |---|---|
-| Docker socket permission denied | Docker Desktop đang chạy, bật WSL Integration; không đổi quyền socket bằng chmod 777 |
-| MAVROS runtime khác 2.15.1 | Kiểm tra đã chạy solo-entrypoint và source `/opt/mavros_ws/install/setup.bash`; bản APT chỉ làm nền dependency |
-| `connected=False` mãi, log có `setpoint_attitude ... invalid allocator` | Cập nhật source bootstrap: chỉ set parameter khác giá trị hiện tại. Không dùng bản cũ ghi lại `use_quaternion=false` mỗi lần boot; xem DEVELOPMENT.md |
-| TCP opened nhưng disconnected | Log SITL: defaults/PANIC/JSON sensor; cổng mở không chứng minh FCU đã boot |
-| Connected, chưa có pose | Telemetry ACK, EKF và RTF; đọc readiness summary |
-| PreArm Gyros inconsistent | World ổn định, model không chồng nhau, IMU scope đúng, RTF; không force ARM |
-| Reference lỗi EGL/OpenGL | Chạy control; kiểm tra GPU/software rendering theo WSL_GPU.md |
-| Pose chậm | Đo sim_time/real_time, tải CPU/render; không tăng speedup để che lỗi |
-| Container unhealthy sau từng ready | Pose/state quá cũ hoặc disconnect; health.json là live status, ready.json chỉ là lần ready gần nhất |
-| Run ID đã tồn tại | Chọn run mới hoặc resume rõ ràng; tránh ghi đè eeprom/log |
+| `manifest.json`, `source-sha256.json` | Mode, fleet, source versions, commit, and file hashes |
+| `fleet.yaml`, `scenario.yaml`, `controller.yaml`, `mpc-config.json` | Snapshot and resolved experiment configuration |
+| `world.sdf`, `bridge.yaml`, `uavN-mavros.yaml` | Generated world, sensor bridge, and MAVROS configuration |
+| `alignment.json` | Frozen world-to-local calibration |
+| `health.json`, `ready.json` | Current health and most recent ready report |
+| `logs/`, `sitl/<instance>/` | ROS/process logs and each SITL's EEPROM/flight logs |
+| `controller_sources.jsonl` | Source hashes and resolved configuration at controller startup |
+| `mpc.jsonl` | Measured state, target estimates, solver outcomes, and timings |
+| `truth.jsonl` | Independent Gazebo poses recorded by `mission run` |
+| `evaluation.json` | Derived geometry, tracking, compute, and simulation-speed metrics |
 
-## Rosbag
+`runs/latest` selects the most recent simulation; launching another run changes
+that link. The actual image ID is stored beside the run directory in
+`runs/<run-id>.image-id.json`. Preserve the specific run directory for comparisons.
+`runs/` and `artifacts/` are Git-ignored and must be shared separately if needed.
 
-Trong shell container, đặt output mới bên trong run:
+Evaluate while the simulation container is still running, after the mission lands:
+
+```bash
+./scripts/dev evaluate
+./scripts/dev evaluate --run-dir /workspace/runs/<run-id>
+```
+
+Evaluation prefers independent Gazebo geometry when `truth.jsonl` has suitable
+samples; otherwise it uses MAVROS measurements and labels `geometry_source`.
+The current airborne filter requires every UAV above 2.5 m, so revisit evaluation
+when changing the default 3 m altitude. Sampled metrics do not establish continuous
+collision avoidance; inspect physics contacts and camera tracking too.
+
+## Record telemetry
+
+Inside the container, use a new output directory for each recording:
 
 ```bash
 ros2 bag record -s mcap -o /workspace/runs/latest/telemetry \
@@ -105,4 +164,22 @@ ros2 bag record -s mcap -o /workspace/runs/latest/telemetry \
   /uav3/mavros/state /uav3/mavros/local_position/pose /solo/readiness
 ```
 
-Kết thúc recorder bằng Ctrl+C trước stop. Pose sensor QoS cần đối chiếu nếu bag không nhận; dùng QoS override khi cần. Đừng ghi video raw lên Pi trước khi đo storage/CPU.
+Adjust topics for your fleet, and stop the recorder with Ctrl+C before stopping
+the container. If pose messages are absent, check sensor QoS and use a recording
+QoS override as needed. Measure storage and CPU costs before adding raw video.
+
+## Troubleshooting
+
+| Symptom | Check or action |
+|---|---|
+| Docker socket permission denied | Confirm Docker is running and WSL integration is enabled |
+| Stack exits while `mpc` waits | Read the reported process logs; a stopped container cannot become ready |
+| TCP opens but MAVROS stays disconnected | Inspect SITL defaults, PANIC messages, and JSON sensor input; an open port does not prove FCU boot |
+| Connected without pose | Check telemetry ACKs, EKF, and real-time factor in the readiness report |
+| `PreArm: Gyros inconsistent` | Check model overlap, IMU scope, stable physics, and simulator load before retrying |
+| `setpoint_attitude` / `invalid allocator` crash | Use the current parameter bootstrap; see the pinned MAVROS callback limitation in [Development](DEVELOPMENT.md#mavros-parameter-bootstrap) |
+| Wrong MAVROS runtime version | Verify the entrypoint sources `/opt/mavros_ws/install/setup.bash`, not just the ROS base |
+| EGL/OpenGL errors or slow sensors | Inspect the renderer using [WSL and GPU](WSL_GPU.md); increasing timeouts does not fix rates |
+| Container becomes unhealthy after readiness | Inspect live `health.json` for stale pose/state or a disconnected FCU |
+| `No complete airborne fleet records` during evaluation | Check whether takeoff succeeded and whether altitude matches the evaluator's 2.5 m filter |
+| LAND cleanup fails | Inspect FCU state and service errors; normal stop preserves the container for recovery |

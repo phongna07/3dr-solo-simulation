@@ -113,7 +113,12 @@ def validate(scenario, settings, cfg):
     if not 0 < settings["camera_hfov"] < math.pi:
         raise ValueError("camera_hfov must be in radians between zero and pi")
     starts = np.asarray(scenario["starts"], float)
-    if starts.ndim != 2 or starts.shape[1] != 3 or not np.isfinite(starts).all():
+    if (
+        starts.ndim != 2
+        or len(starts) == 0
+        or starts.shape[1] != 3
+        or not np.isfinite(starts).all()
+    ):
         raise ValueError("starts must be finite XYZ coordinates")
     for i, a in enumerate(starts):
         if any(
@@ -121,3 +126,14 @@ def validate(scenario, settings, cfg):
             for b in starts[i + 1 :]
         ):
             raise ValueError("Initial UAV positions violate UAV_SAFE_DISTANCE")
+    cells = np.asarray(cfg["GRID_CELLS"], float)
+    if cells.size == 0:
+        cells = cells.reshape(0, 2)
+    if cells.ndim != 2 or cells.shape[1] != 2 or not np.isfinite(cells).all():
+        raise ValueError("GRID_CELLS must be finite XY formation offsets")
+    if len(cells) < len(starts) - 1:
+        raise ValueError("GRID_CELLS needs at least one formation slot per follower UAV")
+    if len({tuple(cell) for cell in cells}) != len(cells) or any(
+        np.linalg.norm(cell) == 0 for cell in cells
+    ):
+        raise ValueError("GRID_CELLS offsets must be unique and nonzero")

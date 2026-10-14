@@ -12,7 +12,7 @@ on:
       - 'tests/**'
       - '.github/workflows/simulation.yml'
 jobs:
-  control-smoke:
+  mission-smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -22,7 +22,7 @@ jobs:
       - name: Unit tests
         run: ./scripts/dev test
       - name: Three-UAV heartbeat and pose
-        run: ./scripts/dev sim --profile control
+        run: ./scripts/dev mpc
       - name: Collect status and logs
         if: always()
         run: |

@@ -1,29 +1,74 @@
-# Kiến trúc develop và mở rộng
+# Development
 
-## Phân chia
+[Back to the project overview](../README.md)
+
+Use [Configuration](CONFIGURATION.md) to change an experiment and
+[Operations](OPERATIONS.md) to run it. This guide describes the code boundaries
+and the assumptions a contributor needs to preserve.
+
+## Architecture
 
 ```text
-simulation.launch.py: world + Gazebo + SITL + MAVROS + readiness
-hardware.launch.py:                         MAVROS + readiness
-                         ↓ cùng topics/interfaces
-               controller / estimator / perception (bổ sung)
+scripts/dev → Docker Compose → Python ROS launch
+
+solo_mpc/launch/mpc.launch.py
+  ├─ solo_bringup/launch/simulation.launch.py
+  │    └─ world generation → Gazebo + per-UAV SITL/MAVROS + readiness
+  ├─ ros_gz sensor, pose, and clock bridge
+  └─ frames + marker_detector + target + controller + setpoints
+
+solo_bringup/launch/hardware.launch.py
+  └─ MAVROS + readiness (physical sensor/controller integration pending)
 ```
 
-`solo_bringup` là ament_python package. `configuration.py` kiểm tra fleet, `world.py` sinh world từ pinned upstream, `runtime.py` tạo run và MAVROS frame config. `launching.py` dùng chung MAVROS và shutdown policy cho hai môi trường.
+Compose manages images, containers, networks, and devices. The Bash CLI provides
+short commands; ROS Python launch manages the processes inside each container.
+Mission and readiness use typed ROS APIs rather than parsing CLI output. The GUI
+is a separate client connected to the existing Gazebo server.
 
-`parameters.py` áp cấu hình plugin bằng `ListParameters`/`GetParameters`/`SetParameters` vì plugin nodes của commit MAVROS này không dùng global CLI arguments. Bootstrap đọc giá trị hiện tại và chỉ ghi những giá trị khác, tránh chạy lại callback tạo subscription/timer khi cấu hình đã đúng. Readiness đợi cấu hình được áp thành công; không chỉ kiểm tra YAML sinh ra trên đĩa. Frame của UAS được đặt riêng qua `base_link_frame`, `map_frame`, `odom_frame` trên `mavros_node`.
+`solo_bringup` validates fleet configuration, generates worlds and runtime
+configuration, creates isolated run directories, bootstraps MAVROS parameters,
+and monitors readiness. `flight.py` is internal simulation takeoff/LAND support
+used by the mission supervisor; it has no standalone manual flight CLI.
 
-Callback `setpoint_attitude.use_quaternion` trong commit đã pin capture `subscriber_qos` cục bộ bằng reference, nên gọi lại sau constructor có thể gây `invalid allocator` hoặc crash. Bootstrap không gọi setter khi giá trị mặc định `false` đã đúng; nếu YAML yêu cầu đổi mode này, bootstrap báo lỗi rõ ràng. Muốn chuyển sang điều khiển attitude/quaternion cần sửa callback MAVROS để giữ QoS theo giá trị, build và kiểm thử release mới. Điều khiển velocity/position hiện tại không cần đổi mode attitude.
+`solo_mpc` separates numerical planning from ROS adapters:
 
-Docker Compose quản lý container và thiết bị; Bash `scripts/dev` là CLI thao tác ngắn; ROS 2 launch viết bằng Python quản lý các tiến trình bên trong. Cách này dùng được namespace/parameters, log theo tiến trình và event shutdown của ROS, không phải tự xây process supervisor bằng `subprocess` hoặc mở terminal bằng script. GUI là client riêng; tmux chỉ dùng khi muốn xem nhiều bảng log cùng lúc. Node readiness và flight dùng API ROS có kiểu thay vì ghép nhiều lệnh `ros2 service call` rồi parse chuỗi.
+| Module | Responsibility |
+|---|---|
+| `core/mpc_problem.py`, `core/dynamics.py` | CasADi/IPOPT optimization and acceleration-lag dynamics |
+| `core/planner_grid.py`, `core/planner_jps.py`, `core/geometry.py` | Grid/local planning and geometry helpers |
+| `core/controller.py` | Measured-state coordination, committed paths, leader selection, follower assignment, corridors |
+| `core/mapping.py` | Scan validity, occupancy updates, clearing, and teammate filtering |
+| `core/tracking.py`, `core/sensors.py` | Target filtering, scan projection, camera geometry, pose history |
+| `controller_node.py` | ROS inputs, references, predictions, diagnostics, and measured-state logs |
+| `setpoint_node.py` | Independent publishing, command expiry, altitude feedback, proximity guard |
+| `frame_node.py` | Disarmed alignment and measured state in the common world frame |
+| `perception_node.py`, `target_node.py` | Camera marker detection and simulated target motion |
+| `world.py`, `settings.py` | Field/sensor generation and configuration resolution |
+| `mission.py`, `evaluate.py` | Simulation supervision and recorded-flight metrics |
 
-MPC source hiện nằm trong package ROS 2 `solo_mpc`; solver/planner tách khỏi ROS adapters và sử dụng pose/velocity đo từ MAVROS. Xem [MPC_MIGRATION.md](MPC_MIGRATION.md) cho cấu trúc, interfaces, cấu hình và từng bước chạy. Không dùng state tự tích phân làm pose thật.
+`TeamController.step(states, scans, stamp, seers)` has no ROS imports and does not
+integrate a replacement for measured vehicle state. Controller configuration and
+team state are instance-local. The original solver and dynamics were retained;
+simulation orchestration was replaced. Source provenance is recorded in
+[UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json), with the upstream license in
+[LICENSE-MPC](../ros_ws/src/solo_mpc/LICENSE-MPC). The original external
+`motion_planning_MPC` checkout is not required at runtime.
 
-## Sửa source
+## Edit and rebuild
 
-Container bind mount repo vào `/workspace`; Python imports ưu tiên source sống. Các console entries và ament index đã được build trong image. Sửa module/launch/config hiện có: restart simulation. Thêm entry point hoặc đổi package metadata: rebuild image. Không sửa code host ArduPilot/plugin nằm ngoài repo.
+The repository is bind-mounted at `/workspace`. The entrypoint puts live project
+Python modules ahead of installed copies and sources ROS, the pinned MAVROS
+overlay, then the project overlay. Existing Python modules, launch files, and
+configuration can be edited on the host; restart the simulation to apply them.
+Rebuild the image for new executables, package metadata, or dependencies:
 
-Để build package mới trong container:
+```bash
+./scripts/dev build sim
+./scripts/dev test
+```
+
+For an experimental package build inside a running container:
 
 ```bash
 ./scripts/dev shell
@@ -32,24 +77,104 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-Overlay này chỉ có hiệu lực trong terminal đã source. Nếu muốn stack dùng overlay, thêm source tương ứng vào entrypoint sau khi đã kiểm tra dependencies. Giữ thứ tự ROS → `/opt/mavros_ws` (MAVROS pin) → project overlay. APT/image thay đổi cần cập nhật release; không dựa vào cài tay trong container đang chạy vì container mới sẽ mất các thay đổi đó.
+That overlay affects the shell that sourced it. To use it in launched processes,
+add the intended overlay sourcing to the entrypoint after validating dependencies.
+Keep the order ROS → `/opt/mavros_ws` → project overlay. Persistent dependency
+changes belong in the Dockerfile and locks; manual container installs disappear
+when the container is replaced.
 
-## Interface MPC
+## ROS interfaces
 
-- Input pose/velocity lấy từ MAVROS, tuổi dữ liệu có kiểm soát.
-- Sensor interface ổn định: `/uavN/scan`, `/uavN/camera/image_raw`, `/uavN/camera/camera_info` khi bổ sung adapters.
-- Output reference qua bộ phát setpoint riêng; solver không trực tiếp khóa vòng publish.
-- State machine: disconnected → initializing → ready → guided → flying → landing; chính sách lỗi rõ ràng.
-- Frame: `world`, `uavN/map`, `uavN/base_link`, `uavN/laser`, camera optical frame. Namespace không tự giải quyết transform.
+`uavN` denotes the configured UAV name; the default fleet uses `uav1`–`uav3`.
+All topic and service paths are absolute.
 
-Trước khi nối MPC, hiệu chuẩn `world → uavN/map`; spawn không tự chứng minh offset EKF. Chuyển position bằng rotation+translation, velocity/acceleration chỉ rotation. Chuẩn ENU/NED và `type_mask` phải được kiểm chứng trên firmware mục tiêu.
+| Topic / service | Message type or function |
+|---|---|
+| `/uavN/mavros/local_position/pose`, `/uavN/mavros/local_position/velocity_local` | `PoseStamped`, `TwistStamped`: FCU measured local state |
+| `/uavN/mpc/pose`, `/uavN/mpc/velocity` | `PoseStamped`, `TwistStamped`: measured common-world state |
+| `/uavN/scan` | `sensor_msgs/LaserScan`: Gazebo sensor returns |
+| `/uavN/camera/image_raw`, `/uavN/camera/camera_info` | `Image`, `CameraInfo`: camera images and calibration |
+| `/uavN/target/observation` | `PoseStamped`: camera target observation in world coordinates |
+| `/uavN/mpc/reference` | `mavros_msgs/PositionTarget`: world ENU reference |
+| `/uavN/mpc/prediction` | `nav_msgs/Path`: predicted trajectory for visualization |
+| `/uavN/mavros/setpoint_raw/local` | `PositionTarget`: local ENU values converted by MAVROS to NED |
+| `/mpc/status`, `/mpc/setpoint_status` | `std_msgs/String`: JSON diagnostics |
+| `/mpc/enable` | `std_srvs/SetBool`: enable/disable publisher ownership |
+| `/target/run`, `/target/reset` | `SetBool`, `Trigger`: pause/resume and reset target |
+| `/target/ground_truth`, `/uavN/ground_truth/pose` | `PoseStamped`: simulation alignment, supervision, evaluation |
+| `/solo/readiness` | `std_msgs/String`: JSON fleet health |
+| `/clock` | `rosgraph_msgs/Clock`: Gazebo simulation time |
 
-## Clock
+## Frames and clocks
 
-Baseline ROS wall time giống hướng dẫn gốc. Muốn simulation time, thêm ros_gz bridge `/clock`, cấu hình toàn bộ nodes liên quan và kiểm tra MAVROS timestamp/timesync với FCU. Chỉ đặt `use_sim_time=true` mà không có `/clock` sẽ làm timer đứng. Không coi solver thời gian 100 ms wall và 100 ms simulation là cùng tiêu chí khi RTF khác 1.
+MAVROS local frames use each UAV's prefix, such as `uav1/map` and
+`uav1/base_link`. MPC uses a shared `world` ENU frame. Namespaces do not establish
+a transform between separate FCU origins.
 
-## Kiểm thử
+The frame adapter uses simulation ground truth to calibrate translation while
+disarmed, with a configured `world_from_local_yaw`. It freezes alignment, saves
+`alignment.json`, and uses MAVROS measurements for subsequent motion and attitude.
+The Gazebo XYZ-to-NED transform and MAVROS NED-to-ENU conversion give matching
+position axes for this world. Hardware must establish a common origin and yaw
+independently. Transform position with rotation plus translation; transform
+velocity and acceleration with rotation only. Check the `PositionTarget`
+coordinate frame, `type_mask`, and ENU/NED conversion on the target firmware.
 
-`./scripts/dev test` kiểm tra fleet uniqueness/ports và world transformation giữ IMU scope, loại gimbal đúng profile và tách video ports. Smoke test thực tế kiểm tra heartbeat/pose trên ba UAV. Flight CLI kiểm tra GUIDED/ARM/takeoff và xác nhận LAND/disarm. Không gọi test ARM/takeoff tự động trên hardware.
+Gazebo bridges `/clock`. MPC, perception, target, frame, and setpoint nodes use
+simulation time; MAVROS uses wall/FCU time. The adapter timestamps measured state
+at simulation receipt time and projects sensors against nearby measured poses.
+This approximation has latency error and does not synchronize FCU measurements
+with camera exposure time. Hardware requires a deliberate synchronization policy.
+Setting `use_sim_time=true` without a clock source stops ROS timers. A 100 ms wall
+solver duration and a 100 ms simulation period are different budgets when the
+simulator runs below real time.
 
-CI nên chia hai lớp: unit/build trên runner thường; smoke simulation profile control trên Linux runner đủ tài nguyên. Khi đã có camera/LiDAR simulation, thêm bài cảm biến và GPU runner riêng. Benchmark solver trên Pi thật trước khi đặt deadline được bảo đảm.
+## Control ownership and failure behavior
+
+The mission supervisor disables publishing during takeoff and LAND. The setpoint
+publisher runs in a separate process and does not import the optimizer, so a
+blocked solve does not block its publishing loop. It only controls connected,
+armed UAVs in GUIDED mode with alignment and measured pose available.
+
+Invalid or expired references cause zero horizontal velocity with altitude
+feedback when state is fresh. Stale pose/FCU status causes zero velocity without
+altitude feedback. Missing connection, GUIDED/armed state, pose, or alignment can
+prevent output entirely. Independent command, pose, and FCU freshness limits are
+listed in [Configuration](CONFIGURATION.md#timing-and-expiry).
+
+Corridor/solver failure produces no fresh reference; failed decomposition is not
+interpreted as obstacle-free space. A proximity guard stops approaching motion
+near teammates, but soft optimization constraints and sampled checks do not
+prove collision avoidance. Acceleration commands represent the lag model's
+reference, not motor PWM or thrust. Physical deployment must identify the FCU
+response and saturation behavior.
+
+## MAVROS parameter bootstrap
+
+The pinned MAVROS commit uses `use_global_arguments(false)` on plugin nodes,
+so a generated command-line YAML file alone does not configure them. Bootstrap
+uses `ListParameters`, `GetParameters`, and `SetParameters`, compares existing
+values, and writes only differences. Readiness requires successful completion.
+Undeclared upstream keys are skipped with warnings; a rejected declared parameter
+is an initialization error. UAS frames are configured separately on `mavros_node`.
+
+The pinned `setpoint_attitude.use_quaternion` callback captures a constructor-local
+QoS object by reference. Calling it later can cause an `invalid allocator` crash.
+Bootstrap avoids writing the already-correct default `false` and rejects changing
+that mode. Attitude/quaternion control requires fixing the callback to retain QoS
+by value, rebuilding MAVROS, and validating a new environment release. Current
+position/velocity control does not require that mode change.
+
+## Verification
+
+Run `./scripts/dev test` for configuration, world generation, controller,
+sensor/target logic, ROS construction and transforms, stale-input behavior, mission
+guards, and CLI shutdown ordering. Tests run in the simulation image with the
+project bind-mounted. Use `git diff --check` for whitespace review.
+
+The [simulation workflow](../.github/workflows/simulation.yml) builds the image,
+runs tests, and starts the three-UAV stack to check heartbeat and pose. It does
+not arm or fly a mission. Changes to flight behavior need a supervised simulation
+experiment and review of measured logs; update the [validation record](VALIDATION.md)
+with the configuration, image identity, evidence, and remaining limits. Hardware
+verification follows the staged [migration plan](HARDWARE.md).
