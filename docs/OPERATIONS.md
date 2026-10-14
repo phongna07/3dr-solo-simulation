@@ -13,6 +13,7 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 | `./scripts/dev mpc` | Start a fresh stack and wait for fleet readiness; no arming |
 | `./scripts/dev mpc --gui` | Wait for readiness, then attach the GUI |
 | `./scripts/dev mpc --no-wait` | Start without waiting; use `dev wait` before a mission |
+| `./scripts/dev mpc --record-cameras` | Also record one FOV camera video per UAV in the run directory |
 | `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
 | `./scripts/dev mission run` | Take off, supervise tracking, LAND, and wait for disarm |
 | `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds after initialization |
@@ -140,6 +141,7 @@ there is no need to launch extra MAVROS instances for observation.
 | `mpc.jsonl` | Measured state, target estimates, solver outcomes, and timings |
 | `truth.jsonl` | Independent Gazebo poses recorded by `mission run` |
 | `evaluation.json` | Derived geometry, tracking, compute, and simulation-speed metrics |
+| `cameras/<uav-name>.avi`, `cameras/<uav-name>.timestamps.jsonl` | Optional UAV camera videos and original per-frame simulation timestamps |
 
 `runs/latest` selects the most recent simulation; launching another run changes
 that link. The actual image ID is stored beside the run directory in
@@ -158,6 +160,38 @@ samples; otherwise it uses MAVROS measurements and labels `geometry_source`.
 The current airborne filter requires every UAV above 2.5 m, so revisit evaluation
 when changing the default 3 m altitude. Sampled metrics do not establish continuous
 collision avoidance; inspect physics contacts and camera tracking too.
+
+## Record UAV camera video
+
+Enable recording when starting a fresh simulation:
+
+```bash
+./scripts/dev mpc --record-cameras --gui
+./scripts/dev mission run --seconds 20
+./scripts/dev stop
+ls runs/latest/cameras/
+```
+
+`--gui` is optional. Recording uses each UAV's `/uavN/camera/image_raw` topic,
+so the files show the drone's downward FOV rather than the Gazebo GUI view.
+All vehicles in the selected fleet are recorded in a separate ROS process;
+recording is disabled unless `--record-cameras` is supplied. Live source mounting
+allows this option to work with the existing simulation image without a rebuild.
+For direct ROS launch, use `record_cameras:=true`.
+
+The host files are `runs/<run-id>/cameras/<uav-name>.avi` (MJPEG). Files begin
+with the first received frame, include the time before takeoff and after landing,
+and close when the simulation stops. Closing the GUI or completing `mission run`
+leaves recording active. Use `dev stop` to finish and finalize the videos.
+
+Resolution and playback FPS come from the camera settings (default 160 × 160,
+8 FPS). Each received frame is written once; playback follows the configured
+simulation camera rate, independent of wall-clock simulation speed. Missed frames
+shorten playback; the adjacent `.timestamps.jsonl` records each zero-based video
+frame index and its original ROS simulation timestamp in nanoseconds (`stamp_ns`).
+No video is created for a camera that never publishes. Abrupt process termination
+or a host crash can leave incomplete videos. Recorder errors appear in `dev logs`
+and do not shut down the flight stack.
 
 ## Record telemetry
 

@@ -19,7 +19,7 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in (
-        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "RUN_ID")}}) + "\\n")
+        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_RECORD_CAMERAS", "RUN_ID")}}) + "\\n")
 if args[0] == "inspect":
     print('"sha256:test"')
 elif "ps" in args and "-q" in args and "--status" not in args:
@@ -61,6 +61,23 @@ def test_mpc_passes_custom_configuration_to_compose(fake_docker):
         assert start["env"]["FLEET_CONFIG"] == "/workspace/config/custom-fleet.yaml"
         assert start["env"]["MPC_SCENARIO"] == "/workspace/custom-scenario.yaml"
         assert start["env"]["MPC_SETTINGS"] == "/workspace/custom-settings.yaml"
+    finally:
+        for entry in entries:
+            if entry["env"]["RUN_ID"]:
+                (ROOT / "runs" / (entry["env"]["RUN_ID"] + ".image-id.json")).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("record", [False, True])
+def test_camera_recording_is_opt_in(fake_docker, record):
+    log, env = fake_docker
+    env["MPC_RECORD_CAMERAS"] = "true"
+    args = ["mpc", "--no-wait"] + (["--record-cameras"] if record else [])
+    result = invoke(args, env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 0, result.stderr
+        start = next(e for e in entries if "up" in e["args"])
+        assert start["env"]["MPC_RECORD_CAMERAS"] == str(record).lower()
     finally:
         for entry in entries:
             if entry["env"]["RUN_ID"]:

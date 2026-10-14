@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
@@ -107,6 +107,19 @@ def start(context):
             arguments=args + ["--vehicle", uav["name"]],
             parameters=[{"use_sim_time": True}], output="both",
         ))
+    if get("record_cameras") == "true":
+        # Run the live module so enabling recording needs no image rebuild.
+        # Disk writes run independently of camera detection and flight control.
+        actions.append(ExecuteProcess(
+            cmd=[
+                "python3", "-m", "solo_mpc.camera_recorder",
+                "--fleet", str(run / "fleet.yaml"),
+                "--output-dir", str(run / "cameras"),
+                "--fps", str(settings["camera_rate"]),
+                "--ros-args", "-p", "use_sim_time:=true",
+            ],
+            name="mpc-camera-recorder", output="both",
+        ))
     return actions
 
 
@@ -138,6 +151,11 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("profile", default_value="mpc"),
+            DeclareLaunchArgument(
+                "record_cameras",
+                default_value=os.environ.get("MPC_RECORD_CAMERAS", "false"),
+                choices=["true", "false"],
+            ),
             DeclareLaunchArgument(
                 "target_mode", default_value=os.environ.get("MPC_TARGET_MODE", "")
             ),

@@ -43,6 +43,12 @@ telemetry/pose. **Starting the stack does not arm the vehicles.**
 Camera and LiDAR rendering is required even with the GUI closed; use the
 [WSL and GPU guide](docs/WSL_GPU.md) if rendering fails or runs slowly.
 
+To record every UAV's downward FOV camera, start with
+`./scripts/dev mpc --record-cameras` (combine with `--gui` if desired). Videos
+are saved on the host in `runs/<run-id>/cameras/uavN.avi`. Recording continues
+until `./scripts/dev stop`, which closes the video files. See
+[camera recording](docs/OPERATIONS.md#record-uav-camera-video) for details.
+
 Once the stack is ready:
 
 ```bash
