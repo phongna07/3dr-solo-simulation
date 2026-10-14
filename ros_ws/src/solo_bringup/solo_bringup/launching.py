@@ -4,11 +4,28 @@ import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 from launch.actions import EmitEvent, RegisterEventHandler, LogInfo
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.events import Shutdown
 from launch_ros.actions import Node
 
 from solo_bringup.runtime import mavros_config
+
+
+def observed(action, progress, name, initializes=False):
+    """Register lifecycle callbacks before executing the process action."""
+    progress.register(name, initializes)
+
+    def started(event, context):
+        progress.running(name, event.pid)
+
+    def exited(event, context):
+        progress.exited(name, event.returncode)
+
+    return [
+        RegisterEventHandler(OnProcessStart(target_action=action, on_start=started)),
+        RegisterEventHandler(OnProcessExit(target_action=action, on_exit=exited)),
+        action,
+    ]
 
 
 def critical(action):

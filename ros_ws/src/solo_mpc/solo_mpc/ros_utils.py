@@ -17,6 +17,7 @@ def arguments(description):
     parser.add_argument("--run-dir", default="")
     parser.add_argument("--world", default="mpc_small50")
     parser.add_argument("--vehicle", help="Run the camera detector for one fleet vehicle")
+    parser.add_argument('--startup-component', help='Component name in the launch startup inventory')
     args, ros = parser.parse_known_args()
     from pathlib import Path
 
@@ -62,11 +63,25 @@ def run_node(node_class, description):
     args, ros = arguments(description)
     rclpy.init(args=ros)
     node = None
+    progress = None
+    if args.run_dir and args.startup_component:
+        from solo_bringup.startup import ComponentProgress
+
+        progress = ComponentProgress(args.run_dir, args.startup_component)
     try:
+        if progress:
+            progress.update('initializing', f'Constructing {node_class.__name__}')
         node = node_class(args)
+        if progress:
+            progress.update('initialized', 'ROS node initialized; waiting for mission inputs')
+        node.get_logger().info(f'{node.get_name()}: initialized; waiting for mission inputs')
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except BaseException as error:
+        if progress:
+            progress.update('failed', f'{type(error).__name__}: {error}')
+        raise
     finally:
         if node is not None:
             node.destroy_node()

@@ -89,6 +89,7 @@ case "$command" in
       python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --timeout "$TASK_TIMEOUT"
     fi
     if "$show_gui"; then
+      printf 'Starting Gazebo GUI.\n'
       "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py
     fi
     ;;

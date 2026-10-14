@@ -76,3 +76,28 @@ def test_bootstrap_changes_frames_without_reentering_unchanged_callbacks(tmp_pat
     assert node.set_calls == [('/uav1/mavros/imu', ['frame_id']),
                               ('/uav1/mavros/local_position', ['frame_id'])]
     assert node.values['/uav1/mavros/local_position']['frame_id'].string_value == 'uav1/map'
+
+
+def test_plugin_progress_distinguishes_missing_nodes_services_and_parameter_phases(tmp_path):
+    data = {f'/**/{name}': {'ros__parameters': values} for name, values in {
+        'sys': {'heartbeat_rate': 1.0}, 'imu': {'frame_id': 'uav1/base_link'},
+        'local_position': {'frame_id': 'uav1/map'},
+    }.items()}
+    (tmp_path / 'uav1-mavros.yaml').write_text(yaml.safe_dump(data))
+    node = FakeNode()
+    bootstrap = PluginParameters(node, [{'name': 'uav1'}], tmp_path)
+    imu = '/uav1/mavros/imu'
+    assert bootstrap.status()[imu]['phase'] == 'waiting for node'
+    assert not bootstrap.tick()
+    assert bootstrap.status()[imu]['phase'] == 'listing parameters'
+    bootstrap.tick()
+    assert bootstrap.status()[imu]['phase'] == 'reading parameters'
+    bootstrap.tick()
+    bootstrap.tick()
+    assert bootstrap.status()[imu]['phase'] == 'applying parameters'
+    bootstrap.items[imu]['client'].service_is_ready = lambda: False
+    assert bootstrap.status()[imu]['phase'] == 'waiting for parameter services'
+    bootstrap.items[imu]['client'].service_is_ready = lambda: True
+    for _ in range(6):
+        bootstrap.tick()
+    assert all(item['ready'] for item in bootstrap.status().values())

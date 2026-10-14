@@ -51,7 +51,9 @@ class Flight(Node):
         self.wait(client.service_is_ready, f'{name}/{suffix} service', 30)
         future = client.call_async(request)
         self.wait(future.done, f'{name}/{suffix} reply', 30)
-        response = future.result()
+        self.check_response(name, suffix, future.result())
+
+    def check_response(self, name, suffix, response):
         if response is None:
             raise RuntimeError(f'{name}/{suffix}: no response')
         if hasattr(response, 'success') and (not response.success or response.result != 0):
@@ -66,20 +68,90 @@ class Flight(Node):
                   f'{name}: actual mode {mode}')
 
     def takeoff(self, names, altitude):
+        names = tuple(names)
+        self.wait(lambda: all(self.connected(n) and n in self.poses for n in names),
+                  'fleet connected + pose')
+        # Check the whole fleet before sending any flight commands.
         for name in names:
-            self.wait(lambda: self.connected(name) and name in self.poses, f'{name}: connected + pose')
             if self.states[name].armed:
                 raise RuntimeError(f'{name}: already armed; inspect state before takeoff')
-            self.mode(name, 'GUIDED')
-            self.call(name, 'cmd/arming', CommandBool.Request(value=True))
-            # No long wait between ARM ACK and takeoff (auto-disarm on ground).
-            self.call(name, 'cmd/takeoff', CommandTOL.Request(altitude=altitude))
-            self.wait(lambda: self.connected(name) and self.states[name].armed
-                      and self.states[name].mode == 'GUIDED'
-                      and time.monotonic() - self.pose_at.get(name, 0) < 10
-                      and self.poses[name].pose.position.z >= altitude - 0.5,
-                      f'{name}: observed takeoff to {altitude} m')
-            print(f'{name}: takeoff observed', flush=True)
+        self.wait(lambda: all(self.command_clients[(n, suffix)].service_is_ready()
+                             for n in names
+                             for suffix in ('set_mode', 'cmd/arming', 'cmd/takeoff')),
+                  'fleet takeoff services', 30)
+
+        # Each UAV advances independently on the single ROS executor. In
+        # particular, a slow ARM reply cannot delay another UAV's takeoff.
+        pending = {}
+
+        def send(name, suffix, request):
+            future = self.command_clients[(name, suffix)].call_async(request)
+            pending[name] = (suffix, future, time.monotonic() + 30)
+
+        for name in names:
+            send(name, 'set_mode', SetMode.Request(base_mode=0, custom_mode='GUIDED'))
+
+        def advance():
+            for name, (phase, future, deadline) in list(pending.items()):
+                if phase == 'GUIDED':
+                    if self.connected(name) and self.states[name].mode == 'GUIDED':
+                        send(name, 'cmd/arming', CommandBool.Request(value=True))
+                        continue
+                elif future.done():
+                    self.check_response(name, phase, future.result())
+                    if phase == 'set_mode':
+                        pending[name] = ('GUIDED', None, time.monotonic() + self.timeout)
+                    elif phase == 'cmd/arming':
+                        # No fleet barrier between ARM ACK and takeoff:
+                        # ArduPilot may auto-disarm vehicles left on the ground.
+                        send(name, 'cmd/takeoff', CommandTOL.Request(altitude=altitude))
+                    else:
+                        del pending[name]
+                    continue
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f'Timeout: {name}/{phase}')
+            return not pending
+
+        self.wait(advance, 'fleet takeoff commands', self.timeout + 90)
+        self.wait_for_stable_altitude(names, altitude)
+        print('All selected UAVs stable at takeoff altitude.', flush=True)
+
+    def wait_for_stable_altitude(self, names, altitude):
+        """Require two seconds of fresh, settled telemetry for every UAV.
+
+        Pose timestamps measure vertical speed and the settling interval;
+        repeated pose timestamps cannot satisfy the hold.
+        """
+        previous, stable_since = {}, {}
+
+        def settled():
+            ready = True
+            for name in names:
+                pose = self.poses.get(name)
+                if not (self.connected(name) and self.states[name].armed
+                        and self.states[name].mode == 'GUIDED' and pose is not None
+                        and time.monotonic() - self.pose_at.get(name, 0) < 2):
+                    previous.pop(name, None)
+                    stable_since.pop(name, None)
+                    ready = False
+                    continue
+                stamp = pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9
+                z = pose.pose.position.z
+                old = previous.get(name)
+                if old is None or stamp != old[0]:
+                    previous[name] = (stamp, z)
+                    if (old is not None and 0 < stamp - old[0] <= 1
+                            and abs(z - altitude) <= 0.5
+                            and abs(old[1] - altitude) <= 0.5
+                            and abs((z - old[1]) / (stamp - old[0])) <= 0.2):
+                        stable_since.setdefault(name, old[0])
+                    else:
+                        stable_since.pop(name, None)
+                if name not in stable_since or stamp - stable_since[name] < 2:
+                    ready = False
+            return ready
+
+        self.wait(settled, f'fleet stable at {altitude} m')
 
     def land(self, names):
         # Send LAND to every connected UAV before waiting for any one to disarm.

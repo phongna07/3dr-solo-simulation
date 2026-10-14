@@ -8,8 +8,9 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from solo_bringup.configuration import load_config
-from solo_bringup.launching import critical, mavros
+from solo_bringup.launching import critical, mavros, observed
 from solo_bringup.runtime import create_run
+from solo_bringup.startup import StartupProgress
 from solo_bringup.world import generate_world
 
 
@@ -35,6 +36,10 @@ def start(context):
                 except OSError as error:
                     raise RuntimeError(f"{uav['name']}: port {port} occupied") from error
     run = create_run(config, 'simulation', profile, get('run_id'), get('resume') == 'true')
+    progress = StartupProgress(run)
+    # The MPC launch extends this same inventory before any process starts.
+    context.solo_startup_progress = progress
+    progress.stage('Generating Gazebo world and sensor models')
     if profile == 'mpc':
         from solo_mpc.world import generate_mpc_world
         world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf',
@@ -50,8 +55,9 @@ def start(context):
     if profile in ('reference', 'mpc'):
         gz_command.insert(2, '--headless-rendering')
     gazebo = ExecuteProcess(cmd=gz_command, name='gazebo-server', output='both')
+    progress.stage('Preparing SITL and MAVROS configuration')
     actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs')),
-               critical(gazebo), gazebo]
+               critical(gazebo)] + observed(gazebo, progress, 'gazebo-server')
     for uav in config['uavs']:
         cwd = run / 'sitl' / str(uav['instance'])
         cwd.mkdir(parents=True, exist_ok=True)
@@ -62,13 +68,15 @@ def start(context):
             cwd=str(cwd), name=f"sitl-{uav['name']}", output='both',
         )
         bridge = mavros(uav, run)
-        actions += [critical(sitl), sitl, critical(bridge), bridge]
+        actions += [critical(sitl)] + observed(sitl, progress, f"sitl-{uav['name']}")
+        actions += [critical(bridge)] + observed(bridge, progress, f"mavros-{uav['name']}")
     monitor = Node(
         package='solo_bringup', executable='readiness', name='fleet_readiness',
         output='both', arguments=['--fleet', str(run / 'fleet.yaml'), '--run-dir', str(run),
                                   '--timeout', get('readiness_timeout')],
     )
-    actions += [critical(monitor), monitor]
+    actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
+    progress.stage('Starting processes; waiting for fleet telemetry')
     return actions
 
 

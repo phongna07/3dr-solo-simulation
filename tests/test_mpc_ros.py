@@ -75,6 +75,37 @@ def test_per_vehicle_camera_subscribes_only_to_its_own_topics(tmp_path):
         rclpy.shutdown()
 
 
+@pytest.mark.parametrize('fail', [False, True])
+def test_run_node_records_constructor_success_or_failure(tmp_path, monkeypatch, fail):
+    import json
+    from solo_mpc import ros_utils
+
+    args = node_args(tmp_path)
+    args.startup_component = 'setpoints'
+    monkeypatch.setattr(ros_utils, 'arguments', lambda _: (args, []))
+    path = tmp_path / 'startup-components/setpoints.json'
+
+    def construct(options):
+        assert json.loads(path.read_text())['state'] == 'initializing'
+        if fail:
+            raise RuntimeError('constructor failed')
+        return Setpoints(options)
+
+    def spin(node):
+        assert json.loads(path.read_text())['state'] == 'initialized'
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(rclpy, 'spin', spin)
+    if fail:
+        with pytest.raises(RuntimeError, match='constructor failed'):
+            ros_utils.run_node(construct, 'Startup test')
+        assert json.loads(path.read_text())['state'] == 'failed'
+        assert 'constructor failed' in json.loads(path.read_text())['detail']
+    else:
+        ros_utils.run_node(construct, 'Startup test')
+    assert not rclpy.ok()
+
+
 def test_compass_error_does_not_rotate_enu_position_axes(tmp_path):
     import numpy as np
     from mavros_msgs.msg import State

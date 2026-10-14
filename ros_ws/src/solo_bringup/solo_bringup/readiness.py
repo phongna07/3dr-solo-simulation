@@ -32,6 +32,7 @@ class Readiness(Node):
         self.started = time.monotonic()
         self.ever_ready = False
         self.previous_ready = None
+        self.previous_summary = None
         self.last_report = 0
         self.failed = False
         self.records = {}
@@ -89,6 +90,7 @@ class Readiness(Node):
     def tick(self):
         now = time.monotonic()
         configured = self.plugin_parameters.tick()
+        plugins = self.plugin_parameters.status()
         report = {}
         for name, record in self.records.items():
             state = record['state']
@@ -119,6 +121,42 @@ class Readiness(Node):
                     record['future'] = record['client'].call_async(request)
                     record['request_id'], record['request_at'] = missing[0], now
             pose_age = now - record['pose_at'] if record['pose_at'] else None
+            prefix = f'/{name}/mavros/'
+            plugin_status = {target.removeprefix(prefix): item for target, item in plugins.items()
+                             if target.startswith(prefix)}
+            parameters_ready = all(item['ready'] for item in plugin_status.values())
+            if not connected:
+                connection_detail = 'waiting for FCU heartbeat' if state is None else \
+                    ('FCU disconnected' if not state.connected else 'FCU heartbeat stale')
+            else:
+                connection_detail = 'connected'
+            missing = [message for message in (32, 30) if message not in record['intervals']]
+            if not missing:
+                telemetry_detail = 'position + attitude streams accepted'
+            elif not connected:
+                telemetry_detail = 'waiting for FCU connection'
+            elif record['future'] is not None:
+                telemetry_detail = f"waiting for message {record['request_id']} acknowledgement"
+            elif not record['client'].service_is_ready():
+                telemetry_detail = 'waiting for MAVROS set_message_interval service'
+            else:
+                telemetry_detail = f'requesting messages {missing}'
+            pose_ready = record['pose_count'] >= 3 and pose_age is not None and pose_age < self.max_pose_age
+            if not record['pose_count']:
+                pose_detail = 'waiting for first local pose (FCU EKF/local_position)'
+            elif record['pose_count'] < 3:
+                pose_detail = f"collecting fresh poses {record['pose_count']}/3"
+            elif not pose_ready:
+                pose_detail = 'local pose stream stale'
+            else:
+                pose_detail = 'fresh local poses'
+            checks = {
+                'FCU': {'ready': connected, 'detail': connection_detail},
+                'MAVROS parameters': {'ready': parameters_ready,
+                                      'detail': f"{sum(item['ready'] for item in plugin_status.values())}/{len(plugin_status)} plugins configured"},
+                'telemetry': {'ready': not missing, 'detail': telemetry_detail},
+                'local pose': {'ready': pose_ready, 'detail': pose_detail},
+            }
             ready = configured and connected and record['intervals'] == {32, 30} and \
                 record['pose_count'] >= 3 and pose_age is not None and pose_age < self.max_pose_age
             report[name] = {
@@ -126,6 +164,7 @@ class Readiness(Node):
                 'pose_messages': record['pose_count'], 'pose_age_wall_s': pose_age,
                 'mode': state.mode if state else None,
                 'armed': bool(state and state.armed), 'ready': ready,
+                'checks': checks, 'plugins': plugin_status,
             }
         ready = all(value['ready'] for value in report.values())
         payload = {'ready': ready, 'plugin_parameters_applied': configured, 'updated_wall_unix': time.time(),
@@ -135,12 +174,16 @@ class Readiness(Node):
         if ready:
             self.ever_ready = True
             atomic_json(self.run_dir / 'ready.json', payload)
-        if ready != self.previous_ready or now - self.last_report > 15:
+        status_summary = json.dumps({name: {'checks': item['checks'], 'plugins': item['plugins']}
+                                     for name, item in report.items()}, sort_keys=True)
+        if status_summary != self.previous_summary or ready != self.previous_ready or now - self.last_report > 15:
             summary = ', '.join(f"{name}: {'ready' if item['ready'] else 'waiting'} "
-                                f"pose={item['pose_messages']} stream={item['telemetry']}"
+                                + '; '.join(f"{check}: {value['detail']}" for check, value in item['checks'].items()
+                                            if not value['ready'])
                                 for name, item in report.items())
             self.get_logger().info(f"Fleet {'READY' if ready else 'NOT READY'} — {summary}")
             self.previous_ready, self.last_report = ready, now
+            self.previous_summary = status_summary
         if not self.ever_ready and now - self.started > self.timeout:
             self.get_logger().error('Readiness deadline exceeded. Check logs, JSON ports, EKF and RTF.')
             self.failed = True

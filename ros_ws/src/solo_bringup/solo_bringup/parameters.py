@@ -34,6 +34,7 @@ class PluginParameters:
         self.node = node
         self.items = {}
         self.required = set()
+        self.active = set()
         for uav in uavs:
             prefix = f"/{uav['name']}/mavros/"
             self.required.update(prefix + plugin for plugin in ('local_position', 'imu', 'sys'))
@@ -58,6 +59,7 @@ class PluginParameters:
         now = time.monotonic()
         active = {f"{namespace.rstrip('/')}/{name}" for name, namespace in
                   self.node.get_node_names_and_namespaces()}
+        self.active = active
         for target, item in self.items.items():
             if item['done'] or target not in active:
                 continue
@@ -105,3 +107,22 @@ class PluginParameters:
                 item['at'] = now
         expected = (active & self.items.keys()) | self.required
         return all(self.items[target]['done'] for target in expected)
+
+    def status(self):
+        """Expose the same required/active plugin set used by the readiness gate."""
+        expected = (self.active & self.items.keys()) | self.required
+        report = {}
+        for target in sorted(expected):
+            item = self.items[target]
+            if item['done']:
+                phase = 'ready'
+            elif target not in self.active:
+                phase = 'waiting for node'
+            elif item['future'] is not None or all(item[key].service_is_ready()
+                                                  for key in ('client', 'list_client', 'get_client')):
+                phase = {'list': 'listing parameters', 'get': 'reading parameters',
+                         'set': 'applying parameters'}[item['phase']]
+            else:
+                phase = 'waiting for parameter services'
+            report[target] = {'ready': item['done'], 'phase': phase}
+        return report

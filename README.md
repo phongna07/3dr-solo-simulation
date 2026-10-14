@@ -40,6 +40,14 @@ cp .env.example .env
 MAVROS instance per UAV, sensor bridges, and the MPC nodes. MAVROS connects ROS
 to each flight controller (FCU). The command waits for connected FCUs and fresh
 telemetry/pose. **Starting the stack does not arm the vehicles.**
+While waiting, the terminal shows launched processes, initialized MPC nodes,
+and each UAV's remaining checks: MAVROS plugin configuration, FCU connection,
+telemetry acknowledgements, and fresh local poses. Progress updates immediately
+when a check changes and every 15 seconds during longer waits. `RUNNING` means
+the process has started; `READY` nodes have completed initialization. Simulation
+readiness still refers to FCU telemetry and poses; mission inputs and frame
+alignment may still be pending. The same progress is available with
+`./scripts/dev wait`, and full process output with `./scripts/dev logs`.
 Camera and LiDAR rendering is required even with the GUI closed; use the
 [WSL and GPU guide](docs/WSL_GPU.md) if rendering fails or runs slowly.
 
@@ -56,6 +64,10 @@ Once the stack is ready:
 ./scripts/dev evaluate          # Write metrics for the latest mission
 ./scripts/dev stop              # Release control, confirm landing, stop the container
 ```
+
+Mission startup arms and launches the UAVs concurrently. Tracking and target
+motion begin only after every UAV holds within 0.5 m of the flight altitude,
+with vertical speed at most 0.2 m/s, for two seconds of fresh pose telemetry.
 
 For a short experiment, use `./scripts/dev mission run --seconds 20`. This limits
 tracking to 20 wall-clock seconds after takeoff and controller initialization.

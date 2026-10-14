@@ -8,7 +8,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
-from solo_bringup.launching import critical
+from solo_bringup.launching import critical, observed
 from solo_mpc.settings import load_settings
 from solo_mpc.world import bridge_config
 
@@ -41,6 +41,8 @@ def start(context):
     spec.loader.exec_module(module)
     context.launch_configurations["profile"] = "mpc"
     actions = module.start(context)
+    progress = context.solo_startup_progress
+    progress.stage('Preparing MPC nodes and sensor bridges')
     run = Path("/workspace/runs/latest").resolve()
     # Save the actual resolved experiment input alongside the existing manifests.
     import json
@@ -70,7 +72,7 @@ def start(context):
         ],
         output="both",
     )
-    actions += [critical(bridge), bridge]
+    actions += [critical(bridge)] + observed(bridge, progress, 'sensor-bridge')
     args = [
         "--scenario",
         str(run / "scenario.yaml"),
@@ -92,25 +94,27 @@ def start(context):
         node = Node(
             package="solo_mpc",
             executable=executable,
-            arguments=args,
+            arguments=args + ['--startup-component', executable],
             parameters=[{"use_sim_time": True}],
             output="both",
         )
         # Keep SITL and MAVROS alive if a controller/perception process exits.
         # The independent publisher expires references; mission run can LAND.
-        actions.append(node)
+        actions += observed(node, progress, executable, initializes=True)
     # Each camera callback runs in its own process, independently of the other
     # vehicles and of all optimization workers. Reuse the installed executable.
     for uav in fleet["uavs"]:
-        actions.append(Node(
+        name = f"camera-detector-{uav['name']}"
+        node = Node(
             package="solo_mpc", executable="marker_detector",
-            arguments=args + ["--vehicle", uav["name"]],
+            arguments=args + ["--vehicle", uav["name"], '--startup-component', name],
             parameters=[{"use_sim_time": True}], output="both",
-        ))
+        )
+        actions += observed(node, progress, name, initializes=True)
     if get("record_cameras") == "true":
         # Run the live module so enabling recording needs no image rebuild.
         # Disk writes run independently of camera detection and flight control.
-        actions.append(ExecuteProcess(
+        recorder = ExecuteProcess(
             cmd=[
                 "python3", "-m", "solo_mpc.camera_recorder",
                 "--fleet", str(run / "fleet.yaml"),
@@ -119,7 +123,9 @@ def start(context):
                 "--ros-args", "-p", "use_sim_time:=true",
             ],
             name="mpc-camera-recorder", output="both",
-        ))
+        )
+        actions += observed(recorder, progress, 'camera-recorder')
+    progress.stage('Starting processes; waiting for fleet telemetry')
     return actions
 
 
