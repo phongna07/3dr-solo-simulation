@@ -89,3 +89,19 @@ def test_force_stop_only_stops_processes(fake_docker):
     commands = [e["args"] for e in calls(log)]
     assert len(commands) == 1
     assert commands[0][-2:] == ["stop", "sim"]
+
+
+@pytest.mark.parametrize("args", [["gui"], ["mpc", "--no-wait", "--gui"]])
+def test_gui_commands_start_target_follow_helper(fake_docker, args):
+    log, env = fake_docker
+    result = invoke(args, env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 0, result.stderr
+        assert entries[-1]["args"][-4:] == [
+            "sim", "/usr/local/bin/solo-entrypoint", "python3", "/workspace/scripts/gazebo_gui.py"
+        ]
+    finally:
+        for entry in entries:
+            if entry["env"]["RUN_ID"]:
+                (ROOT / "runs" / (entry["env"]["RUN_ID"] + ".image-id.json")).unlink(missing_ok=True)

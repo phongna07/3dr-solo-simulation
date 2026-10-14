@@ -51,6 +51,12 @@ Closing the GUI only closes its client. Ctrl+C in `dev logs` only stops log
 following. Stop an existing run before launching another; every `dev mpc` creates
 new simulator state, and MPC runs do not support resume.
 
+Both `dev mpc --gui` and `dev gui` automatically follow the pink target in MPC
+worlds. The viewpoint sits 24 m above it, offset 10 m along each horizontal axis,
+and looks down with a wide view of the formation and nearby obstacles. Press
+Escape in the 3D view to release camera follow and navigate freely. Reopen the
+GUI to restore the target view.
+
 ## Topology and readiness
 
 One `sim` container contains Gazebo, the fleet's SITL/MAVROS instances, readiness,

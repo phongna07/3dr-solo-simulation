@@ -86,7 +86,7 @@ case "$command" in
       python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --timeout "$TASK_TIMEOUT"
     fi
     if "$show_gui"; then
-      "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3
+      "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py
     fi
     ;;
   wait)
@@ -100,7 +100,7 @@ case "$command" in
     ;;
   logs) "${dc[@]}" logs -f --tail 100 sim ;;
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
-  gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint gz sim -g -v 3 ;;
+  gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py ;;
   mission) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@" ;;
   evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)
