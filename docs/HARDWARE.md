@@ -1,96 +1,91 @@
-# Hardware migration: Raspberry Pi 4, 3DR Solo, LD19, and GoPro
+# Hardware migration
 
-[Back to the project overview](../README.md)
+[Project overview](../README.md) · [Development](DEVELOPMENT.md)
 
-This guide preserves the path from simulation to physical UAVs. **The hardware
-profile has not been validated on a real Solo or Pi.** It starts MAVROS and
-readiness only, with no automatic firmware flashing, arming, or sensor startup.
-The mission CLI rejects hardware runs, and `companion-stop` stops software
-without sending LAND.
+The intended hardware is Raspberry Pi 4, 3DR Solo, LD19 LiDAR, and GoPro.
+**This profile has not been validated on a physical Pi or Solo.** It starts
+MAVROS and readiness only. It does not flash firmware, arm, start sensors, or
+run hardware MPC. The simulation mission CLI rejects hardware runs, and
+`companion-stop` stops software without sending LAND.
 
-## What is available and what is missing
+## Current support and integration gaps
 
-| Area | Current support | Work required for hardware |
+| Area | Available | Still required |
 |---|---|---|
-| Companion image | ROS Jazzy, pinned MAVROS, readiness, rosbag, camera libraries, project packages | ARM64 build and runtime validation on Pi |
-| FCU link | Configurable MAVROS `fcu_url` | Verified Solo firmware, wiring/routing, baud, SYSID, command ownership |
-| MPC | Source in `solo_mpc`; numerical dependencies in the simulation image | Install ARM64 numerical dependencies, add hardware launch/adapters, profile solver |
-| Localization | MAVROS local pose; simulation alignment uses ground truth | Real estimator, common origin/yaw, calibration, time synchronization |
-| LD19 | Disabled configuration placeholder | Pin, build, and integrate a ROS 2 driver |
-| GoPro | Disabled configuration placeholder | Select a supported model/protocol, decode stream, publish calibrated images |
-| Mission / failsafe | Simulation supervision | Hardware flight policy, FCU failsafes, pilot override, staged flight validation |
+| Companion image | ROS Jazzy, pinned MAVROS, readiness, rosbag, camera libraries, project packages | Native ARM64/runtime validation |
+| FCU link | Configurable `fcu_url`, SYSID, serial mapping | Verified Solo firmware, wiring, routing, baud, command ownership |
+| MPC | Controller source; numerical dependencies in the simulation image | ARM64 dependencies, hardware launch/adapters, solver profiling |
+| Localization | MAVROS local pose and simulation frame adapter | Real estimator, common origin/yaw, calibration, clock synchronization |
+| LD19 / GoPro | Disabled configuration placeholders | Drivers, stream decoding, calibrated ROS topics |
+| Flight supervision | Simulation ownership and cleanup policy | Hardware policy, FCU failsafes, pilot override, flight validation |
 
-The companion image contains project packages but lacks the simulation image's
-MPC numerical dependencies, Gazebo, SITL, and ArduPilot build environment. The
-presence of `solo_mpc` source does not make it a hardware flight stack. Enabling
-`ld19` or `gopro` in the current hardware configuration causes launch to fail
-explicitly until drivers are integrated.
+The companion image excludes Gazebo, SITL, and the MPC numerical dependencies.
+Project source in that image does not provide a complete hardware controller.
+Enabling `ld19` or `gopro` currently fails launch explicitly until drivers are
+integrated. Keep both disabled while establishing the FCU link.
 
-## 1. Prepare the Pi environment
+## 1. Prepare and build the Pi environment
 
-Use a 64-bit host OS compatible with ROS Jazzy and the selected sensor drivers;
-Ubuntu Server 24.04 ARM64 is the baseline to evaluate. Host responsibilities
-include kernel/UART configuration, udev names, networking, clock synchronization,
-power, and thermal management. Confirm camera SDK requirements before finalizing
-the host OS.
+Evaluate Ubuntu Server 24.04 ARM64 as the baseline for ROS Jazzy; check selected
+sensor driver/SDK requirements before choosing the OS. Configure host UARTs,
+udev names, networking, clock synchronization, power, and cooling.
 
-After preparing `.env`, build natively on the Pi:
+Prepare `.env` from [.env.example](../.env.example), then build on the Pi:
 
 ```bash
 ./scripts/dev build companion
 ```
 
-Or build an ARM64 image on a Buildx-capable machine:
+Alternatively, build on a Buildx-capable machine:
 
 ```bash
 docker buildx build --platform linux/arm64 --target companion \
   -f docker/Dockerfile -t solo-companion:gd0-arm64 --load .
 ```
 
-Transfer the image to the Pi using a registry or `docker save` / `docker load`,
-and set `COMPANION_IMAGE` to the chosen tag or digest. An emulated build does not
-validate runtime performance. Keep ARM64 manifests separately from amd64;
-see [Reproducibility](REPRODUCIBILITY.md).
+Transfer via a registry or `docker save` / `docker load`, and set
+`COMPANION_IMAGE` to the chosen tag or digest. Emulated build success does not
+validate runtime performance. Preserve platform-specific manifests and image
+identity using the [reproducibility workflow](REPRODUCIBILITY.md).
 
-## 2. Test Pi-to-laptop SITL before connecting Solo
+## 2. Test the Pi against laptop SITL
 
-Use the laptop as the simulator and the Pi as the companion to validate CPU
-budget, networking, and ROS/FCU interfaces first. This topology still requires
-implementation; the default simulation keeps FCU links inside one container.
+Validate networking, interfaces, and Pi compute budget against simulation before
+connecting the Solo. This topology requires implementation: the default stack
+keeps all FCU connections inside one container.
 
-1. Choose a TCP or UDP MAVLink endpoint, LAN addresses, ports, and SYSIDs.
-2. For TCP, make SITL listen on a reachable container interface and publish its
-   port through Compose. The Pi connects to the laptop's reachable LAN address,
-   not `127.0.0.1`. Verify firewall and WSL/Docker routing.
-3. Replace the corresponding laptop MAVROS control connection, or use a MAVLink
-   router with explicit ownership rules. Avoid competing control publishers or
-   trying to share a single TCP connection without routing.
-4. If ROS sensor/state traffic crosses the LAN, configure DDS discovery beyond
-   `LOCALHOST`, then verify connectivity, QoS, timestamps, and packet loss.
-5. Add real-time hardware clock handling and a measured-state/frame adapter;
-   the current simulation adapters depend on Gazebo time and alignment data.
+1. Choose LAN addresses, a TCP/UDP MAVLink endpoint, ports, and SYSIDs. For TCP,
+   make SITL listen on a reachable interface and publish the port in Compose.
+   The Pi connects to the laptop's reachable address, not `127.0.0.1`. Check
+   firewall, WSL, and Docker routing.
+2. Replace the corresponding laptop MAVROS control connection, or add a MAVLink
+   router with explicit ownership. Prevent competing control publishers and
+   unsupported sharing of one TCP connection.
+3. For ROS traffic across the LAN, configure DDS discovery beyond `LOCALHOST`.
+   Verify QoS, timestamps, packet loss, and connectivity.
+4. Install the numerical dependencies and add hardware launch/state adapters.
+   Replace Gazebo time and ground-truth alignment with hardware clock/frame
+   handling before testing the Pi controller.
 
-This stage can test the Pi controller against SITL once dependencies and launch
-integration are complete. It does not validate physical Solo dynamics or sensors.
+Passing this stage does not validate Solo dynamics or physical sensors.
 
 ## 3. Verify the Solo and connect MAVROS
 
-Record the actual FCU board, bootloader, firmware, Solo/OpenSolo version, and
-existing parameter set before deciding whether to upgrade. The simulation's
-ArduCopter 4.5.3 pin is not a firmware compatibility guarantee for a particular
-Solo. Consult the [ArduPilot Solo developer documentation](https://ardupilot.org/dev/docs/solo.html)
-and [OpenSolo releases](https://github.com/OpenSolo/OpenSolo/releases) for the
-installed hardware/software combination.
+Record the FCU board, bootloader, firmware, Solo/OpenSolo version, and existing
+parameters before considering an upgrade. The simulation's ArduCopter 4.5.3 pin
+is not a compatibility guarantee for a Solo. Consult the
+[ArduPilot Solo documentation](https://ardupilot.org/dev/docs/solo.html) and
+[OpenSolo releases](https://github.com/OpenSolo/OpenSolo/releases) for the actual
+hardware/software combination.
 
-ArduPilot runs on the FCU; the Pi runs companion software. Preserve the Solo's
-existing i.MX6/controller link. Choose a verified UART or routed MAVLink link,
-including electrical compatibility and port ownership. Check the carrier's actual
-pinout rather than assuming a generic TELEM2 mapping.
+ArduPilot runs on the FCU; companion software runs on the Pi. Preserve the Solo's
+existing i.MX6/controller link. Verify the carrier pinout, voltage levels, UART
+or routed MAVLink connection, and port ownership; do not assume a generic TELEM2
+mapping.
 
-Edit [config/hardware.yaml](../config/hardware.yaml) to match the FCU's SYSID and
-link. The template `/dev/solo-fcu:921600` is a placeholder, not a measured Solo
-baud rate. Set a stable host device path using a verified udev rule. For a serial
-link on native Linux Pi:
+Edit [hardware.yaml](../config/hardware.yaml) for the real SYSID and link.
+`/dev/solo-fcu:921600` is a placeholder, not a measured Solo baud rate. Create a
+stable host device name using a verified udev rule. For serial on native Linux:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.hardware-serial.yaml
@@ -100,85 +95,78 @@ export DIALOUT_GID=$(stat -Lc %g "$FCU_DEVICE")
 docker compose --profile hardware logs -f companion
 ```
 
-`FCU_DEVICE` is the host path; the override maps it to `/dev/solo-fcu` inside the
-container. Replace the host path if your stable device name differs. The profile
-uses host networking and a narrow device mapping with the dialout group. It does
-not require a privileged container. USB access under WSL requires a separate
-passthrough setup and is not the Pi baseline.
+Replace `FCU_DEVICE` with the verified host path. The override maps it to
+`/dev/solo-fcu` in the container and adds the device group; a privileged container
+is unnecessary. The hardware profile uses host networking. USB passthrough
+under WSL is separate from this Pi baseline.
 
-Hardware logs and health reports are under `runs/hardware/<run-id>/`, with
-`runs/hardware/latest` selecting the latest companion run. Readiness requires
-local pose as well as a heartbeat. A connected FCU without GPS or another fused
-localization source may never become ready; camera images and LiDAR scans do not
-automatically supply EKF pose.
+Inspect `runs/hardware/<run-id>/` and `runs/hardware/latest` for logs and health.
+Readiness requires local pose as well as heartbeat; an FCU without GPS or another
+fused localization source may never become ready. Raw images and scans do not
+automatically supply EKF pose. Use `./scripts/dev doctor --service companion`
+for environment diagnostics.
 
-To stop the companion software:
+Stop companion software with:
 
 ```bash
 ./scripts/dev companion-stop
 ```
 
-This command does not land the drone. Implement and validate FCU/companion
-link-loss, stale-state, solver-stall, and shutdown policies before physical flight.
+This sends no LAND command. Implement and validate link-loss, stale-state,
+solver-stall, and shutdown behavior before physical flight.
 
 ## 4. Integrate LD19
 
-Start with the manufacturer's [ldlidar_stl_ros2 driver](https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2).
-Pin a commit after confirming it builds and runs on Jazzy ARM64. Test sensor
-output independently over USB–serial before integrating flight control.
+Evaluate the manufacturer's [ldlidar_stl_ros2 driver](https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2),
+pin a tested commit for Jazzy ARM64, and verify USB–serial output independently.
+Add the device mapping and hardware launch integration only after that check.
 
-Add the verified device to Compose, extend hardware launch, and publish
-`/uavN/scan` with the expected `LaserScan` semantics and a calibrated
-`uavN/laser` frame. Use a stable udev name based on the adapter's actual identity.
-Measure scan rate, packet loss, range limits, timestamps, and extrinsics relative
-to `base_link`. Match simulation range/rate/noise to the real sensor and mounting.
+Publish `/uavN/scan` as `sensor_msgs/LaserScan` with calibrated `uavN/laser`
+extrinsics relative to `base_link`. Use a stable udev name based on the adapter's
+identity. Measure scan rate, packet loss, range, timestamps, and tilt effects;
+match simulation range/rate/noise to the sensor and mounting.
 
-LD19 provides a 2D scan plane that tilts with a body-mounted sensor. It is not a
-complete 3D obstacle map or a full localization source. Preserve invalid/no-return
-ray distinctions and tilt rejection when replacing the Gazebo scan adapter.
+A body-mounted LD19 scan plane tilts with the vehicle. It is neither a complete
+3D obstacle map nor a full localization source. Preserve invalid/no-return ray
+distinctions and tilt rejection in the replacement adapter.
 
-## 5. Integrate GoPro recording and image input
+## 5. Integrate GoPro image input and recording
 
-The intended workflow records video to the GoPro SD card while supplying images
-to Pi perception:
+The intended flow is SD-card recording alongside a perception stream:
 
 ```text
 GoPro → SD recording
       → stream/capture → decode → ROS Image + CameraInfo → perception
 ```
 
-Identify the HERO model and firmware before choosing a protocol. Check
-[Open GoPro](https://gopro.github.io/OpenGoPro/) and its
-[streaming FAQ](https://gopro.github.io/OpenGoPro/docs/faq/) for supported modes.
-Concurrent recording and streaming remains unverified for this project. Do not
-assume a USB connection provides UVC `/dev/video0`; verify network-over-USB,
-Wi-Fi, or HDMI capture support for the selected model.
+Identify the HERO model and firmware, then check [Open GoPro](https://gopro.github.io/OpenGoPro/)
+and its [streaming FAQ](https://gopro.github.io/OpenGoPro/docs/faq/) for supported
+modes. Concurrent recording/streaming is unverified here. Verify network-over-USB,
+Wi-Fi, or HDMI capture support; a USB cable does not establish UVC `/dev/video0`.
 
-Begin with a low-resolution perception stream and, where supported, separate
-high-quality SD recording. Measure end-to-end latency, buffering, frame drops,
-and CPU load while MPC and LiDAR are active. Publish `/uavN/camera/image_raw` and
-`/uavN/camera/camera_info` with measured intrinsics and a calibrated optical frame.
-Replace the simulation's magenta-marker/flat-plane assumptions as required by
-the physical target.
+Start with low-resolution perception and, where supported, separate high-quality
+SD recording. Measure latency, buffering, drops, and CPU load with LiDAR and MPC
+active. Publish `/uavN/camera/image_raw` and `/uavN/camera/camera_info` with measured
+intrinsics and calibrated optical-frame extrinsics. Replace the magenta-marker
+and flat-plane assumptions as needed for the physical target.
 
-Receipt time is not exposure time. Establish synchronization and measure delay
-before using images for localization or control. Gimbal motion and stabilization
-can change extrinsics; do not use a fixed camera transform for a moving mount.
+Receipt time is not exposure time: synchronize timestamps and measure delay.
+Gimbal motion or stabilization can change extrinsics; moving mounts require
+corresponding transforms.
 
-## 6. Validate before expanding flight scope
+## 6. Validate in stages
 
-1. Verify ARM64 boot/restart, stable power, cooling, and no automatic arming.
-2. With propellers removed, test SYSID/modes, reconnect, command ownership,
+1. Confirm native ARM64 boot/restart, stable power/cooling, and no automatic arming.
+2. With propellers removed, test SYSID, modes, reconnect, command ownership,
    pilot override, and FCU failsafes alongside the existing Solo link.
-3. Validate localization, common ENU origin/yaw, sensor timestamps, intrinsics,
-   extrinsics, and ENU/NED setpoint conversion on the actual firmware.
-4. Measure solver p95/p99, state age, publish jitter, deadline misses, and
-   link-loss behavior under full load on the Pi.
-5. Identify vehicle response to position/velocity/acceleration references and
-   validate saturation and altitude control.
+3. Validate localization, shared ENU origin/yaw, sensor timestamps, calibration,
+   and ENU/NED setpoint conversion on the actual firmware.
+4. Under full Pi load, measure solver p95/p99, state age, publish jitter,
+   deadline misses, and failure responses.
+5. Identify position/velocity/acceleration response, saturation, and altitude control.
 6. Progress through simple position flight, single-UAV MPC, then multiple UAVs
-   with common localization and validated separation behavior.
+   with shared localization and validated separation behavior.
 
-Record firmware, parameters, source/configuration snapshots, image digest, and
-measured outcomes at each stage. The [simulation results](VALIDATION.md) support
-software integration only; they do not certify these hardware stages.
+At every stage preserve firmware, parameters, image digest, source/configuration
+snapshots, and measured outcomes. [Simulation validation](VALIDATION.md) establishes
+software integration only; it does not qualify these hardware stages.

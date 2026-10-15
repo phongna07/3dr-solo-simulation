@@ -1,103 +1,76 @@
 # Simulation operations
 
-[Back to the project overview](../README.md)
+[Project overview](../README.md) · [Getting started](GETTING_STARTED.md)
 
-Complete the [first-run setup](../README.md#first-run) before using this guide.
-Run host commands from the repository root. Commands under “Inspect ROS and
-Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
+Run commands from the repository root on the host. Blocks marked “inside the
+container” require `./scripts/dev shell` first. Mission commands apply to
+simulation; see [Hardware migration](HARDWARE.md) for the companion profile.
 
-## Mission control
+## Mission commands
 
 | Command | Behavior |
 |---|---|
-| `./scripts/dev mpc` | Initialize the stack and wait for fleet readiness; no arming |
-| `./scripts/dev mpc --gui` | Wait for initialization, then attach the GUI |
-| `./scripts/dev mpc --no-wait` | Start without waiting; use `dev wait` before a mission |
-| `./scripts/dev mpc --record-cameras` | Also record one FOV camera video per UAV in the run directory |
-| `./scripts/dev mpc --record-overhead` | Also record a 1920 × 1080 elevated target-following video |
-| `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
-| `./scripts/dev mission run` | Take off, supervise tracking, LAND, and wait for disarm |
-| `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds after initialization |
-| `./scripts/dev mission start` | Start a supervised mission and return once tracking begins |
-| `./scripts/dev mission status` | Print mission state, errors, and controller diagnostics |
-| `./scripts/dev mission stop` | Release publishing, pause the target, LAND, and wait for disarm |
-| `./scripts/dev mission reset` | Reset the target to the start of its route and pause it |
-| `./scripts/dev stop` | Run mission stop successfully before stopping the container |
+| `./scripts/dev mpc` | Start a fresh stack, wait for initialization, leave UAVs disarmed |
+| `./scripts/dev mpc --gui` | Also attach the viewer after initialization |
+| `./scripts/dev mpc --no-wait` | Return without waiting; check readiness before flying |
+| `./scripts/dev wait 600` | Wait up to 600 wall seconds for fleet readiness |
+| `./scripts/dev mission run` | Take off, track to route completion, LAND, wait for disarm |
+| `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds |
+| `./scripts/dev mission start --seconds 20` | Return when tracking starts; supervisor continues |
+| `./scripts/dev mission status` | Show mission state, errors, ownership, controller diagnostics |
+| `./scripts/dev mission stop` | Disable publishing, pause target, LAND eligible UAVs, wait for disarm |
+| `./scripts/dev mission reset` | Reset and pause the target while idle |
+| `./scripts/dev stop` | Complete mission stop, then stop the container |
 | `./scripts/dev stop --force` | Stop simulation processes immediately, without LAND |
 
-`mpc` starts the simulation and waits for all launched processes, MPC nodes,
-camera detectors, and requested recorders to initialize, plus fleet readiness.
-It leaves the vehicles disarmed. `--no-wait` skips this wait; use `dev wait`
-before starting a mission.
+`mpc` waits for launched processes, MPC/perception nodes, requested recorders,
+and fleet telemetry readiness. A mission separately checks frame alignment and
+controller inputs. During takeoff, target motion and setpoint publishing remain
+disabled until all UAVs hold within 0.5 m of flight altitude, with vertical speed
+at most 0.2 m/s, for two simulation seconds of fresh telemetry.
 
-Run `./scripts/dev mission run` separately to fly. It checks fresh fleet
-readiness and common-frame alignment before takeoff.
-It keeps the target paused and the setpoint publisher disabled during takeoff,
-then waits for usable controller inputs before enabling tracking. It finishes
-when the target and fleet reach the route endpoint, or the requested duration
-expires. Controller/publisher failure, prolonged target loss, loss of connection,
-or departure from the altitude envelope triggers an attempt to land vehicles
-still owned by the companion.
+The persistent supervisor handles both `run` and `start`. It records independent
+Gazebo poses in `truth.jsonl`, enforces duration limits after the CLI exits, and
+lands after route completion or timeout. Prolonged target loss, controller or
+publisher failure, stale inputs, connection loss, and flight-envelope violations
+trigger cleanup. During occlusion the estimate coasts, then searches; the
+simulated target pauses during prolonged loss. This assumes a cooperative target.
+Starts and resets are rejected while a mission or landing is active.
 
-Ownership is tracked per vehicle: `unowned`, `acquiring` (GUIDED requested),
-`guided` (waiting for arming), `owned`, `land_requested`, `landing`, or `released`.
-A pilot/FCU mode change away from GUIDED, or disarming during companion flight,
-latches `released`. The supervisor disables publishing and pauses the target,
-without issuing LAND to that vehicle. Other companion-owned vehicles land.
-Takeover also takes precedence over arrival or the duration limit, and remains
-released through later stop requests, shutdown, and a return to GUIDED. A new
-explicit mission start may clear release only after the whole fleet is connected
-and disarmed. `mission status` includes each vehicle's ownership; `mission run`
-reports release separately from confirmed landing. Unowned aircraft, including
-an already-armed aircraft that failed preflight, never receive cleanup LAND.
+## Stop and recover
 
-During camera occlusion the target estimate briefly coasts, then the controller
-searches near the last plausible position. The supervisor pauses the simulated
-target during prolonged loss and aborts if it cannot be reacquired in time. This
-policy assumes a cooperative simulation target.
+Ctrl+C in `mission run` requests cleanup. Check the result and confirm disarm.
+After a failure, run `mission stop` successfully before starting again. If normal
+`dev stop` fails, the container stays running for inspection and retry. Use
+`stop --force` for a crashed simulation when landing cannot complete.
 
-The MPC stack launches a persistent mission supervisor. `mission start` returns
-after enabling tracking; the supervisor continues all failure checks, records
-`truth.jsonl`, detects arrival, and lands automatically. `mission run` requests
-the same mission and waits for landing or a reported failure. Both commands
-accept `--seconds`; the supervisor enforces this limit even after the CLI exits.
-`mission stop` requests cleanup and waits for landing. Starts and target resets
-are rejected while another mission or landing is active. After a failure, request
-`mission stop` successfully before starting again.
+Cleanup disables publishing, pauses the target, and requests LAND concurrently.
+Helper discovery/replies share a two-wall-second budget; each FCU's LAND request
+has a five-wall-second budget. One missing service cannot block LAND to another
+eligible UAV. Landing/disarm has a separate fleet-wide 240-wall-second deadline,
+including with a paused simulation clock. Errors block restart; a later stop
+retries cleanup.
 
-Cleanup submits publisher-disable, target-pause, and eligible LAND requests
-concurrently. Helper discovery/replies have a shared two-wall-second budget;
-each FCU's LAND discovery/reply has a five-wall-second budget. Missing services
-or replies cannot delay LAND to another eligible vehicle. Landing/disarm uses a
-separate fleet-wide 240-wall-second deadline, including when simulation time is
-paused. Cleanup errors are reported and block restart; a later stop retries
-cleanup without reclaiming released vehicles.
+Ownership progresses through `unowned`, `acquiring`, `guided`, `owned`,
+`land_requested`, and `landing`. A mode change away from GUIDED or disarming
+during companion flight latches `released`. The supervisor stops publishing,
+pauses the target, and lands other companion-owned UAVs. Released and unowned
+aircraft receive no cleanup LAND, including an already-armed aircraft rejected
+by preflight. Release survives later stop requests and a return to GUIDED; a
+new explicit mission may clear it only when the whole fleet is connected and
+disarmed. Status reports ownership; `mission run` distinguishes release from
+confirmed landing.
 
-Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
-disarm; cleanup can fail if required services or processes have already stopped.
-Normal `dev stop` leaves the container running if mission stop fails. Use
-`stop --force` for a crashed or failed simulation when landing cannot complete.
-Hardware shutdown is different; see [Hardware migration](HARDWARE.md).
+Normal shutdown sends SIGINT to ROS launch so children can close video writers.
+Abrupt termination can leave incomplete AVI files. Closing the GUI or stopping
+log following does not stop the simulation. Each launch creates fresh simulator
+state; MPC runs cannot resume.
 
-After landing, normal container shutdown sends SIGINT to ROS launch so its
-children can finish cleanup and close the AVI writers before exiting. A direct
-SIGTERM of the ROS launch process can leave buffered video files incomplete.
+## Readiness and topology
 
-Closing the GUI only closes its client. Ctrl+C in `dev logs` only stops log
-following. Stop an existing run before launching another; every `dev mpc` creates
-new simulator state, and MPC runs do not support resume.
-
-Both `dev mpc --gui` and `dev gui` automatically follow the pink target in MPC
-worlds. The viewpoint sits 24 m above it, offset 10 m along each horizontal axis,
-and looks down with a wide view of the formation and nearby obstacles. Press
-Escape in the 3D view to release camera follow and navigate freely. Reopen the
-GUI to restore the target view.
-
-## Topology and readiness
-
-One `sim` container contains Gazebo, the fleet's SITL/MAVROS instances, readiness,
-sensor bridges, and MPC nodes. ROS discovery is localhost within the container;
-FCU ports are not published to the host. Inspect ROS through `dev shell`.
+One `sim` container contains Gazebo, SITL, MAVROS, bridges, and MPC. ROS discovery
+is local to that container and FCU ports are not exposed to the host. Inspect ROS
+through `dev shell`.
 
 | UAV | SITL instance | SYSID | JSON UDP | MAVLink TCP | MAVROS namespace |
 |---|---:|---:|---:|---:|---|
@@ -105,43 +78,25 @@ FCU ports are not published to the host. Inspect ROS through `dev shell`.
 | uav2 | 1 | 2 | 9012 | 5770 | /uav2/mavros |
 | uav3 | 2 | 3 | 9022 | 5780 | /uav3/mavros |
 
-Readiness uses typed ROS subscriptions and services. For each UAV it requires:
+Each UAV needs applied MAVROS plugin parameters, a connected FCU, acknowledged
+position (MAVLink ID 32) and attitude (ID 30) requests at 10 Hz, and at least three
+finite poses with distinct timestamps. The latest pose must be less than ten
+wall seconds old; FCU state must be less than 60 wall seconds old in simulation
+or 20 on hardware. Requests are serialized per FCU and reset on reconnect.
 
-1. A connected FCU and successfully applied MAVROS plugin parameters.
-2. Acknowledged requests for `LOCAL_POSITION_NED` (ID 32) and `ATTITUDE` (ID 30)
-   at 10 Hz. Requests are serialized per FCU.
-3. At least three finite pose messages with distinct timestamps, with the latest
-   received less than 10 wall seconds ago. FCU state must be less than 20 wall
-   seconds old for hardware, or 60 wall seconds for simulation heartbeats.
+`health.json` and `/solo/readiness` report live health; `ready.json` retains the
+most recent ready report. Docker health uses the live report. The initial monitor
+deadline defaults to 600 seconds; expiry shuts down launch. The host waiter has
+its own timeout and may leave the stack running for inspection. It rejects health
+from earlier container starts and detects exits. After first readiness, monitoring
+continues without arming or restarting FCUs. Telemetry readiness alone does not
+establish prearm acceptance or localization quality.
 
-The monitor writes live `health.json`, updates `ready.json` while ready, and
-publishes `/solo/readiness`. Docker health uses the live report. On disconnect,
-telemetry/pose counters reset and are requested again after reconnect. Initial
-readiness has a 600 s default deadline; timeout stops the stack. After becoming
-ready, the monitor keeps reporting losses and recovery without arming or
-restarting an FCU.
-
-The host readiness helper polls container state every two seconds, rejects health
-from an earlier container start, and reports exited stacks promptly. Readiness
-confirms telemetry flow; it does not prove prearm acceptance, localization quality,
-sensor performance, or flight safety. Mission checks add alignment and controller
-input requirements.
-
-Gazebo, SITL, MAVROS, readiness, and the sensor bridge are critical processes;
-exit of one shuts down the launch. MPC/perception/target adapter exit leaves the
-flight stack alive so supervised cleanup can attempt LAND. No automatic FCU
-respawn occurs during an experiment.
+Gazebo, SITL, MAVROS, readiness, and the sensor bridge are critical: their exit
+shuts down launch. MPC adapter failures leave the flight stack available for
+cleanup. FCUs do not automatically respawn during an experiment.
 
 ## Inspect ROS and Gazebo
-
-On the host:
-
-```bash
-./scripts/dev status
-./scripts/dev mission status
-./scripts/dev logs
-./scripts/dev shell
-```
 
 Inside the container:
 
@@ -157,119 +112,83 @@ timeout 5s gz topic -e -t /world/mpc_small50/stats
 gz sdf -k /workspace/runs/latest/world.sdf
 ```
 
-Exit code 124 from the timed Gazebo command is expected. Compare simulation time
-with wall time to measure real-time factor. Requested sensor/telemetry rates are
-not necessarily achieved on wall time. Multiple terminals can each use `dev shell`;
-there is no need to launch extra MAVROS instances for observation.
+Use your configured world name if changed. Exit code 124 from `timeout` is
+expected. Sensor/telemetry rates follow simulation time and may be lower on wall
+time. Multiple shells can observe the same MAVROS instances.
+
+The GUI follows the pink target from 24 m above, offset 10 m along each horizontal
+axis. Press Escape in the 3D view to navigate freely; reopen it to restore follow.
 
 ## Logs and evaluation
 
-| Run output | Contents |
+| Output in `runs/<run-id>/` | Contents |
 |---|---|
-| `manifest.json`, `source-sha256.json` | Mode, fleet, source versions, commit, and file hashes |
-| `fleet.yaml`, `scenario.yaml`, `controller.yaml`, `mpc-config.json` | Snapshot and resolved experiment configuration |
-| `world.sdf`, `bridge.yaml`, `uavN-mavros.yaml` | Generated world, sensor bridge, and MAVROS configuration |
+| `manifest.json`, `source-sha256.json` | Mode, fleet, versions, commit, file hashes |
+| `fleet.yaml`, `scenario.yaml`, `controller.yaml`, `mpc-config.json` | Input snapshots and resolved settings |
+| `world.sdf`, `bridge.yaml`, `uavN-mavros.yaml` | Generated world and runtime configuration |
+| `startup.json`, `health.json`, `ready.json` | Initialization and readiness reports |
 | `alignment.json` | Frozen world-to-local calibration |
-| `health.json`, `ready.json` | Current health and most recent ready report |
-| `logs/`, `sitl/<instance>/` | ROS/process logs and each SITL's EEPROM/flight logs |
-| `controller_sources.jsonl` | Source hashes and resolved configuration at controller startup |
-| `mpc.jsonl` | Measured state, target estimates, solver outcomes, and timings |
-| `truth.jsonl` | Independent Gazebo poses recorded by the persistent mission supervisor |
-| `evaluation.json` | Derived geometry, tracking, compute, and simulation-speed metrics |
-| `cameras/<uav-name>.avi`, `cameras/<uav-name>.timestamps.jsonl` | Optional UAV camera videos and original per-frame simulation timestamps |
-| `overhead/overhead.avi`, `overhead/overhead.timestamps.jsonl` | Optional 1080p elevated scene video and original per-frame simulation timestamps |
+| `logs/`, `sitl/<instance>/` | Process logs, SITL EEPROM, flight logs |
+| `controller_sources.jsonl` | Controller startup hashes and settings |
+| `mpc.jsonl`, `truth.jsonl` | Controller measurements/diagnostics and independent Gazebo poses |
+| `evaluation.json` | Geometry, tracking, compute, and simulation-speed metrics |
+| `cameras/`, `overhead/` | Optional videos and frame timestamps |
 
-`runs/latest` selects the most recent simulation; launching another run changes
-that link. The actual image ID is stored beside the run directory in
-`runs/<run-id>.image-id.json`. Preserve the specific run directory for comparisons.
-`runs/` and `artifacts/` are Git-ignored and must be shared separately if needed.
+The image ID is stored beside the run in `runs/<run-id>.image-id.json`.
+`runs/latest` changes on the next launch; preserve the actual directory.
+Run data and `artifacts/` are Git-ignored and must be shared separately.
 
-Evaluate while the simulation container is still running, after the mission lands:
+Evaluate after landing, before stopping the container:
 
 ```bash
 ./scripts/dev evaluate
-./scripts/dev evaluate --run-dir /workspace/runs/<run-id>
+./scripts/dev evaluate --run-dir /workspace/runs/YOUR_RUN_ID
 ```
 
-Evaluation prefers independent Gazebo geometry when `truth.jsonl` has suitable
-samples; otherwise it uses MAVROS measurements and labels `geometry_source`.
-The current airborne filter requires every UAV above 2.5 m, so revisit evaluation
-when changing the default 3 m altitude. Sampled metrics do not establish continuous
-collision avoidance; inspect physics contacts and camera tracking too.
+Replace `YOUR_RUN_ID` with the saved run's directory name. Evaluation prefers
+independent Gazebo geometry, falling back to MAVROS and
+labeling `geometry_source`. Its airborne filter requires every UAV above 2.5 m;
+revisit it when changing flight altitude. Sampled clearances do not prove
+continuous collision avoidance; inspect physics contacts and tracking as well.
 
-## Record UAV camera video
+## Record video
 
-Enable recording when starting a fresh simulation:
+Enable recording when launching a fresh simulation:
 
 ```bash
-./scripts/dev mpc --record-cameras
+./scripts/dev mpc --record-cameras --record-overhead
 ./scripts/dev mission run --seconds 20
 ./scripts/dev stop
-ls runs/latest/cameras/
 ```
 
-`--gui` is optional. Recording uses each UAV's `/uavN/camera/image_raw` topic,
-so the files show the drone's downward FOV rather than the Gazebo GUI view.
-All vehicles in the selected fleet are recorded in a separate ROS process;
-recording is disabled unless `--record-cameras` is supplied. Live source mounting
-allows this option to work with the existing simulation image without a rebuild.
-For direct ROS launch, use `record_cameras:=true`.
+Either flag works alone; `--gui` is optional.
 
-The host files are `runs/<run-id>/cameras/<uav-name>.avi` (MJPEG). The recorder
-subscribes during startup but discards frames until that UAV is connected, armed,
-and more than 0.15 m above its disarmed local ground altitude, using fresh MAVROS
-state and pose telemetry. Arming while sitting on the ground does not start a
-video. Recordings include the rest of takeoff, tracking, and landing, and close
-when the simulation stops. Closing the GUI or completing the mission
-leaves recording active. Use `dev stop` to finish and finalize the videos.
+| Option | View and defaults | Host output |
+|---|---|---|
+| `--record-cameras` | Downward camera per UAV, 160 × 160 at 8 FPS | `runs/<run-id>/cameras/<uav-name>.avi` |
+| `--record-overhead` | Elevated target-following view, 1920 × 1080 at 20 FPS | `runs/<run-id>/overhead/overhead.avi` |
 
-Resolution and playback FPS come from the camera settings (default 160 × 160,
-8 FPS). Each received frame is written once; playback follows the configured
-simulation camera rate, independent of wall-clock simulation speed. Missed frames
-shorten playback; the adjacent `.timestamps.jsonl` records each zero-based video
-frame index and its original ROS simulation timestamp in nanoseconds (`stamp_ns`).
-No video is created for a camera that never publishes. Abrupt process termination
-or a host crash can leave incomplete videos. Recorder errors appear in `dev logs`
-and do not shut down the flight stack.
+MJPEG videos start when a connected, armed UAV rises more than 0.15 m above its
+disarmed ground altitude. UAV cameras have individual gates; overhead starts
+with the first UAV to lift off. Recording continues through landing until the
+stack stops. Mission completion and GUI closure do not finalize videos.
 
-## Record overhead video
+Each received frame is written once at the configured simulation camera rate.
+Dropped frames shorten playback. Adjacent `.timestamps.jsonl` files contain
+zero-based frame indices and original simulation timestamps (`stamp_ns`). No
+video is created without images. Recorder errors appear in logs without stopping
+the flight stack.
 
-Start a fresh simulation with the elevated scene recording enabled:
-
-```bash
-./scripts/dev mpc --record-overhead
-./scripts/dev mission run --seconds 20
-./scripts/dev stop
-ls runs/latest/overhead/
-```
-
-The video follows the pink target from 24 m above, offset by -10 m on both
-horizontal axes and looking toward it, similar to the default GUI viewpoint.
-It renders directly at **1920 × 1080 (16:9), 20 FPS**; the GUI's window size
-does not affect the recording. It works without opening the GUI. Add `--gui`
-to watch, or combine `--record-overhead --record-cameras` to save both the scene
-and the UAV FOVs. Navigating or closing the GUI does not change the scene video.
-
-Open `runs/<run-id>/overhead/overhead.avi` in your desktop file explorer after
-`dev stop` finalizes it. It uses MJPEG and starts when the first connected, armed
-UAV rises more than 0.15 m above its disarmed ground altitude. The image feed
-activates on arming, using a lazy bridge to avoid unused Full HD rendering during
-disarmed initialization. Armed ground frames are discarded. It continues through
-takeoff, tracking, and landing until the stack stops. Playback uses simulation
-time; dropped frames shorten the
-video. `overhead.timestamps.jsonl` preserves the received simulation timestamps.
-The extra full-HD camera and encoding consume rendering, CPU, and disk capacity;
-recording is disabled unless requested. No image rebuild is needed. For direct
-MPC ROS launch, set `record_overhead:=true`. Recorder errors appear in `dev logs`
-without stopping the flight stack.
-
-See the [startup performance assessment](STARTUP_PERFORMANCE.md) for measured
-startup costs, simulation-time diagnostics, and the remaining software-rendering
-limit during flight.
+Overhead recording is independent of GUI navigation and window size. The camera
+sits 24 m above the target, offset -10 m on each horizontal axis. A lazy bridge
+activates its feed on arming, avoiding unused Full HD rendering during startup.
+Rendering/encoding costs return during flight; an external image subscriber can
+activate rendering earlier. Direct ROS launch accepts `record_cameras:=true` and
+`record_overhead:=true`.
 
 ## Record telemetry
 
-Inside the container, use a new output directory for each recording:
+Inside the container, use a new bag directory for each recording:
 
 ```bash
 ros2 bag record -s mcap -o /workspace/runs/latest/telemetry \
@@ -278,22 +197,47 @@ ros2 bag record -s mcap -o /workspace/runs/latest/telemetry \
   /uav3/mavros/state /uav3/mavros/local_position/pose /solo/readiness
 ```
 
-Adjust topics for your fleet, and stop the recorder with Ctrl+C before stopping
-the container. If pose messages are absent, check sensor QoS and use a recording
-QoS override as needed. Measure storage and CPU costs before adding raw video.
+Adjust topics for your fleet. Stop the recorder with Ctrl+C before the container.
+If poses are absent, check sensor QoS and recording overrides. Measure storage
+and CPU costs before adding raw image topics.
+
+## Diagnose startup
+
+Check the last FCU status, simulation clock, and recent real-time factor in the
+progress report. Connected FCUs with accepted telemetry requests can still be
+waiting for their estimator to produce local position.
+
+- A stopped clock suggests paused/stalled physics, bridge failure, or rendering
+  trouble.
+- A slow clock with progressing EKF/GPS messages means initialization is advancing
+  slowly. Increasing timeouts does not improve sensor or control rates.
+- A healthy clock with a prolonged pose wait needs FCU estimator and telemetry
+  investigation.
+
+Preserve a startup report on the host:
+
+```bash
+mkdir -p artifacts
+./scripts/dev mpc --record-overhead --record-cameras | tee artifacts/startup.log
+./scripts/dev doctor
+./scripts/dev status
+```
+
+See [renderer verification](WSL_GPU.md#verify-the-renderer) and
+[startup measurements](VALIDATION.md#startup-performance).
 
 ## Troubleshooting
 
-| Symptom | Check or action |
+| Symptom | Action |
 |---|---|
-| Docker socket permission denied | Confirm Docker is running and WSL integration is enabled |
-| Stack exits while `mpc` waits | Read the reported process logs; a stopped container cannot become ready |
-| TCP opens but MAVROS stays disconnected | Inspect SITL defaults, PANIC messages, and JSON sensor input; an open port does not prove FCU boot |
-| Connected without pose | Check telemetry ACKs, EKF, and real-time factor in the readiness report |
-| `PreArm: Gyros inconsistent` | Check model overlap, IMU scope, stable physics, and simulator load before retrying |
-| `setpoint_attitude` / `invalid allocator` crash | Use the current parameter bootstrap; see the pinned MAVROS callback limitation in [Development](DEVELOPMENT.md#mavros-parameter-bootstrap) |
-| Wrong MAVROS runtime version | Verify the entrypoint sources `/opt/mavros_ws/install/setup.bash`, not just the ROS base |
-| EGL/OpenGL errors or slow sensors | Inspect the renderer using [WSL and GPU](WSL_GPU.md); increasing timeouts does not fix rates |
-| Container becomes unhealthy after readiness | Inspect live `health.json` for stale pose/state or a disconnected FCU |
-| `No complete airborne fleet records` during evaluation | Check whether takeoff succeeded and whether altitude matches the evaluator's 2.5 m filter |
-| LAND cleanup fails | Inspect FCU state and service errors; normal stop preserves the container for recovery |
+| Docker socket permission denied | Check Docker access and WSL integration |
+| Stack exits during initialization | Read process logs; a stopped container cannot become ready |
+| TCP opens but MAVROS stays disconnected | Check SITL defaults, PANIC messages, and JSON sensor input |
+| Connected without pose | Check telemetry acknowledgements, EKF, and simulation speed |
+| `PreArm: Gyros inconsistent` | Check model overlap, IMU scope, physics stability, and simulator load |
+| `setpoint_attitude` / `invalid allocator` crash | Use the [MAVROS parameter bootstrap](DEVELOPMENT.md#mavros-parameter-bootstrap) |
+| Wrong MAVROS version | Ensure the entrypoint sources `/opt/mavros_ws/install/setup.bash` |
+| EGL/OpenGL errors or slow sensors | Check the server renderer using [WSL and GPU setup](WSL_GPU.md) |
+| Unhealthy after reaching readiness | Inspect live health for stale poses/state or disconnection |
+| `No complete airborne fleet records` | Check takeoff and the evaluator's 2.5 m altitude filter |
+| LAND cleanup fails | Inspect FCU state and service errors, then retry `mission stop` |

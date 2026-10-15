@@ -1,73 +1,55 @@
-# WSL, GUI, and GPU rendering
+# WSL and GPU setup
 
-[Back to the project overview](../README.md)
+[Project overview](../README.md) · [Getting started](GETTING_STARTED.md)
 
-Gazebo's server runs without a GUI by default, but the mission cameras and GPU
-LiDAR still require rendering. A working display connection does not prove GPU
-acceleration. Measure the renderer, sensor rates, and real-time factor before
-running or comparing missions.
+Gazebo cameras and GPU LiDAR require rendering even without a GUI. Display
+access and server GPU acceleration are separate checks.
 
 ## Windows 11 with WSL2
 
-Use Ubuntu WSL2, enable Docker Desktop's integration for that distribution, and
-run `scripts/dev` from the Linux repository filesystem. Keep the repository under
-`/home/<user>/...` rather than `/mnt/c/...`. VS Code's WSL extension can open the
-project with `code .`.
+Use Ubuntu WSL2 with Docker Desktop integration enabled. Keep the checkout under
+`/home/<user>/...` rather than `/mnt/c/...` and run commands from Linux.
 
-When both `/mnt/wslg` and `/tmp/.X11-unix` exist, the CLI automatically adds
-[compose.wslg.yaml](../compose.wslg.yaml). This maps display sockets and related
-environment variables into the same container as the simulator. The entrypoint
-creates a writable runtime directory. No `xhost +` is needed.
+When `/mnt/wslg` and `/tmp/.X11-unix` exist, `scripts/dev` automatically includes
+[compose.wslg.yaml](../compose.wslg.yaml) to map display sockets and environment
+variables. The entrypoint creates a writable runtime directory; `xhost +` is
+unnecessary. Attach the viewer with `./scripts/dev gui`, or launch with
+`./scripts/dev mpc --gui`. Closing it leaves the server running.
 
-Attach a GUI to an existing stack:
+## Verify the renderer
 
-```bash
-./scripts/dev gui
-```
+On the host, run `./scripts/dev doctor` after starting the simulation. It checks
+device access and reads the live Gazebo server's dedicated Ogre log. A separate
+GUI renderer does not establish server acceleration.
 
-Or use `./scripts/dev mpc --gui` to start the stack and attach after readiness.
-Closing the client leaves the server running. WSLg supplies display access;
-host GPU drivers and container GPU access require separate verification.
-
-## Check rendering or use software fallback
-
-From `./scripts/dev shell`:
+Inside `./scripts/dev shell`:
 
 ```bash
 glxinfo -B
 gz sim --versions
+grep -E 'GL_RENDERER|GL_VENDOR' /workspace/runs/latest/gazebo-home/.gz/rendering/ogre2.log
 timeout 5s gz topic -e -t /world/mpc_small50/stats
 ros2 topic hz /uav1/camera/image_raw
 ros2 topic hz /uav1/scan
 ```
 
-`./scripts/dev doctor` checks container device access and reads the dedicated
-`runs/latest/gazebo-home/.gz/rendering/ogre2.log` from the Gazebo server. A GUI
-renderer does not substitute for this server check. Numeric GPU and serial group
-IDs are required explicitly by the device overrides; use device ownership on the
-Docker daemon host.
+`glxinfo` describes the display path; the server log describes headless rendering.
+`llvmpipe` means software rendering. Exit code 124 from `timeout` is expected.
+Compare changes in Gazebo `sim_time` and `real_time` over an interval: individual
+statistics can be bursty. Low real-time factor reduces wall-time sensor rates.
 
-`glxinfo` helps inspect the display renderer; also check the Gazebo server's
-render logs because its headless rendering path can differ. `llvmpipe` indicates
-software rendering. Compare simulation and real time in Gazebo statistics;
-simulation sensor rates can be much lower on wall time when real-time factor is
-low.
-
-After stopping the previous simulation, try a software fallback if hardware
-rendering fails:
+For rendering failures, stop the old simulation and try software fallback:
 
 ```bash
 LIBGL_ALWAYS_SOFTWARE=1 ./scripts/dev mpc --gui
 ```
 
-You can also set this variable in `.env`. Software rendering is functional on the
-recorded host, but the three-camera/LiDAR mission ran at roughly 0.17–0.19 of real
-time. See [Validation](VALIDATION.md) for the measured workload and its limits.
+You can persist this in `.env`. Measured software-rendered missions ran around
+0.17–0.19× real time; see [Validation](VALIDATION.md).
 
-## Native Linux Intel or AMD
+## Native Linux: Intel or AMD
 
-When `/dev/dri` exists on the Docker host, supply DRM devices and the actual group
-IDs:
+If `/dev/dri` exists on the Docker daemon host, use actual device group IDs:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.gpu.yaml
@@ -76,33 +58,33 @@ export VIDEO_GID=$(stat -c %g /dev/dri/card0)
 ./scripts/dev mpc
 ```
 
-[compose.gpu.yaml](../compose.gpu.yaml) grants DRM access but does not configure
-the display. A native Linux GUI needs a local override for X11 sockets, `DISPLAY`,
-and Xauthority matching the host. Do not mount `/mnt/wslg` where it does not exist.
+Adjust device names to the host. [compose.gpu.yaml](../compose.gpu.yaml) grants
+DRM access. A native GUI also needs a local override for X11 sockets, `DISPLAY`,
+and Xauthority; the WSLg mount is specific to WSL.
 
 ## NVIDIA
 
-After confirming host driver and NVIDIA container GPU support, use the matching
-override. For a WSLg host:
+With host drivers and NVIDIA container support configured, a WSLg setup uses:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.wslg.yaml:compose.nvidia.yaml
 ./scripts/dev mpc
 ```
 
-On native Linux, omit the WSLg file and configure display access separately.
-[compose.nvidia.yaml](../compose.nvidia.yaml) requests a GPU and graphics driver
-capabilities; it does not install the host driver or toolkit. The recorded
-validation does not confirm hardware acceleration for this setup. Do not assume
-WSL devices are visible in Docker Desktop's VM.
+On native Linux, omit WSLg and configure display access separately.
+[compose.nvidia.yaml](../compose.nvidia.yaml) requests GPU/graphics capabilities;
+it does not install host drivers or the toolkit. Hardware acceleration for this
+setup remains unvalidated. WSL device visibility does not establish access from
+Docker Desktop's VM.
 
-## Override selection and networking
+## Keep override selection consistent
 
-When `COMPOSE_FILE` is set, the CLI uses it as supplied and does not automatically
-add WSLg. Include every override you need, and keep the same selection for start,
-inspection, and stop. Use `unset COMPOSE_FILE` to return to automatic selection.
+Setting `COMPOSE_FILE` disables automatic WSLg selection. Include all required
+overrides and keep the same selection for start, inspection, and stop. Use
+`unset COMPOSE_FILE` to restore automatic selection. Device group IDs must come
+from the Docker daemon host. Release deployments require the release base file;
+see [Reproducibility](REPRODUCIBILITY.md).
 
-ROS and FCU links stay inside the simulation container, so host discovery and
-Docker Desktop host networking are unnecessary for the default workflow. Access
-ROS through `dev shell`. A Pi-to-laptop experiment needs explicit LAN endpoints
-and discovery/routing changes; see [Hardware migration](HARDWARE.md#2-test-pi-to-laptop-sitl-before-connecting-solo).
+Default simulation needs no host ROS discovery or published FCU ports. A
+Pi-to-laptop experiment requires explicit LAN endpoints and routing changes;
+see [Hardware migration](HARDWARE.md#2-test-the-pi-against-laptop-sitl).
