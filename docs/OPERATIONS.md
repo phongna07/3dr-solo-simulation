@@ -10,10 +10,9 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 
 | Command | Behavior |
 |---|---|
-| `./scripts/dev mpc` | Initialize the stack, take off, supervise tracking, LAND, and await disarm |
-| `./scripts/dev mpc --gui` | Run the mission with a GUI alongside it |
-| `./scripts/dev mpc --no-wait` | Skip host readiness progress; the mission still waits for initialization |
-| `./scripts/dev mpc --seconds 20` | Limit tracking to 20 wall seconds after takeoff and controller initialization |
+| `./scripts/dev mpc` | Initialize the stack and wait for fleet readiness; no arming |
+| `./scripts/dev mpc --gui` | Wait for initialization, then attach the GUI |
+| `./scripts/dev mpc --no-wait` | Start without waiting; use `dev wait` before a mission |
 | `./scripts/dev mpc --record-cameras` | Also record one FOV camera video per UAV in the run directory |
 | `./scripts/dev mpc --record-overhead` | Also record a 1920 × 1080 elevated target-following video |
 | `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
@@ -26,13 +25,13 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 | `./scripts/dev stop` | Run mission stop successfully before stopping the container |
 | `./scripts/dev stop --force` | Stop simulation processes immediately, without LAND |
 
-`mpc` automatically runs the mission after all launched processes, MPC nodes,
-camera detectors, and requested recorders initialize. It checks fresh fleet
-readiness and common-frame alignment before takeoff. `--no-wait` skips the host
-progress display, while retaining the mission's startup gate. A failed or exited
-startup process prevents arming. No second terminal command is needed to fly.
-The lower-level `mission run` command remains available for another flight in
-an existing stack after the previous mission has landed.
+`mpc` starts the simulation and waits for all launched processes, MPC nodes,
+camera detectors, and requested recorders to initialize, plus fleet readiness.
+It leaves the vehicles disarmed. `--no-wait` skips this wait; use `dev wait`
+before starting a mission.
+
+Run `./scripts/dev mission run` separately to fly. It checks fresh fleet
+readiness and common-frame alignment before takeoff.
 It keeps the target paused and the setpoint publisher disabled during takeoff,
 then waits for usable controller inputs before enabling tracking. It finishes
 when the target and fleet reach the route endpoint, or the requested duration
@@ -48,14 +47,9 @@ policy assumes a cooperative simulation target.
 `mission start` returns after enabling tracking. It does not leave the mission
 supervisor running in the background, and does not record the supervisor's
 `truth.jsonl`. The caller must monitor the mission and invoke `mission stop`.
-Prefer `mpc` for supervised experiments and independent evaluation.
+Prefer `mission run` for supervised experiments and independent evaluation.
 
-Ctrl+C, terminal closure, or termination of the `mpc` wrapper requests cancellation
-through the mounted run directory. Its Docker client stays attached while the
-supervisor attempts cleanup and landing, including interruption during takeoff.
-Forced termination such as SIGKILL cannot run this handler. Ctrl+C directly in
-the lower-level `mission run` command still depends on interrupt delivery through
-Docker. Check for errors and confirm
+Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
 disarm; cleanup can fail if required services or processes have already stopped.
 Normal `dev stop` leaves the container running if mission stop fails. Use
 `stop --force` for a crashed or failed simulation when landing cannot complete.
@@ -184,7 +178,8 @@ collision avoidance; inspect physics contacts and camera tracking too.
 Enable recording when starting a fresh simulation:
 
 ```bash
-./scripts/dev mpc --record-cameras --gui --seconds 20
+./scripts/dev mpc --record-cameras
+./scripts/dev mission run --seconds 20
 ./scripts/dev stop
 ls runs/latest/cameras/
 ```
@@ -218,7 +213,8 @@ and do not shut down the flight stack.
 Start a fresh simulation with the elevated scene recording enabled:
 
 ```bash
-./scripts/dev mpc --record-overhead --seconds 20
+./scripts/dev mpc --record-overhead
+./scripts/dev mission run --seconds 20
 ./scripts/dev stop
 ls runs/latest/overhead/
 ```

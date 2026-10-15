@@ -136,7 +136,7 @@ def test_gui_commands_start_target_follow_helper(fake_docker, args):
             "sim", "/usr/local/bin/solo-entrypoint", "python3", "/workspace/scripts/gazebo_gui.py"
         ] for e in entries)
         if args[0] == 'mpc':
-            assert any('mission' in e['args'] and 'run' in e['args'] for e in entries)
+            assert not any('mission' in e['args'] for e in entries)
     finally:
         for entry in entries:
             if entry["env"]["RUN_ID"]:
@@ -145,23 +145,19 @@ def test_gui_commands_start_target_follow_helper(fake_docker, args):
 
 
 @pytest.mark.parametrize('no_wait', [False, True])
-def test_mpc_starts_supervised_mission_with_startup_gate_and_duration(fake_docker, no_wait):
+def test_mpc_starts_stack_without_starting_mission(fake_docker, no_wait):
     log, env = fake_docker
-    result = invoke(['mpc', '--seconds', '20'] + (['--no-wait'] if no_wait else []), env)
+    result = invoke(['mpc'] + (['--no-wait'] if no_wait else []), env)
     entries = calls(log)
     try:
         assert result.returncode == 0, result.stderr
         commands = [e['args'] for e in entries]
-        mission = next(c for c in commands if 'mission' in c)
-        assert mission[mission.index('mission') + 1] == 'run'
-        assert '--wait-for-startup' in mission
-        assert mission[mission.index('--seconds') + 1] == '20'
-        assert '--cancel-file' in mission
+        assert any('up' in c for c in commands)
+        assert not any('mission' in c for c in commands)
         waits = [c for c in commands if c[0] == 'scripts/wait_ready.py']
         assert bool(waits) == (not no_wait)
         if waits:
             assert '--all-processes' in waits[0]
-            assert commands.index(waits[0]) < commands.index(mission)
     finally:
         for entry in entries:
             if entry['env']['RUN_ID']:
@@ -182,8 +178,17 @@ def test_mpc_does_not_start_mission_after_readiness_failure(fake_docker):
                 (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.image-id.json')).unlink(missing_ok=True)
 
 
-@pytest.mark.parametrize('seconds', ['-1', 'nan', 'inf', 'bad'])
-def test_mpc_rejects_invalid_duration_before_starting_stack(fake_docker, seconds):
+@pytest.mark.parametrize('seconds', ['20', '-1', 'nan', 'inf', 'bad'])
+def test_mpc_rejects_mission_duration_before_starting_stack(fake_docker, seconds):
     log, env = fake_docker
     assert invoke(['mpc', '--seconds', seconds], env).returncode != 0
     assert calls(log) == []
+
+
+def test_mission_run_is_an_explicit_separate_command(fake_docker):
+    log, env = fake_docker
+    result = invoke(['mission', 'run', '--seconds', '20'], env)
+    assert result.returncode == 0, result.stderr
+    commands = [e['args'] for e in calls(log)]
+    assert len(commands) == 1
+    assert commands[0][-6:] == ['run', 'solo_mpc', 'mission', 'run', '--seconds', '20']

@@ -19,8 +19,7 @@ usage() {
 Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim|companion]           Build an image (sim by default)
-  mpc [--gui] [--no-wait]         Start stack, await initialization, fly mission and LAND
-      [--seconds WALL_SECONDS]   Limit tracking time after takeoff (default: full route)
+  mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--record-cameras]          Save each UAV's FOV video to runs/<run-id>/cameras/
       [--record-overhead]         Save a 1920x1080 elevated view to runs/<run-id>/overhead/
@@ -64,7 +63,6 @@ case "$command" in
   mpc)
     show_gui=false
     wait_ready=true
-    mission_seconds=0
     export MPC_RECORD_CAMERAS=false
     export MPC_RECORD_OVERHEAD=false
     RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
@@ -76,23 +74,11 @@ case "$command" in
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
         --no-wait) wait_ready=false; shift ;;
-        --seconds) mission_seconds="${2:?wall seconds required}"; shift 2 ;;
         --record-cameras) export MPC_RECORD_CAMERAS=true; shift ;;
         --record-overhead) export MPC_RECORD_OVERHEAD=true; shift ;;
         *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
       esac
     done
-    python3 - "$mission_seconds" <<'PY'
-import math
-import sys
-
-try:
-    value = float(sys.argv[1])
-except ValueError:
-    raise SystemExit('--seconds must be finite and nonnegative')
-if not math.isfinite(value) or value < 0:
-    raise SystemExit('--seconds must be finite and nonnegative')
-PY
     if [[ -n "$("${dc[@]}" ps --status running -q sim)" ]]; then
       printf 'Simulation already running. Use status/stop before starting another.\n' >&2
       exit 1
@@ -101,19 +87,14 @@ PY
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
-    TASK_TIMEOUT="$("${dc[@]}" exec -T sim printenv READINESS_TIMEOUT)"
     if "$wait_ready"; then
+      TASK_TIMEOUT="$("${dc[@]}" exec -T sim printenv READINESS_TIMEOUT)"
       python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --timeout "$TASK_TIMEOUT" --all-processes
     fi
     if "$show_gui"; then
       printf 'Starting Gazebo GUI.\n'
-      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py \
-        > "runs/${RUN_ID}.gui.log" 2>&1 &
+      "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py
     fi
-    exec python3 scripts/run_mission.py --cancel-file "runs/${RUN_ID}.mission.cancel" -- \
-      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission run \
-      --run-dir "/workspace/runs/${RUN_ID}" --wait-for-startup --startup-timeout "$TASK_TIMEOUT" \
-      --seconds "$mission_seconds" --cancel-file "/workspace/runs/${RUN_ID}.mission.cancel"
     ;;
   wait)
     TASK_CONTAINER="$("${dc[@]}" ps -a -q sim)"

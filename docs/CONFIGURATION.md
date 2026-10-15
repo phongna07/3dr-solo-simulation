@@ -133,7 +133,8 @@ evaluation. LiDAR always uses Gazebo sensor returns.
 For a controller experiment using target ground truth, start a fresh run with:
 
 ```bash
-MPC_TARGET_MODE=ground_truth ./scripts/dev mpc --seconds 20
+MPC_TARGET_MODE=ground_truth ./scripts/dev mpc
+./scripts/dev mission run --seconds 20
 ```
 
 Missing scan rays remain unknown; observed no-return rays clear space. Strongly

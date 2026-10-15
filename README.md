@@ -40,8 +40,8 @@ cp .env.example .env
 MAVROS instance per UAV, sensor bridges, and the MPC nodes. MAVROS connects ROS
 to each flight controller (FCU). The command waits for every launched process,
 MPC node, and requested recorder to initialize, plus connected FCUs, fresh
-telemetry/pose, and frame alignment. **It then automatically arms, takes off,
-tracks the target, and lands.** No separate `mission run` command is needed.
+telemetry/pose. **Starting the stack does not arm the vehicles.**
+Run `./scripts/dev mission run` separately to take off, track the target, and land.
 While waiting, the terminal shows launched processes, initialized MPC nodes,
 and each UAV's remaining checks: MAVROS plugin configuration, FCU connection,
 telemetry acknowledgements, and fresh local poses. Progress updates immediately
@@ -68,9 +68,10 @@ size. It starts once the first armed UAV lifts off. Combine with
 `./scripts/dev stop` to finalize the files. See
 [overhead recording](docs/OPERATIONS.md#record-overhead-video).
 
-After `mpc` completes the mission and confirms landing:
+Once the stack is ready:
 
 ```bash
+./scripts/dev mission run       # Take off, track the target, then LAND and disarm
 ./scripts/dev evaluate          # Write metrics for the latest mission
 ./scripts/dev stop              # Release control, confirm landing, stop the container
 ```
@@ -79,11 +80,12 @@ Mission startup arms and launches the UAVs concurrently. Tracking and target
 motion begin only after every UAV holds within 0.5 m of the flight altitude,
 with vertical speed at most 0.2 m/s, for two simulation seconds of fresh pose telemetry.
 
-For a short experiment, use `./scripts/dev mpc --seconds 20`. This limits
+For a short experiment, use `./scripts/dev mission run --seconds 20`. This limits
 tracking to 20 wall-clock seconds after takeoff and controller initialization.
-`--gui` opens the viewer alongside the mission; closing it leaves the mission
-running. Ctrl+C in `mpc` requests cleanup and waits for the supervisor to release
-control and land the fleet. Check its output for successful cleanup.
+`mpc --gui` opens the viewer after initialization; start the mission in another
+terminal. Closing the viewer leaves the simulation running. Ctrl+C in
+`mission run` attempts to release control and land the fleet. Check its output
+for successful cleanup.
 
 In another terminal, use `./scripts/dev gui` to open Gazebo, `./scripts/dev status`
 for fleet readiness, `./scripts/dev mission status` for controller diagnostics,
