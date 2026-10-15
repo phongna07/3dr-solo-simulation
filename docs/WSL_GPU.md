@@ -59,19 +59,20 @@ export VIDEO_GID=$(stat -c %g /dev/dri/card0)
 ```
 
 Adjust device names to the host. [compose.gpu.yaml](../compose.gpu.yaml) grants
-DRM access. A native GUI also needs a local override for X11 sockets, `DISPLAY`,
-and Xauthority; the WSLg mount is specific to WSL.
+DRM access. For GUI display on native Linux, include [compose.x11.yaml](../compose.x11.yaml)
+(e.g., `COMPOSE_FILE=compose.yaml:compose.x11.yaml:compose.gpu.yaml`) and ensure local X11
+access via `xhost +local:`.
 
 ## NVIDIA
 
-With host drivers and NVIDIA container support configured, a WSLg setup uses:
+With host drivers and NVIDIA container support configured:
+- On WSL2: `export COMPOSE_FILE=compose.yaml:compose.wslg.yaml:compose.nvidia.yaml`
+- On native Linux: `export COMPOSE_FILE=compose.yaml:compose.x11.yaml:compose.nvidia.yaml` (run `xhost +local:` on host for GUI access)
 
 ```bash
-export COMPOSE_FILE=compose.yaml:compose.wslg.yaml:compose.nvidia.yaml
 ./scripts/dev mpc
 ```
 
-On native Linux, omit WSLg and configure display access separately.
 [compose.nvidia.yaml](../compose.nvidia.yaml) requests GPU/graphics capabilities;
 it does not install host drivers or the toolkit. Hardware acceleration for this
 setup remains unvalidated. WSL device visibility does not establish access from

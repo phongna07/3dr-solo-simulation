@@ -6,11 +6,19 @@ LOCAL_UID="$(id -u)"
 LOCAL_GID="$(id -g)"
 export LOCAL_UID LOCAL_GID
 dc=(docker compose)
-if [[ -n "${COMPOSE_FILE:-}" ]]; then
-  : # Compose handles user-provided override files.
-elif [[ -d /mnt/wslg && -d /tmp/.X11-unix ]]; then
-  dc+=(-f compose.yaml -f compose.wslg.yaml)
-else
+if [[ -d /mnt/wslg && -d /tmp/.X11-unix ]]; then
+  if [[ -n "${COMPOSE_FILE:-}" ]]; then
+    [[ ":$COMPOSE_FILE:" == *":compose.wslg.yaml:"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}:compose.wslg.yaml"
+  else
+    dc+=(-f compose.yaml -f compose.wslg.yaml)
+  fi
+elif [[ -n "${DISPLAY:-}" && -d /tmp/.X11-unix ]]; then
+  if [[ -n "${COMPOSE_FILE:-}" ]]; then
+    [[ ":$COMPOSE_FILE:" == *":compose.x11.yaml:"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}:compose.x11.yaml"
+  else
+    dc+=(-f compose.yaml -f compose.x11.yaml)
+  fi
+elif [[ -z "${COMPOSE_FILE:-}" ]]; then
   dc+=(-f compose.yaml)
 fi
 
