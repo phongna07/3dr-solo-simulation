@@ -1,6 +1,7 @@
 """A detached mission keeps its supervisor, failure policy and landing owner."""
 
 import json
+from concurrent.futures import Future
 import multiprocessing
 from pathlib import Path
 import time
@@ -10,6 +11,7 @@ import pytest
 
 rclpy = pytest.importorskip('rclpy')
 from geometry_msgs.msg import PoseStamped
+from solo_bringup.flight import Ownership
 from solo_mpc.mission_node import MissionSupervisor
 from solo_mpc_interfaces.srv import StartMission
 from std_srvs.srv import Trigger
@@ -38,11 +40,43 @@ arrival_timeout_sim: 3.0
 def supervisor(run_dir):
     rclpy.init()
     node = MissionSupervisor(run_dir)
+    node.service_call = lambda *args: None
+    mock_cleanup_clients(node)
     try:
         yield node
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+def mock_cleanup_clients(node):
+    def call(name, request):
+        future = Future()
+        try:
+            node.service_call(name, request.data)
+            future.set_result(SimpleNamespace(success=True))
+        except Exception as exc:
+            future.set_exception(exc)
+        return future
+    node.mission_clients = {name: SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda request, name=name: call(name, request),
+    ) for name in node.mission_clients}
+
+
+def own_flight(node):
+    node.ownership.update(dict.fromkeys(node.names, Ownership.OWNED))
+
+
+def mock_landing(node, callback):
+    def land(names, *, poll):
+        poll()
+        callback(names)
+        for name in names:
+            node.observe_ownership(name)
+            if node.ownership[name] != Ownership.RELEASED:
+                node.ownership[name] = Ownership.UNOWNED
+    node.land = land
 
 
 def healthy(node, stamp=1.0, position=0.0):
@@ -54,7 +88,7 @@ def healthy(node, stamp=1.0, position=0.0):
     pose = PoseStamped()
     pose.pose.position.z = 3.0
     node.poses['test_uav'] = pose
-    node.states['test_uav'] = SimpleNamespace(armed=True, mode='GUIDED')
+    node.states['test_uav'] = SimpleNamespace(connected=True, armed=True, mode='GUIDED')
     node.connected = lambda _: True
     target = PoseStamped()
     target.pose.position.x = position
@@ -74,7 +108,6 @@ def start(node, seconds=0.0):
     ('target_stale', 'Target simulator stopped reporting'),
     ('publisher_stale', 'setpoint publisher stopped reporting'),
     ('controller_stale', 'Controller status stopped updating'),
-    ('flight_mode', 'GUIDED/armed/connection'),
     ('altitude', 'altitude flight envelope'),
     ('target_reacquired', None),
     ('arrival', None),
@@ -86,7 +119,7 @@ def test_persistent_supervision_handles_completion_and_failures(supervisor, monk
     steps = 0
 
     def prepare():
-        node.flight_owned = True
+        own_flight(node)
         healthy(node)
 
     def tick(*args, **kwargs):
@@ -106,8 +139,6 @@ def test_persistent_supervision_handles_completion_and_failures(supervisor, monk
             node.delivery['wall'] -= 10
         elif case == 'controller_stale':
             node.snapshots['wall'] -= 10
-        elif case == 'flight_mode':
-            node.states['test_uav'].mode = 'LAND'
         elif case == 'altitude':
             node.poses['test_uav'].pose.position.z = 0
         elif case == 'arrival':
@@ -123,7 +154,7 @@ def test_persistent_supervision_handles_completion_and_failures(supervisor, monk
 
     node.prepare_flight = prepare
     node.service_call = lambda name, value=None: events.append((name, value))
-    node.land = lambda names: events.append(('LAND', tuple(names)))
+    mock_landing(node, lambda names: events.append(('LAND', tuple(names))))
     monkeypatch.setattr(rclpy, 'spin_once', tick)
     assert start(node, seconds=0.01 if case == 'duration' else 0).success
     node.process_pending()
@@ -165,7 +196,7 @@ def test_server_rejects_wrong_run(supervisor):
 
 def test_cleanup_failure_is_reported_and_blocks_restart(supervisor):
     node = supervisor
-    node.prepare_flight = lambda: setattr(node, 'flight_owned', True)
+    node.prepare_flight = lambda: own_flight(node)
     node.supervise = lambda: None
     def fail():
         raise RuntimeError('LAND rejected')
@@ -203,7 +234,7 @@ def test_publisher_failure_still_pauses_target_and_attempts_land(supervisor):
         if name == '/mpc/enable':
             raise RuntimeError('publisher unavailable')
     node.service_call = call
-    node.land = lambda _: events.append('LAND')
+    mock_landing(node, lambda _: events.append('LAND'))
     node.request_stop(Trigger.Request(), Trigger.Response())
     node.process_pending()
     assert events == [('/mpc/enable', False), ('/target/run', False), 'LAND']
@@ -231,7 +262,7 @@ def detached_supervisor(run_dir):
     run = Path(run_dir)
     try:
         def prepare():
-            node.flight_owned = True
+            own_flight(node)
             healthy(node)
             if (run / 'block-takeoff').exists():
                 (run / 'flight-started').touch()
@@ -318,3 +349,91 @@ def test_cli_cancellation_interrupts_remote_takeoff_with_paused_sim_clock(run_di
                 process.terminate()
                 process.join(timeout=5)
             assert process.exitcode == 0
+
+
+@pytest.mark.parametrize('mode', ['LOITER', 'ALT_HOLD', 'RTL', 'LAND'])
+def test_supervisor_reports_release_and_stop_preserves_takeover(supervisor, monkeypatch, mode):
+    node = supervisor
+    events = []
+    def prepare():
+        own_flight(node)
+        healthy(node)
+    def tick(*args, **kwargs):
+        healthy(node, position=10)  # Takeover must win over arrival in this tick.
+        node.states['test_uav'].mode = mode
+    node.prepare_flight = prepare
+    node.service_call = lambda *args: events.append(args)
+    monkeypatch.setattr(rclpy, 'spin_once', tick)
+    assert start(node).success
+    node.process_pending()
+    assert node.mission_state == 'released'
+    assert node.status()['ownership'] == {'test_uav': 'released'}
+    assert not node.flight_owned
+    assert events == [('/mpc/enable', False), ('/target/run', False)]
+    assert not start(node).success
+    node.request_stop(Trigger.Request(), Trigger.Response())
+    node.process_pending()
+    assert node.mission_state == 'released'
+    assert node.states['test_uav'].mode == mode
+    # Disarm and a new explicit start are required to clear released ownership.
+    node.states['test_uav'].armed = False
+    assert start(node).success
+    assert node.ownership['test_uav'] == Ownership.UNOWNED
+
+
+def test_target_reset_after_takeover_keeps_flight_released(supervisor):
+    node = supervisor
+    healthy(node)
+    node.ownership['test_uav'] = Ownership.RELEASED
+    node.mission_state = 'released'
+    calls = []
+    node.service_call = lambda name: calls.append(name)
+    assert node.request_reset(Trigger.Request(), Trigger.Response()).success
+    node.process_pending()
+    assert calls == ['/target/reset']
+    assert node.ownership['test_uav'] == Ownership.RELEASED
+    assert not start(node).success
+
+
+@pytest.mark.parametrize('unavailable', ['discovery', 'reply', 'rejected'])
+def test_cleanup_land_does_not_wait_for_helper_services(supervisor, monkeypatch, unavailable):
+    from solo_mpc import mission_node
+    from solo_bringup import flight
+    from mavros_msgs.srv import SetMode
+
+    node = supervisor
+    own_flight(node)
+    healthy(node)
+    now = [100.0]
+    commands = []
+    helper_futures = []
+    def helper(request):
+        future = Future()
+        helper_futures.append(future)
+        if unavailable == 'rejected':
+            future.set_result(SimpleNamespace(success=False))
+        return future
+    node.mission_clients = {name: SimpleNamespace(
+        service_is_ready=lambda: unavailable != 'discovery', call_async=helper,
+    ) for name in node.mission_clients}
+    def land(request):
+        commands.append((request.custom_mode, now[0]))
+        future = Future()
+        future.set_result(SetMode.Response(mode_sent=True))
+        return future
+    node.command_clients[('test_uav', 'set_mode')] = SimpleNamespace(
+        service_is_ready=lambda: True, call_async=land)
+    def tick(*args, **kwargs):
+        now[0] = round(now[0] + 0.1, 6)
+        # Landing completes long before helper discovery/reply times out.
+        if now[0] >= 100.3:
+            node.states['test_uav'].armed = False
+    monkeypatch.setattr(mission_node, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(flight, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(rclpy, 'spin_once', tick)
+    with pytest.raises(RuntimeError, match='rejected' if unavailable == 'rejected' else 'cleanup'):
+        node.stop_flight()
+    assert commands == [('LAND', 100.0)]
+    assert now[0] <= 102.0
+    assert all(future.done() for future in helper_futures)
+    assert not node.flight_owned

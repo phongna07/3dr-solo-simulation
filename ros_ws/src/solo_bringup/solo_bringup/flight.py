@@ -1,5 +1,6 @@
 """Internal takeoff/LAND support for the simulation mission supervisor."""
 import time
+from enum import Enum
 
 import rclpy
 from rclpy.node import Node
@@ -8,6 +9,16 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
 from mavros_msgs.srv import SetMode, CommandBool, CommandTOL
+
+
+class Ownership(str, Enum):
+    UNOWNED = 'unowned'
+    ACQUIRING = 'acquiring'
+    GUIDED = 'guided'
+    OWNED = 'owned'
+    LAND_REQUESTED = 'land_requested'
+    LANDING = 'landing'
+    RELEASED = 'released'
 
 
 class Flight(Node):
@@ -20,6 +31,7 @@ class Flight(Node):
         self.pose_sim_at = {}
         self.subscriptions_keepalive = []
         self.command_clients = {}
+        self.ownership = {u['name']: Ownership.UNOWNED for u in uavs}
         for uav in uavs:
             name = uav['name']
             self.subscriptions_keepalive += [
@@ -33,7 +45,47 @@ class Flight(Node):
                 self.command_clients[(name, suffix)] = self.create_client(service, f'/{name}/mavros/{suffix}')
 
     def state(self, msg, name):
+        previous = self.states.get(name)
         self.states[name], self.state_at[name] = msg, time.monotonic()
+        # A different mode while acquiring GUIDED also belongs to the pilot/FCU.
+        if (self.ownership[name] == Ownership.ACQUIRING and previous
+                and msg.connected and msg.mode != previous.mode and msg.mode != 'GUIDED'):
+            self.ownership[name] = Ownership.RELEASED
+        self.observe_ownership(name)
+
+    @property
+    def flight_owned(self):
+        return any(owner not in (Ownership.UNOWNED, Ownership.RELEASED)
+                   for owner in self.ownership.values())
+
+    def observe_ownership(self, name):
+        """Latch takeover until a new, explicitly accepted mission starts."""
+        state = self.states.get(name)
+        owner = self.ownership[name]
+        if state is None or not state.connected:
+            return
+        if owner == Ownership.ACQUIRING and state.mode == 'GUIDED':
+            owner = Ownership.GUIDED
+        if owner in (Ownership.GUIDED, Ownership.OWNED):
+            if state.mode != 'GUIDED' or (owner == Ownership.OWNED and not state.armed):
+                owner = Ownership.RELEASED
+            elif state.armed:
+                owner = Ownership.OWNED
+        elif owner in (Ownership.LAND_REQUESTED, Ownership.LANDING):
+            if not state.armed:
+                owner = Ownership.UNOWNED
+            elif state.mode == 'LAND':
+                owner = Ownership.LANDING
+            elif owner == Ownership.LANDING or state.mode != 'GUIDED':
+                owner = Ownership.RELEASED
+        self.ownership[name] = owner
+
+    def check_ownership(self):
+        for name in self.ownership:
+            self.observe_ownership(name)
+        released = [n for n, owner in self.ownership.items() if owner == Ownership.RELEASED]
+        if released:
+            raise FlightReleased('Pilot/FCU takeover: ' + ', '.join(released))
 
     def pose(self, msg, name):
         self.poses[name], self.pose_at[name] = msg, time.monotonic()
@@ -84,19 +136,23 @@ class Flight(Node):
                              for n in names
                              for suffix in ('set_mode', 'cmd/arming', 'cmd/takeoff')),
                   'fleet takeoff services', 30)
+        self.check_ownership()
 
         # Each UAV advances independently on the single ROS executor. In
         # particular, a slow ARM reply cannot delay another UAV's takeoff.
         pending = {}
 
         def send(name, suffix, request):
+            self.check_ownership()
             future = self.command_clients[(name, suffix)].call_async(request)
             pending[name] = (suffix, future, time.monotonic() + 30)
 
         for name in names:
+            self.ownership[name] = Ownership.ACQUIRING
             send(name, 'set_mode', SetMode.Request(base_mode=0, custom_mode='GUIDED'))
 
         def advance():
+            self.check_ownership()
             for name, (phase, future, deadline) in list(pending.items()):
                 if phase == 'GUIDED':
                     if self.connected(name) and self.states[name].mode == 'GUIDED':
@@ -131,6 +187,7 @@ class Flight(Node):
         previous, stable_since = {}, {}
 
         def settled():
+            self.check_ownership()
             ready = True
             for name in names:
                 pose = self.poses.get(name)
@@ -160,21 +217,77 @@ class Flight(Node):
 
         self.wait(settled, f'fleet stable at {altitude} m')
 
-    def land(self, names):
-        # Send LAND to every connected UAV before waiting for any one to disarm.
+    def land(self, names, *, poll=lambda: None, command_timeout=5.0, landing_timeout=240.0):
+        """Dispatch independently, with fleet-wide wall deadlines and no takeover.
+
+        poll lets mission cleanup progress its helper services concurrently.
+        Neither an unavailable FCU nor a missing reply delays another LAND.
+        """
+        names = tuple(names)
         errors = []
-        for name in names:
-            try:
-                self.wait(lambda: self.connected(name), f'{name}: connection', 20)
-                self.call(name, 'set_mode', SetMode.Request(base_mode=0, custom_mode='LAND'))
-            except RuntimeError as error:
-                errors.append(str(error))
-        for name in names:
-            try:
-                self.wait(lambda: self.connected(name) and not self.states[name].armed,
-                          f'{name}: landed/disarmed')
-            except RuntimeError as error:
-                errors.append(str(error))
+        pending, sent = set(names), {}
+        started = time.monotonic()
+        command_deadline = started + command_timeout
+        landing_deadline = started + landing_timeout
+        while rclpy.ok():
+            poll()
+            now = time.monotonic()
+            for name in tuple(pending):
+                self.observe_ownership(name)
+                if self.ownership[name] in (Ownership.UNOWNED, Ownership.RELEASED):
+                    pending.remove(name)
+                    continue
+                if now >= command_deadline:
+                    errors.append(f'Timeout: {name}/LAND service or connection')
+                    pending.remove(name)
+                    continue
+                client = self.command_clients[(name, 'set_mode')]
+                if self.connected(name) and client.service_is_ready():
+                    if not self.states[name].armed:
+                        self.ownership[name] = Ownership.UNOWNED
+                        pending.remove(name)
+                        continue
+                    # Recheck ownership immediately before dispatch; no spin or
+                    # service wait may intervene between this check and LAND.
+                    self.ownership[name] = Ownership.LAND_REQUESTED
+                    try:
+                        sent[name] = client.call_async(SetMode.Request(base_mode=0, custom_mode='LAND'))
+                    except Exception as exc:
+                        errors.append(f'{name}/LAND: {exc}')
+                    pending.remove(name)
+            for name, future in list(sent.items()):
+                self.observe_ownership(name)
+                if self.ownership[name] == Ownership.RELEASED:
+                    future.cancel()
+                    del sent[name]
+                elif future.done():
+                    try:
+                        self.check_response(name, 'set_mode', future.result())
+                    except Exception as exc:
+                        errors.append(str(exc))
+                    del sent[name]
+                elif now >= command_deadline:
+                    errors.append(f'Timeout: {name}/LAND reply')
+                    future.cancel()
+                    del sent[name]
+            airborne = []
+            for name in names:
+                self.observe_ownership(name)
+                if self.ownership[name] not in (Ownership.UNOWNED, Ownership.RELEASED):
+                    airborne.append(name)
+            if now >= landing_deadline:
+                errors.extend(f'Timeout: {name}: landed/disarmed' for name in airborne)
+                break
+            if not pending and not sent and not airborne:
+                break
+            rclpy.spin_once(self, timeout_sec=min(0.1, max(0.0, landing_deadline - now)))
+        else:
+            errors.append('ROS stopped during landing')
+        for future in sent.values():
+            future.cancel()
         if errors:
             raise RuntimeError('; '.join(errors))
-        print('All selected UAVs disarmed.', flush=True)
+
+
+class FlightReleased(Exception):
+    """The pilot or FCU has taken control; companion must not reclaim it."""

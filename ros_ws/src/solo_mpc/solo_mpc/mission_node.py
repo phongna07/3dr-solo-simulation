@@ -18,7 +18,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.clock import Clock, ClockType
 from rclpy.signals import SignalHandlerOptions
-from solo_bringup.flight import Flight
+from solo_bringup.flight import Flight, FlightReleased, Ownership
 from solo_bringup.startup import ComponentProgress
 from solo_mpc_interfaces.srv import StartMission
 from std_msgs.msg import String
@@ -51,7 +51,6 @@ class MissionSupervisor(Flight):
         self.pending = None
         self.stop_requested = False
         self.cancellable = False
-        self.flight_owned = False
         self.shutdown_requested = False
         self.duration = 0.0
         self.mission_clients = {
@@ -130,22 +129,53 @@ class MissionSupervisor(Flight):
             raise RuntimeError(f"{name}: rejected")
 
     def stop_flight(self):
+        # Helper services and LAND each get independent wall-time budgets.
+        # Never wait for publisher/target discovery or replies before LAND.
         errors = []
-        for service in ("/mpc/enable", "/target/run"):
-            try:
-                self.service_call(service, False)
-            except RuntimeError as exc:
-                errors.append(str(exc))
+        pending = {name: None for name in ("/mpc/enable", "/target/run")}
+        deadline = time.monotonic() + 2.0
+
+        def poll():
+            for name, future in list(pending.items()):
+                try:
+                    client = self.mission_clients[name]
+                    if future is None and time.monotonic() < deadline and client.service_is_ready():
+                        future = client.call_async(SetBool.Request(data=False))
+                        pending[name] = future
+                    if future is not None and future.done():
+                        result = future.result()
+                        if not result or not result.success:
+                            errors.append(f'{name}: rejected')
+                        del pending[name]
+                    elif time.monotonic() >= deadline:
+                        errors.append(f'Timeout: {name} cleanup')
+                        if future is not None:
+                            future.cancel()
+                        del pending[name]
+                except Exception as exc:
+                    errors.append(f'{name}: {exc}')
+                    del pending[name]
+
         try:
-            self.land(self.names)
-        except RuntimeError as exc:
+            self.land(self.names, poll=poll)
+        except Exception as exc:
             errors.append(str(exc))
+        while pending and rclpy.ok():
+            poll()
+            if pending:
+                rclpy.spin_once(self, timeout_sec=min(0.1, max(0.0, deadline - time.monotonic())))
+        if pending:
+            for future in pending.values():
+                if future is not None:
+                    future.cancel()
+            errors.append('ROS stopped during helper cleanup')
         if errors:
             raise RuntimeError("; ".join(errors))
 
     def status(self):
         return {"state": self.mission_state, "mission_id": self.mission_id,
                 "error": self.error, "run_dir": str(self.run_dir),
+                "ownership": {n: owner.value for n, owner in self.ownership.items()},
                 "controller": self.snapshots}
 
     def request_status(self, request, response):
@@ -162,7 +192,16 @@ class MissionSupervisor(Flight):
             response.message = "Mission supervisor is busy"
         elif self.mission_state == "failed":
             response.message = "Previous mission failed; request stop to confirm landing before restarting"
+        elif any(owner == Ownership.RELEASED for owner in self.ownership.values()) and not all(
+            self.connected(n) and not self.states[n].armed for n in self.names
+        ):
+            response.message = "Pilot/FCU owns flight; confirm fleet disarmed before starting again"
         else:
+            # A new start is the only operation allowed to clear takeover,
+            # after the disarmed-fleet check above.
+            for name, owner in self.ownership.items():
+                if owner == Ownership.RELEASED:
+                    self.ownership[name] = Ownership.UNOWNED
             self.mission_id = uuid.uuid4().hex
             self.duration = request.seconds
             self.error = ""
@@ -180,7 +219,7 @@ class MissionSupervisor(Flight):
             self.pending = "stop"
             self.mission_state = "landing"
         response.success = True
-        response.message = "Stop requested; waiting for landing"
+        response.message = "Stop requested; cleaning up companion-owned flight"
         return response
 
     def request_reset(self, request, response):
@@ -194,8 +233,17 @@ class MissionSupervisor(Flight):
         return response
 
     def check_stop(self):
-        if self.cancellable and (self.stop_requested or self.shutdown_requested):
-            raise MissionStopped
+        if self.cancellable:
+            if self.mission_state != "resetting":
+                self.check_ownership()
+            if self.stop_requested or self.shutdown_requested:
+                raise MissionStopped
+
+    def wait(self, condition, description, timeout=None):
+        def checked():
+            self.check_stop()
+            return condition()
+        return super().wait(checked, description, timeout)
 
     def process_pending(self):
         operation, self.pending = self.pending, None
@@ -217,8 +265,10 @@ class MissionSupervisor(Flight):
                 self.service_call("/target/reset")
                 result = "idle"
             else:
-                self.flight_owned = True
                 result = "stopped"
+        except FlightReleased as exc:
+            self.error = str(exc)
+            result = "released"
         except MissionStopped:
             result = "stopped"
         except Exception as exc:
@@ -226,14 +276,15 @@ class MissionSupervisor(Flight):
             result = "failed"
         finally:
             self.cancellable = False
-            if self.flight_owned:
+            if operation != "reset":
                 self.mission_state = "landing"
                 try:
                     self.stop_flight()
                 except Exception as exc:
                     self.error = "; ".join(filter(None, [self.error, f"Mission cleanup failed: {exc}"]))
                     result = "failed"
-                self.flight_owned = False
+                if result != "failed" and Ownership.RELEASED in self.ownership.values():
+                    result = "released"
             if self.truth_log:
                 self.truth_log.close()
                 self.truth_log = None
@@ -264,7 +315,6 @@ class MissionSupervisor(Flight):
             "common world alignment",
             90.0,
         )
-        self.flight_owned = True
         self.takeoff(self.names, self.settings["flight_altitude"])
         self.wait(
             lambda: (
@@ -289,6 +339,8 @@ class MissionSupervisor(Flight):
         arrival_since = None
         while rclpy.ok():
             rclpy.spin_once(self, timeout_sec=0.1)
+            # Takeover wins over completion and health failures from this tick.
+            self.check_stop()
             if (
                 self.target
                 and np.linalg.norm(pose_arrays(self.target["pose"])[0][:2] - goal) < 0.05
@@ -365,7 +417,7 @@ class MissionSupervisor(Flight):
                 and self.states[n].mode == "GUIDED"
                 for n in self.names
             ):
-                raise RuntimeError("Mission lost GUIDED/armed/connection")
+                raise RuntimeError("Mission lost armed/connection state")
             if any(
                 self.poses[n].pose.position.z < self.settings["flight_altitude"] - 0.7
                 for n in self.names

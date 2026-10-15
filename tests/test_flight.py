@@ -19,6 +19,10 @@ class SimulatedFlight:
     check_response = flight.Flight.check_response
     takeoff = flight.Flight.takeoff
     wait_for_stable_altitude = flight.Flight.wait_for_stable_altitude
+    state = flight.Flight.state
+    observe_ownership = flight.Flight.observe_ownership
+    check_ownership = flight.Flight.check_ownership
+    land = flight.Flight.land
 
     def __init__(self, monkeypatch):
         self.now = 100.0
@@ -27,6 +31,7 @@ class SimulatedFlight:
         self.pose_interval_wall = 0.0
         self.timeout = 15.0
         self.names = ('uav1', 'uav2', 'uav3')
+        self.ownership = dict.fromkeys(self.names, flight.Ownership.UNOWNED)
         self.states = {n: State(connected=True, mode='STABILIZE') for n in self.names}
         self.poses = {}
         self.state_at = {}
@@ -233,7 +238,11 @@ def test_mission_moves_only_after_entire_fleet_settles(
         node.mission_clients = {name: client(name) for name in node.mission_clients}
         node.wait = fleet.wait
         node.takeoff = fleet.takeoff
-        node.land = lambda names: events.append(('land', None, fleet.now))
+        node.ownership = fleet.ownership
+        def land(names, *, poll):
+            poll()
+            events.append(('land', None, fleet.now))
+        node.land = land
         node.snapshots = {'reason': 'ready', 'vehicles': {
             n: {'result': 'tracking'} for n in fleet.names}}
         node.supervise = lambda: events.append(('supervise', None, fleet.now))
@@ -267,3 +276,145 @@ def test_mission_moves_only_after_entire_fleet_settles(
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+@pytest.mark.parametrize('mode', ['LOITER', 'ALT_HOLD', 'RTL', 'LAND', 'STABILIZE'])
+def test_pilot_or_fcu_takeover_is_latched_and_excluded_from_land(fleet, mode):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership.update(dict.fromkeys(fleet.names, flight.Ownership.OWNED))
+    fleet.state(State(connected=True, armed=True, mode=mode), 'uav1')
+    with pytest.raises(flight.FlightReleased, match='uav1'):
+        fleet.check_ownership()
+    # A subsequent GUIDED heartbeat cannot silently reacquire control.
+    fleet.state(State(connected=True, armed=True, mode='GUIDED'), 'uav1')
+    fleet.land(['uav1'])
+    assert fleet.ownership['uav1'] == flight.Ownership.RELEASED
+    assert not fleet.commands
+
+
+@pytest.mark.parametrize('phase', ['arming', 'settling'])
+def test_takeover_aborts_takeoff_without_further_commands(fleet, phase):
+    if phase == 'arming':
+        fleet.delays[('uav1', 'cmd/arming')] = 3.0
+    tick = fleet.tick
+    def takeover():
+        tick()
+        if (phase == 'arming' and fleet.now >= 100.5
+                or phase == 'settling' and fleet.launches):
+            fleet.state(State(connected=True, armed=phase == 'settling', mode='RTL'), 'uav1')
+    fleet.tick = takeover
+    with pytest.raises(flight.FlightReleased, match='uav1'):
+        fleet.takeoff(fleet.names, 3.0)
+    assert fleet.ownership['uav1'] == flight.Ownership.RELEASED
+    if phase == 'arming':
+        assert 'uav1' not in fleet.launches
+    before = list(fleet.commands)
+    fleet.land(['uav1'])
+    assert fleet.commands == before
+
+
+def test_landing_dispatch_and_deadlines_are_independent_of_other_fcus(fleet):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership.update(dict.fromkeys(fleet.names, flight.Ownership.OWNED))
+    fleet.delays[('uav1', 'set_mode')] = 100.0
+    fleet.command_clients[('uav2', 'set_mode')].service_is_ready = lambda: False
+    tick = fleet.tick
+    def disarm_third():
+        tick()
+        if fleet.now >= 102:
+            fleet.states['uav3'].armed = False
+    fleet.tick = disarm_third
+    started = fleet.now
+    with pytest.raises(RuntimeError) as exc:
+        fleet.land(fleet.names, landing_timeout=fleet.timeout)
+    assert 'uav1/LAND reply' in str(exc.value)
+    assert 'uav2/LAND service or connection' in str(exc.value)
+    assert all(t == started for _, _, t in fleet.commands)
+    assert {n for n, _, _ in fleet.commands} == {'uav1', 'uav3'}
+    assert fleet.now - started == pytest.approx(fleet.timeout)
+    assert fleet.ownership['uav3'] == flight.Ownership.UNOWNED
+
+
+@pytest.mark.parametrize('mode', ['RTL', 'LAND'])
+def test_takeover_while_waiting_for_land_service_never_dispatches(fleet, mode):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership['uav1'] = flight.Ownership.OWNED
+    fleet.command_clients[('uav1', 'set_mode')].service_is_ready = lambda: fleet.now >= 102
+    tick = fleet.tick
+    def takeover():
+        tick()
+        fleet.state(State(connected=True, armed=True, mode=mode), 'uav1')
+    fleet.tick = takeover
+    fleet.land(['uav1'])
+    assert not fleet.commands
+    assert fleet.now < 102
+    assert fleet.ownership['uav1'] == flight.Ownership.RELEASED
+
+
+def test_pilot_can_override_companion_landing_with_guided(fleet):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership['uav1'] = flight.Ownership.OWNED
+    tick = fleet.tick
+    def takeover():
+        tick()
+        fleet.observe_ownership('uav1')
+        if fleet.now >= 101:
+            fleet.state(State(connected=True, armed=True, mode='GUIDED'), 'uav1')
+    fleet.tick = takeover
+    fleet.land(['uav1'])
+    assert fleet.ownership['uav1'] == flight.Ownership.RELEASED
+    assert len(fleet.commands) == 1
+
+
+def test_failed_preflight_does_not_claim_or_land_already_armed_aircraft(fleet):
+    fleet.states['uav3'].armed = True
+    with pytest.raises(RuntimeError, match='already armed'):
+        fleet.takeoff(fleet.names, 3.0)
+    fleet.land(fleet.names)
+    assert not fleet.commands
+    assert set(fleet.ownership.values()) == {flight.Ownership.UNOWNED}
+
+
+def test_cleanup_lands_remaining_owned_vehicles_after_one_takeover(fleet):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership.update(dict.fromkeys(fleet.names, flight.Ownership.OWNED))
+    fleet.state(State(connected=True, armed=True, mode='RTL'), 'uav1')
+    tick = fleet.tick
+    def disarm_owned():
+        tick()
+        for name in ('uav2', 'uav3'):
+            fleet.states[name].armed = False
+    fleet.tick = disarm_owned
+    fleet.land(fleet.names)
+    assert {n for n, _, _ in fleet.commands} == {'uav2', 'uav3'}
+    assert fleet.states['uav1'].mode == 'RTL'
+    assert fleet.ownership['uav1'] == flight.Ownership.RELEASED
+    assert fleet.ownership['uav2'] == fleet.ownership['uav3'] == flight.Ownership.UNOWNED
+
+
+def test_takeover_heartbeat_is_latched_between_supervision_ticks(fleet):
+    hover(fleet)
+    fleet.tick()
+    fleet.ownership['uav1'] = flight.Ownership.OWNED
+    fleet.state(State(connected=True, armed=True, mode='LOITER'), 'uav1')
+    fleet.state(State(connected=True, armed=True, mode='GUIDED'), 'uav1')
+    with pytest.raises(flight.FlightReleased):
+        fleet.check_ownership()
+
+
+def test_paused_simulation_does_not_extend_landing_deadline(fleet):
+    hover(fleet)
+    fleet.tick()
+    fleet.sim_rate = 0
+    fleet.ownership['uav1'] = flight.Ownership.OWNED
+    started = fleet.now
+    sim_started = fleet.sim_now
+    with pytest.raises(RuntimeError, match='landed/disarmed'):
+        fleet.land(['uav1'], landing_timeout=3.0)
+    assert fleet.now - started == pytest.approx(3.0)
+    assert fleet.sim_now == sim_started

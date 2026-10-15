@@ -15,7 +15,7 @@ from solo_mpc_interfaces.srv import StartMission
 from std_srvs.srv import Trigger
 
 
-TERMINAL = {"idle", "completed", "stopped", "failed"}
+TERMINAL = {"idle", "completed", "stopped", "failed", "released"}
 
 
 def main(args=None):
@@ -130,6 +130,8 @@ def main(args=None):
         snapshot = await_result(return_on_tracking=args.command == "start")
         if snapshot["state"] == "tracking":
             print("MPC mission started; persistent supervisor is monitoring flight.", flush=True)
+        elif snapshot["state"] == "released":
+            print("Mission released to pilot/FCU; companion control stopped.", flush=True)
         else:
             print("Mission completed and fleet landed.", flush=True)
     except KeyboardInterrupt:

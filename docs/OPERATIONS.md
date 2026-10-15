@@ -35,9 +35,21 @@ readiness and common-frame alignment before takeoff.
 It keeps the target paused and the setpoint publisher disabled during takeoff,
 then waits for usable controller inputs before enabling tracking. It finishes
 when the target and fleet reach the route endpoint, or the requested duration
-expires. Controller/publisher failure, prolonged target loss, loss of
-GUIDED/armed/connection state, or departure from the altitude envelope triggers
-an attempt to land.
+expires. Controller/publisher failure, prolonged target loss, loss of connection,
+or departure from the altitude envelope triggers an attempt to land vehicles
+still owned by the companion.
+
+Ownership is tracked per vehicle: `unowned`, `acquiring` (GUIDED requested),
+`guided` (waiting for arming), `owned`, `land_requested`, `landing`, or `released`.
+A pilot/FCU mode change away from GUIDED, or disarming during companion flight,
+latches `released`. The supervisor disables publishing and pauses the target,
+without issuing LAND to that vehicle. Other companion-owned vehicles land.
+Takeover also takes precedence over arrival or the duration limit, and remains
+released through later stop requests, shutdown, and a return to GUIDED. A new
+explicit mission start may clear release only after the whole fleet is connected
+and disarmed. `mission status` includes each vehicle's ownership; `mission run`
+reports release separately from confirmed landing. Unowned aircraft, including
+an already-armed aircraft that failed preflight, never receive cleanup LAND.
 
 During camera occlusion the target estimate briefly coasts, then the controller
 searches near the last plausible position. The supervisor pauses the simulated
@@ -52,6 +64,14 @@ accept `--seconds`; the supervisor enforces this limit even after the CLI exits.
 `mission stop` requests cleanup and waits for landing. Starts and target resets
 are rejected while another mission or landing is active. After a failure, request
 `mission stop` successfully before starting again.
+
+Cleanup submits publisher-disable, target-pause, and eligible LAND requests
+concurrently. Helper discovery/replies have a shared two-wall-second budget;
+each FCU's LAND discovery/reply has a five-wall-second budget. Missing services
+or replies cannot delay LAND to another eligible vehicle. Landing/disarm uses a
+separate fleet-wide 240-wall-second deadline, including when simulation time is
+paused. Cleanup errors are reported and block restart; a later stop retries
+cleanup without reclaiming released vehicles.
 
 Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
 disarm; cleanup can fail if required services or processes have already stopped.
