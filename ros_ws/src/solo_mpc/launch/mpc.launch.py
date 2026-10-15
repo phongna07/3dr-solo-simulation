@@ -101,8 +101,14 @@ def start(context):
             output="both",
         )
         # Keep SITL and MAVROS alive if a controller/perception process exits.
-        # The independent publisher expires references; mission run can LAND.
+        # The independent publisher expires references; the supervisor can LAND.
         actions += observed(node, progress, executable, initializes=True)
+    supervisor = Node(
+        package="solo_mpc", executable="mission_supervisor",
+        arguments=['--run-dir', str(run), '--startup-component', 'mission-supervisor'],
+        parameters=[{"use_sim_time": True}], output="both",
+    )
+    actions += observed(supervisor, progress, 'mission-supervisor', initializes=True)
     # Each camera callback runs in its own process, independently of the other
     # vehicles and of all optimization workers. Reuse the installed executable.
     for uav in fleet["uavs"]:

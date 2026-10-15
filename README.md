@@ -87,13 +87,16 @@ with vertical speed at most 0.2 m/s, for two simulation seconds of fresh pose te
 
 For a short experiment, use `./scripts/dev mission run --seconds 20`. This limits
 tracking to 20 wall-clock seconds after takeoff and controller initialization.
+`mission start` returns once tracking begins; the persistent supervisor continues
+the same failure checks, truth recording, arrival detection, and landing.
+Both commands accept `--seconds`, enforced by the supervisor after the CLI exits.
 `mpc --gui` opens the viewer after initialization; start the mission in another
 terminal. Closing the viewer leaves the simulation running. Ctrl+C in
 `mission run` attempts to release control and land the fleet. Check its output
 for successful cleanup.
 
 In another terminal, use `./scripts/dev gui` to open Gazebo, `./scripts/dev status`
-for fleet readiness, `./scripts/dev mission status` for controller diagnostics,
+for fleet readiness, `./scripts/dev mission status` for mission state and controller diagnostics,
 or `./scripts/dev logs` to follow logs. Closing the GUI leaves the server running.
 The [operations guide](docs/OPERATIONS.md) covers mission control and recovery.
 

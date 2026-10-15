@@ -21,6 +21,7 @@ setup(
         'marker_detector = solo_mpc.perception_node:main',
         'target = solo_mpc.target_node:main',
         'mission = solo_mpc.mission:main',
+        'mission_supervisor = solo_mpc.mission_node:main',
         'evaluate = solo_mpc.evaluate:main',
     ]},
 )

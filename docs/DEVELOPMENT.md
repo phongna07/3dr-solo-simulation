@@ -47,7 +47,8 @@ used by the mission supervisor; it has no standalone manual flight CLI.
 | `frame_node.py` | Disarmed alignment and measured state in the common world frame |
 | `perception_node.py`, `target_node.py` | Camera marker detection and simulated target motion |
 | `world.py`, `settings.py` | Field/sensor generation and configuration resolution |
-| `mission.py`, `evaluate.py` | Simulation supervision and recorded-flight metrics |
+| `mission_node.py`, `mission.py` | Persistent simulation supervision and its request CLI |
+| `evaluate.py` | Recorded-flight metrics |
 
 `TeamController.step(states, scans, stamp, seers)` has no ROS imports and does not
 integrate a replacement for measured vehicle state. Controller configuration and
@@ -135,6 +136,9 @@ All topic and service paths are absolute.
 | `/mpc/status`, `/mpc/setpoint_status` | `std_msgs/String`: JSON diagnostics |
 | `/mpc/enable` | `std_srvs/SetBool`: enable/disable publisher ownership |
 | `/target/run`, `/target/reset` | `SetBool`, `Trigger`: pause/resume and reset target |
+| `/mission/start` | `solo_mpc_interfaces/StartMission`: request a supervised mission with a tracking duration and run directory |
+| `/mission/stop`, `/mission/reset` | `Trigger`: queue landing or an idle target reset |
+| `/mission/status` | `Trigger`: JSON mission state, mission ID, error, run directory, and controller diagnostics |
 | `/target/ground_truth`, `/uavN/ground_truth/pose` | `PoseStamped`: simulation alignment, supervision, evaluation |
 | `/solo/readiness` | `std_msgs/String`: JSON fleet health |
 | `/clock` | `rosgraph_msgs/Clock`: Gazebo simulation time |
@@ -178,9 +182,17 @@ hardware profile retains the upstream parameter plugin and timing defaults.
 
 ## Control ownership and failure behavior
 
-The mission supervisor disables publishing during takeoff and LAND. The setpoint
-publisher runs in a separate process and does not import the optimizer, so a
-blocked solve does not block its publishing loop. It only controls connected,
+The mission supervisor disables publishing during takeoff and LAND. It
+runs for the lifetime of the MPC stack, independently of the mission
+CLI. Its service callbacks queue work; flight operations run outside callbacks
+and spin ROS while waiting, so stop requests remain responsive during takeoff.
+A steady timer interrupts preflight or tracking on stop requests, while cleanup
+disables interruption until landing finishes. SIGINT/SIGTERM request the same
+cleanup before the supervisor exits. The `StartMission` service lives in the
+`solo_mpc_interfaces` package; rebuild the image after installing this change.
+
+The setpoint publisher runs in a separate process and does not import the
+optimizer, so a blocked solve does not block its publishing loop. It only controls connected,
 armed UAVs in GUIDED mode with alignment and measured pose available.
 
 Invalid or expired references cause zero horizontal velocity with altitude

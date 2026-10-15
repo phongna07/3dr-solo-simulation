@@ -2,9 +2,10 @@
 
 [Back to the project overview](../README.md)
 
-This document consolidates recorded simulation validation from **9–14 October
+This document consolidates recorded simulation validation from **9–15 October
 2026**. Each entry identifies its configuration and scope. The 14 October entry
-covers the parallel execution change with a short flight. Generated evidence in
+covers the parallel execution change; the 15 October entry checks persistent
+mission supervision after the CLI exits. Generated evidence in
 `runs/` and `artifacts/` is Git-ignored and may be absent from a fresh clone.
 
 ## Test environment
@@ -16,6 +17,34 @@ Runtime components were ROS 2 Jazzy, ArduCopter 4.5.3, MAVROS source overlay
 2.15.1, Gazebo Harmonic / gz-sim 8.15.0, ROS Python 3.12.3, and Waf Python 3.11.16.
 Exact source pins are in [versions.json](../locks/versions.json); APT patch versions
 can change on rebuild.
+
+## Persistent mission supervision — 15 October
+
+Run: `runs/20261015T065414Z-9371`, using the default three-UAV camera scenario,
+parallel controller, and 3 m flight altitude. The rebuilt local image ID was
+`sha256:ccd3426614a2fb3d8666f55fc0719174553168e5bebd155b0b1217c22aaf515e`,
+with live project sources mounted. Initialization took 263 wall seconds under
+software rendering, at approximately 0.13–0.19 simulation seconds per wall second.
+
+`./scripts/dev mission start --seconds 10` returned successfully during tracking.
+Subsequent independent status requests observed `tracking`, `landing`, then
+`completed` with no mission error. The persistent supervisor enforced the
+duration, disabled publishing, paused the target, and landed/disarmed all three
+UAVs after the CLI had exited. Its `truth.jsonl` contains 938 samples spanning
+simulation time 21.15–68.0 s; maximum vehicle altitudes were approximately 3.12 m.
+Normal `dev stop` then completed successfully.
+
+`./scripts/dev test` passed all 165 tests. Separate ROS process tests verify
+supervision after CLI exit, duration enforcement, and cancellation during remote
+takeoff with a paused simulation clock. Policy tests exercise target loss and
+reacquisition, prolonged planner failure, arrival and arrival timeout, stale
+inputs, flight-envelope violations, request serialization, and landing failures.
+Those injected failures use simulated flight I/O; the Gazebo flight above checks
+takeoff, short tracking, and automatic landing rather than full-route completion.
+
+Evidence: `artifacts/mission-supervisor-validation.json`,
+`mission-supervisor-flight-status.jsonl`, `mission-supervisor-simulation.log`,
+`mission-supervisor-tests.log`, and `mission-supervisor-stop.log`.
 
 ## Complete camera-driven route
 

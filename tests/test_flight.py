@@ -204,33 +204,11 @@ def test_repeated_pose_stamp_cannot_accumulate_simulation_hold(fleet):
 @pytest.mark.parametrize('outcome', ['tracking', 'takeoff_failure', 'cancelled'])
 def test_mission_moves_only_after_entire_fleet_settles(
         fleet, monkeypatch, tmp_path, outcome):
-    from solo_mpc import mission
+    import rclpy
+    from solo_mpc.mission_node import MissionSupervisor
+    from solo_mpc_interfaces.srv import StartMission
 
     events = []
-
-    def create_client(typ, name):
-        def call(request):
-            events.append((name, getattr(request, 'data', None), fleet.now))
-            future = Future()
-            future.set_result(SimpleNamespace(success=True))
-            return future
-        return SimpleNamespace(service_is_ready=lambda: True, call_async=call)
-
-    def subscribe(typ, topic, callback, qos):
-        if topic == '/mpc/status':
-            callback(SimpleNamespace(data=json.dumps({
-                'reason': 'ready',
-                'vehicles': {n: {'result': 'tracking'} for n in fleet.names},
-            })))
-        return object()
-
-    fleet.create_client = create_client
-    fleet.create_subscription = subscribe
-    fleet.destroy_node = lambda: None
-    fleet.land = lambda names: events.append(('land', None, fleet.now))
-    monkeypatch.setattr(mission, 'Flight', lambda *a, **kw: fleet)
-    monkeypatch.setattr(mission.rclpy, 'init', lambda **kw: None)
-    monkeypatch.setattr(mission.rclpy, 'shutdown', lambda: None)
     (tmp_path / 'manifest.json').write_text(json.dumps({
         'mode': 'simulation', 'profile': 'mpc',
         'config': {'uavs': [{'name': n} for n in fleet.names]},
@@ -241,44 +219,51 @@ def test_mission_moves_only_after_entire_fleet_settles(
         'ready': True, 'updated_wall_unix': time.time(),
     }))
     (tmp_path / 'alignment.json').write_text(json.dumps(dict.fromkeys(fleet.names)))
-    arguments = ['start', '--run-dir', str(tmp_path)]
-    if outcome == 'cancelled':
-        cancel_file = tmp_path / 'mission.cancel'
-        arguments += ['--cancel-file', str(cancel_file)]
-        class Timer:
-            active = True
+    rclpy.init()
+    node = MissionSupervisor(tmp_path)
+    try:
+        def client(name):
+            def call(request):
+                events.append((name, getattr(request, 'data', None), fleet.now))
+                future = Future()
+                future.set_result(SimpleNamespace(success=True))
+                return future
+            return SimpleNamespace(service_is_ready=lambda: True, call_async=call)
 
-            def cancel(self):
-                self.active = False
-
-        timer = Timer()
-        def create_timer(interval, callback, **kwargs):
-            timer.callback = callback
-            return timer
-
-        fleet.create_timer = create_timer
-        tick = fleet.tick
-        def interrupt_takeoff():
-            tick()
-            if fleet.launches:
-                cancel_file.touch()
-            if timer.active:
-                timer.callback()
-
-        fleet.tick = interrupt_takeoff
-        mission.main(arguments)
-        assert fleet.launches
-        assert not timer.active
-        assert not any(enabled is True for name, enabled, t in events)
-        assert events[-1][0] == 'land'
-    elif outcome == 'tracking':
-        mission.main(arguments)
+        node.mission_clients = {name: client(name) for name in node.mission_clients}
+        node.wait = fleet.wait
+        node.takeoff = fleet.takeoff
+        node.land = lambda names: events.append(('land', None, fleet.now))
+        node.snapshots = {'reason': 'ready', 'vehicles': {
+            n: {'result': 'tracking'} for n in fleet.names}}
+        node.supervise = lambda: events.append(('supervise', None, fleet.now))
+        if outcome == 'cancelled':
+            tick = fleet.tick
+            def interrupt_takeoff():
+                tick()
+                if fleet.launches:
+                    node.stop_requested = True
+                node.check_stop()
+            fleet.tick = interrupt_takeoff
+        elif outcome == 'takeoff_failure':
+            fleet.altitudes = lambda n, t: 0.0 if n == 'uav3' else 3.0
+        response = node.request_start(
+            StartMission.Request(run_dir=str(tmp_path)), StartMission.Response())
+        assert response.success
+        assert not events  # Service callback queues work; it cannot fly itself.
+        node.process_pending()
         starts = [(name, t) for name, enabled, t in events if enabled is True]
-        assert [name for name, t in starts] == ['/mpc/enable', '/target/run']
-        assert all(t >= max(fleet.launches.values()) + 5.0 for name, t in starts)
-    else:
-        fleet.altitudes = lambda n, t: 0.0 if n == 'uav3' else 3.0
-        with pytest.raises(SystemExit, match='fleet stable'):
-            mission.main(arguments)
-        assert not any(enabled is True for name, enabled, t in events)
+        if outcome == 'tracking':
+            assert [name for name, t in starts] == ['/mpc/enable', '/target/run']
+            assert all(t >= max(fleet.launches.values()) + 5.0 for name, t in starts)
+            assert any(name == 'supervise' for name, _, _ in events)
+            assert node.mission_state == 'completed'
+        else:
+            assert not starts
+            assert node.mission_state == ('stopped' if outcome == 'cancelled' else 'failed')
+            if outcome == 'takeoff_failure':
+                assert 'fleet stable' in node.error
         assert events[-1][0] == 'land'
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

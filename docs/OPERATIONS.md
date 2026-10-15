@@ -18,8 +18,8 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 | `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
 | `./scripts/dev mission run` | Take off, supervise tracking, LAND, and wait for disarm |
 | `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds after initialization |
-| `./scripts/dev mission start` | Take off and enable tracking, then return to the caller |
-| `./scripts/dev mission status` | Print controller diagnostics |
+| `./scripts/dev mission start` | Start a supervised mission and return once tracking begins |
+| `./scripts/dev mission status` | Print mission state, errors, and controller diagnostics |
 | `./scripts/dev mission stop` | Release publishing, pause the target, LAND, and wait for disarm |
 | `./scripts/dev mission reset` | Reset the target to the start of its route and pause it |
 | `./scripts/dev stop` | Run mission stop successfully before stopping the container |
@@ -44,10 +44,14 @@ searches near the last plausible position. The supervisor pauses the simulated
 target during prolonged loss and aborts if it cannot be reacquired in time. This
 policy assumes a cooperative simulation target.
 
-`mission start` returns after enabling tracking. It does not leave the mission
-supervisor running in the background, and does not record the supervisor's
-`truth.jsonl`. The caller must monitor the mission and invoke `mission stop`.
-Prefer `mission run` for supervised experiments and independent evaluation.
+The MPC stack launches a persistent mission supervisor. `mission start` returns
+after enabling tracking; the supervisor continues all failure checks, records
+`truth.jsonl`, detects arrival, and lands automatically. `mission run` requests
+the same mission and waits for landing or a reported failure. Both commands
+accept `--seconds`; the supervisor enforces this limit even after the CLI exits.
+`mission stop` requests cleanup and waits for landing. Starts and target resets
+are rejected while another mission or landing is active. After a failure, request
+`mission stop` successfully before starting again.
 
 Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
 disarm; cleanup can fail if required services or processes have already stopped.
@@ -150,7 +154,7 @@ there is no need to launch extra MAVROS instances for observation.
 | `logs/`, `sitl/<instance>/` | ROS/process logs and each SITL's EEPROM/flight logs |
 | `controller_sources.jsonl` | Source hashes and resolved configuration at controller startup |
 | `mpc.jsonl` | Measured state, target estimates, solver outcomes, and timings |
-| `truth.jsonl` | Independent Gazebo poses recorded by `mission run` |
+| `truth.jsonl` | Independent Gazebo poses recorded by the persistent mission supervisor |
 | `evaluation.json` | Derived geometry, tracking, compute, and simulation-speed metrics |
 | `cameras/<uav-name>.avi`, `cameras/<uav-name>.timestamps.jsonl` | Optional UAV camera videos and original per-frame simulation timestamps |
 | `overhead/overhead.avi`, `overhead/overhead.timestamps.jsonl` | Optional 1080p elevated scene video and original per-frame simulation timestamps |
