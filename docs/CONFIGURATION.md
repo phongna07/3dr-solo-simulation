@@ -42,6 +42,29 @@ The CLI supplies host UID/GID and a fresh run ID. See [WSL and GPU setup](WSL_GP
 for Compose overrides and [Hardware migration](HARDWARE.md) for device variables.
 Release deployments use a [separate environment file](REPRODUCIBILITY.md).
 
+## Horizontal launch row, scattered obstacle field
+
+The default [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml)
+uses a 50 m east-west by 30 m north-south field with twelve rectangular and
+twelve circular obstacles at irregular positions with varied sizes. The three
+UAVs start at `[5, 2, 3]`,
+`[2.5, 2, 3]`, and `[7.5, 2, 3]` in fleet order. They share Y = 2 m and altitude
+3 m, forming a horizontal row with 2.5 m spacing. All face north (+Y, yaw 90°),
+perpendicular to the row. The target begins at `[5, 3]`, ahead of the middle
+UAV, initially heading north. Its smooth route sweeps across the field, with
+east/west turns and changes between northward and southward travel, finishing
+at `[47, 23]`.
+
+Start a fresh simulation with the existing three-UAV fleet and controller:
+
+```bash
+./scripts/dev mpc
+```
+
+MPC launch takes the UAV positions from the scenario, so no fleet file
+changes are needed. The row defines the initial formation; the controller can
+adjust UAV positions while following the target and avoiding obstacles.
+
 ## Change fleet size
 
 For N UAVs, provide:

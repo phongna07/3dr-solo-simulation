@@ -19,15 +19,24 @@ ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "ros_ws/src/solo_mpc"
 
 
-def test_configuration_retains_layout_and_corrects_vehicle_scale():
+def test_default_configuration_has_northbound_row_and_correct_vehicle_scale():
     scenario, settings, cfg = load_settings(
         PKG / "scenarios/small50_3uav.yaml", PKG / "config/controller.yaml"
     )
+    assert scenario["xlim"] == [0, 50]
+    assert scenario["ylim"] == [0, 30]
     assert (
         len(scenario["obstacles"]["rects"])
         == len(scenario["obstacles"]["circles"])
-        == 10
+        == 12
     )
+    starts = np.asarray(scenario["starts"], float)
+    heading = np.diff(np.asarray(scenario["target"]["waypoints"][:2], float), axis=0)[0]
+    assert np.allclose(starts[:, 1], starts[0, 1])
+    assert np.allclose(starts[:, 2], settings["flight_altitude"])
+    assert heading[0] == 0 and heading[1] > 0
+    assert np.allclose((starts[:, :2] - starts[0, :2]) @ heading, 0)
+    assert cfg["GRID_CELLS"] == [[-1, 0], [1, 0]]
     assert cfg["ROBOT_RADIUS"] == 0.36
     assert cfg["UAV_SAFE_DISTANCE"] >= 2 * cfg["ROBOT_RADIUS"]
     assert settings["target_mode"] == "camera"
@@ -146,7 +155,7 @@ def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path, recor
         len(
             [m for m in world.findall("model") if m.get("name").startswith("obstacle_")]
         )
-        == 20
+        == 24
     )
     topics = [
         s.findtext("topic")
@@ -154,7 +163,7 @@ def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path, recor
         if s.get("type") in ("camera", "gpu_lidar")
     ]
     assert len(topics) == len(set(topics)) == 6 + int(record_overhead)
-    assert resolved["uavs"][0]["spawn"][:2] == [2.8, 1.2]
+    assert resolved["uavs"][0]["spawn"][:2] == [5, 2]
     camera = world.find("model[@name='tracking_target']/link/sensor")
     if record_overhead:
         assert camera.findtext("topic") == OVERHEAD_TOPIC
