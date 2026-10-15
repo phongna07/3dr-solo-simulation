@@ -235,6 +235,9 @@ def bridge_config(names, world, destination, record_overhead=False):
             gz_type_name="gz.msgs.Image",
             direction="GZ_TO_ROS",
             qos_profile="SENSOR_DATA",
+            # Gazebo skips rendering without transport subscribers. The
+            # recorder subscribes on arming, before its takeoff recording gate.
+            lazy=True,
         ))
     Path(destination).write_text(yaml.safe_dump(rows, sort_keys=False))
     return str(destination)

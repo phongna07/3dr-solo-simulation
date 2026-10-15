@@ -93,8 +93,10 @@ def test_plugin_progress_distinguishes_missing_nodes_services_and_parameter_phas
     bootstrap.tick()
     assert bootstrap.status()[imu]['phase'] == 'reading parameters'
     bootstrap.tick()
-    bootstrap.tick()
     assert bootstrap.status()[imu]['phase'] == 'applying parameters'
+    # The next phase is dispatched in the same tick as the previous response.
+    assert bootstrap.items[imu]['future'] is not None
+    bootstrap.items[imu]['future'] = None
     bootstrap.items[imu]['client'].service_is_ready = lambda: False
     assert bootstrap.status()[imu]['phase'] == 'waiting for parameter services'
     bootstrap.items[imu]['client'].service_is_ready = lambda: True

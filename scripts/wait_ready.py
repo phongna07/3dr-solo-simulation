@@ -105,6 +105,8 @@ def progress_lines(run, data, startup, wall_now, container_started=0):
             lines.append(f"  READY {name}: {', '.join(ready)}")
         if waiting:
             lines.append(f"  WAIT {name}: {'; '.join(waiting)}")
+            if uav.get('last_fcu_status'):
+                lines.append(f"    FCU status: {uav['last_fcu_status']}")
         phases = {}
         for plugin, item in uav.get('plugins', {}).items():
             if not item['ready']:
@@ -118,6 +120,24 @@ def progress_lines(run, data, startup, wall_now, container_started=0):
     if not data.get('plugin_parameters_applied', False):
         lines.append('  WAIT fleet: MAVROS plugin configuration must complete for every UAV')
     return lines
+
+
+def simulation_lines(data):
+    """Show live timing on reports without making every clock tick a transition."""
+    simulation = data.get('simulation') if isinstance(data, dict) else None
+    if not isinstance(simulation, dict):
+        return []
+    if simulation.get('time_s') is None:
+        return ['  Simulation: waiting for Gazebo /clock']
+    detail = f"{simulation['time_s']:.1f}s simulated"
+    factor = simulation.get('real_time_factor')
+    if factor is not None:
+        detail += f'; {factor:.2f}x real time (recent window)'
+    if simulation.get('clock_age_wall_s', 0) >= 5:
+        detail += f"; no clock update for {simulation['clock_age_wall_s']:.0f}s"
+    if factor is not None and factor < 0.5:
+        detail += '; FCU initialization follows simulation time'
+    return [f'  Simulation: {detail}']
 
 
 def main(argv=None):
@@ -159,14 +179,16 @@ def main(argv=None):
             ready = False
         summary = '\n'.join(lines)
         if summary != previous or last_report is None or now - last_report >= 15 or ready:
-            print(f"[startup +{now - started:.0f}s]\n{summary}", flush=True)
+            diagnostics = '\n'.join(simulation_lines(data))
+            output = summary + ('\n' + diagnostics if diagnostics else '')
+            print(f"[startup +{now - started:.0f}s]\n{output}", flush=True)
             last_report = now
             previous = summary
         if ready:
             detail = 'FCU telemetry and local poses'
             if args.all_processes:
                 detail = f'all processes initialized, {detail}'
-            print(f'Simulation ready ({detail}): {run.resolve()}', flush=True)
+            print(f'Simulation ready in {now - started:.1f}s ({detail}): {run.resolve()}', flush=True)
             return
         time.sleep(1)
     raise SystemExit('Readiness timeout. Stack left running for inspection: ./scripts/dev logs')

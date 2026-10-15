@@ -50,6 +50,10 @@ the process has started; `READY` nodes have completed initialization. Simulation
 readiness includes process initialization for `mpc`; the mission also checks
 frame alignment and controller inputs. The same progress is available with
 `./scripts/dev wait`, and full process output with `./scripts/dev logs`.
+Reports also show the latest FCU status, elapsed simulation time, and recent
+real-time factor. A simulator running at 0.1× takes ten wall seconds to advance
+one second of GPS/EKF initialization. See the
+[startup assessment](docs/STARTUP_PERFORMANCE.md) for measurements and diagnosis.
 Camera and LiDAR rendering is required even with the GUI closed; use the
 [WSL and GPU guide](docs/WSL_GPU.md) if rendering fails or runs slowly.
 
@@ -63,7 +67,8 @@ until `./scripts/dev stop`, which closes the video files. See
 To record an elevated view similar to the Gazebo GUI, use
 `./scripts/dev mpc --record-overhead`. It saves a 1920 × 1080 video following
 the target in `runs/latest/overhead/overhead.avi`, independent of GUI window
-size. It starts once the first armed UAV lifts off. Combine with
+size. Its feed activates on arming to avoid rendering unused Full HD frames
+during startup; video starts once the first armed UAV lifts off. Combine with
 `--record-cameras` to save both views, and use
 `./scripts/dev stop` to finalize the files. See
 [overhead recording](docs/OPERATIONS.md#record-overhead-video).

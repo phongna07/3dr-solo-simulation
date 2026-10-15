@@ -1,5 +1,6 @@
 """Request telemetry once per connection and monitor actual pose arrivals."""
 import argparse
+from collections import deque
 import json
 import math
 from pathlib import Path
@@ -9,8 +10,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
-from mavros_msgs.msg import State
+from mavros_msgs.msg import State, StatusText
 from mavros_msgs.srv import MessageInterval
+from rosgraph_msgs.msg import Clock
 from std_msgs.msg import String
 
 from solo_bringup.configuration import load_config
@@ -25,7 +27,7 @@ def atomic_json(path, payload):
 
 
 class Readiness(Node):
-    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=20.0):
+    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=20.0, simulation=False):
         super().__init__('fleet_readiness')
         self.run_dir = Path(run_dir)
         self.timeout, self.max_pose_age = timeout, max_pose_age
@@ -36,18 +38,27 @@ class Readiness(Node):
         self.previous_summary = None
         self.last_report = 0
         self.failed = False
+        self.simulation = simulation
+        self.sim_time = None
+        self.clock_at = None
+        self.clock_samples = deque()
+        self.first_ready_elapsed = None
         self.records = {}
         self.plugin_parameters = PluginParameters(self, config['uavs'], run_dir)
         self.publisher = self.create_publisher(
             String, '/solo/readiness',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.subscriptions_keepalive = []
+        if simulation:
+            self.subscriptions_keepalive.append(self.create_subscription(
+                Clock, '/clock', self.clock, qos_profile_sensor_data))
         for uav in config['uavs']:
             name = uav['name']
             self.records[name] = {
                 'state': None, 'state_at': 0, 'pose_at': 0, 'pose_count': 0,
                 'stamp': None, 'intervals': set(), 'future': None, 'request_id': None,
                 'next_request': 0, 'request_at': 0,
+                'status_text': None,
                 'client': self.create_client(MessageInterval, f'/{name}/mavros/set_message_interval'),
             }
             self.subscriptions_keepalive += [
@@ -55,8 +66,30 @@ class Readiness(Node):
                                          lambda msg, n=name: self.state(msg, n), qos_profile_sensor_data),
                 self.create_subscription(PoseStamped, f'/{name}/mavros/local_position/pose',
                                          lambda msg, n=name: self.pose(msg, n), qos_profile_sensor_data),
+                self.create_subscription(StatusText, f'/{name}/mavros/statustext/recv',
+                                         lambda msg, n=name: self.status_text(msg, n), qos_profile_sensor_data),
             ]
         self.timer = self.create_timer(0.5, self.tick)
+
+    def clock(self, msg):
+        value = msg.clock.sec + msg.clock.nanosec * 1e-9
+        if self.sim_time is not None and value < self.sim_time:
+            self.clock_samples.clear()
+        self.sim_time, self.clock_at = value, time.monotonic()
+
+    def simulation_status(self, now):
+        if self.sim_time is None:
+            return {'time_s': None, 'real_time_factor': None, 'clock_age_wall_s': None}
+        self.clock_samples.append((now, self.sim_time))
+        while len(self.clock_samples) > 2 and now - self.clock_samples[1][0] >= 10:
+            self.clock_samples.popleft()
+        wall, sim = self.clock_samples[0]
+        factor = (self.sim_time - sim) / (now - wall) if now - wall >= 2 else None
+        return {'time_s': self.sim_time, 'real_time_factor': factor,
+                'clock_age_wall_s': now - self.clock_at}
+
+    def status_text(self, msg, name):
+        self.records[name]['status_text'] = msg.text
 
     def state(self, msg, name):
         record = self.records[name]
@@ -101,21 +134,24 @@ class Readiness(Node):
             elif record['future'] is not None:
                 future = record['future']
                 if future.done():
+                    accepted = False
                     try:
                         response = future.result()
                         if response and response.success:
                             record['intervals'].add(record['request_id'])
+                            accepted = True
                         else:
                             self.get_logger().warning(f'{name}: telemetry request rejected; retrying')
                     except Exception as error:
                         self.get_logger().warning(f'{name}: telemetry service: {error}')
                     record['future'] = None
-                    record['next_request'] = now + 1
+                    record['next_request'] = now if accepted else now + 1
                 elif now - record['request_at'] > 15:
                     future.cancel()
                     record['future'] = None
                     record['next_request'] = now + 2
-            elif now >= record['next_request'] and record['client'].service_is_ready():
+            if connected and record['future'] is None and now >= record['next_request'] \
+                    and record['client'].service_is_ready():
                 missing = [message for message in (32, 30) if message not in record['intervals']]
                 if missing:
                     request = MessageInterval.Request(message_id=missing[0], message_rate=10.0)
@@ -165,11 +201,17 @@ class Readiness(Node):
                 'pose_messages': record['pose_count'], 'pose_age_wall_s': pose_age,
                 'mode': state.mode if state else None,
                 'armed': bool(state and state.armed), 'ready': ready,
+                'last_fcu_status': record['status_text'],
                 'checks': checks, 'plugins': plugin_status,
             }
         ready = all(value['ready'] for value in report.values())
+        if ready and self.first_ready_elapsed is None:
+            self.first_ready_elapsed = now - self.started
         payload = {'ready': ready, 'plugin_parameters_applied': configured, 'updated_wall_unix': time.time(),
-                   'elapsed_wall_s': now - self.started, 'uavs': report}
+                   'elapsed_wall_s': now - self.started,
+                   'first_ready_elapsed_wall_s': self.first_ready_elapsed, 'uavs': report}
+        if self.simulation:
+            payload['simulation'] = self.simulation_status(now)
         atomic_json(self.run_dir / 'health.json', payload)
         self.publisher.publish(String(data=json.dumps(payload)))
         if ready:
@@ -201,7 +243,8 @@ def main(args=None):
     options, ros_args = parser.parse_known_args(args)
     rclpy.init(args=ros_args)
     node = Readiness(load_config(options.fleet, options.hardware), options.run_dir,
-                     options.timeout, options.max_pose_age, options.state_timeout)
+                     options.timeout, options.max_pose_age, options.state_timeout,
+                     simulation=not options.hardware)
     code = 0
     try:
         while rclpy.ok() and not node.failed:

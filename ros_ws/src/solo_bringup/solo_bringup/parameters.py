@@ -96,7 +96,8 @@ class PluginParameters:
                 elif now - item['at'] > 20:
                     future.cancel()
                     item['future'] = None
-            elif all(item[key].service_is_ready() for key in ('client', 'list_client', 'get_client')):
+            if not item['done'] and item['future'] is None and all(
+                    item[key].service_is_ready() for key in ('client', 'list_client', 'get_client')):
                 if item['phase'] == 'list':
                     item['future'] = item['list_client'].call_async(ListParameters.Request(depth=0))
                 elif item['phase'] == 'get':

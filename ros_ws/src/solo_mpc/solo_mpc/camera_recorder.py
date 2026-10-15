@@ -32,13 +32,11 @@ class CameraRecorder(Node):
         self.poses = {}
         self.ground_altitudes = {}
         self.recording = set()
-        self.subscriptions_keep = [
-            self.create_subscription(
-                Image, OVERHEAD_TOPIC if overhead else f"/{name}/camera/image_raw",
-                lambda msg, n=name: self.image(n, msg), qos_profile_sensor_data,
-            )
-            for name in names
-        ]
+        self.subscriptions_keep = []
+        self.image_subscriptions = {}
+        if not overhead:
+            for name in names:
+                self.subscribe_images(name)
         for name in self.vehicle_names:
             for typ, suffix, callback in (
                 (State, 'state', self.state),
@@ -52,6 +50,19 @@ class CameraRecorder(Node):
 
     def state(self, name, msg):
         self.states[name] = (msg, time.monotonic())
+        if self.overhead and msg.connected and msg.armed:
+            # Start transport on arming, ahead of the takeoff recording gate,
+            # while avoiding Full HD rendering during EKF startup.
+            self.subscribe_images('overhead')
+
+    def subscribe_images(self, name):
+        if name not in self.image_subscriptions:
+            subscription = self.create_subscription(
+                Image, OVERHEAD_TOPIC if self.overhead else f"/{name}/camera/image_raw",
+                lambda msg, n=name: self.image(n, msg), qos_profile_sensor_data,
+            )
+            self.image_subscriptions[name] = subscription
+            self.subscriptions_keep.append(subscription)
 
     def pose(self, name, msg):
         z = msg.pose.position.z

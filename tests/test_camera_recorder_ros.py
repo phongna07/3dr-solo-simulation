@@ -32,7 +32,10 @@ def test_ros_camera_feeds_are_recorded_separately_and_closed_on_shutdown(tmp_pat
     vehicles = ['camera_test_alpha', 'camera_test_bravo', 'camera_test_charlie']
     recorder = CameraRecorder(names, tmp_path, fps, overhead=overhead, vehicle_names=vehicles)
     try:
-        assert {s.topic_name for s in recorder.subscriptions_keep if s.msg_type is Image} == set(topics)
+        if overhead:
+            assert not recorder.image_subscriptions
+        else:
+            assert set(recorder.image_subscriptions) == set(names)
         for vehicle in vehicles:
             recorder.state(vehicle, State(connected=True, armed=False))
             pose = PoseStamped()
@@ -41,6 +44,7 @@ def test_ros_camera_feeds_are_recorded_separately_and_closed_on_shutdown(tmp_pat
             recorder.state(vehicle, State(connected=True, armed=True))
             pose.pose.position.z = 10.25
             recorder.pose(vehicle, pose)
+        assert {s.topic_name for s in recorder.subscriptions_keep if s.msg_type is Image} == set(topics)
         publishers = [source.create_publisher(
             Image, topic, qos_profile_sensor_data,
         ) for topic in topics]
@@ -104,9 +108,13 @@ def test_recording_waits_for_armed_takeoff_and_uses_each_vehicles_ground_level(t
         for name in vehicles:
             recorder.state(name, State(connected=True, armed=False))
             pose(name, 10.0)
+        if overhead:
+            assert not recorder.image_subscriptions
         images()
         for name in vehicles:
             recorder.state(name, State(connected=True, armed=True))
+        if overhead:
+            assert len(recorder.image_subscriptions) == 1
         images()  # Armed on the ground is still idle.
         assert all(v.frames == 0 for v in recorder.videos.values())
         assert not list(tmp_path.glob('*.avi'))

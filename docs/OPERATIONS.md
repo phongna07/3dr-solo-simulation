@@ -228,14 +228,20 @@ and the UAV FOVs. Navigating or closing the GUI does not change the scene video.
 
 Open `runs/<run-id>/overhead/overhead.avi` in your desktop file explorer after
 `dev stop` finalizes it. It uses MJPEG and starts when the first connected, armed
-UAV rises more than 0.15 m above its disarmed ground altitude. Startup frames
-are discarded. It continues through takeoff, tracking, and landing until
-the stack stops. Playback uses simulation time; dropped frames shorten the
+UAV rises more than 0.15 m above its disarmed ground altitude. The image feed
+activates on arming, using a lazy bridge to avoid unused Full HD rendering during
+disarmed initialization. Armed ground frames are discarded. It continues through
+takeoff, tracking, and landing until the stack stops. Playback uses simulation
+time; dropped frames shorten the
 video. `overhead.timestamps.jsonl` preserves the received simulation timestamps.
 The extra full-HD camera and encoding consume rendering, CPU, and disk capacity;
 recording is disabled unless requested. No image rebuild is needed. For direct
 MPC ROS launch, set `record_overhead:=true`. Recorder errors appear in `dev logs`
 without stopping the flight stack.
+
+See the [startup performance assessment](STARTUP_PERFORMANCE.md) for measured
+startup costs, simulation-time diagnostics, and the remaining software-rendering
+limit during flight.
 
 ## Record telemetry
 

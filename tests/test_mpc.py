@@ -173,6 +173,8 @@ def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path, recor
     rows = yaml.safe_load(Path(bridge).read_text())
     assert len(rows) == 13 + int(record_overhead)
     assert any(row["gz_topic_name"] == OVERHEAD_TOPIC for row in rows) == record_overhead
+    if record_overhead:
+        assert next(row for row in rows if row['gz_topic_name'] == OVERHEAD_TOPIC)['lazy'] is True
 
 
 def test_gazebo_cli_remains_available_after_ros_vendor_setup():

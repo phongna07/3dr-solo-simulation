@@ -140,10 +140,27 @@ def test_legacy_health_still_explains_pending_telemetry(tmp_path):
     assert 'waiting for fresh local poses (0/3)' in output
 
 
+def test_simulation_diagnostics_explain_slow_clock_and_fcu_progress(tmp_path):
+    data = health_payload()
+    data['uavs']['uav1']['last_fcu_status'] = 'EKF3 IMU0 tilt alignment complete'
+    data['simulation'] = {'time_s': 7.4, 'real_time_factor': 0.11, 'clock_age_wall_s': 0.1}
+    output = '\n'.join(wait_ready.progress_lines(tmp_path, data, None, 101)
+                       + wait_ready.simulation_lines(data))
+    assert 'FCU status: EKF3 IMU0 tilt alignment complete' in output
+    assert '7.4s simulated; 0.11x real time' in output
+    assert 'FCU initialization follows simulation time' in output
+    data['simulation']['clock_age_wall_s'] = 6
+    assert 'no clock update for 6s' in '\n'.join(wait_ready.simulation_lines(data))
+    data['simulation'] = {'time_s': None}
+    assert 'waiting for Gazebo /clock' in '\n'.join(wait_ready.simulation_lines(data))
+    assert wait_ready.simulation_lines({}) == []
+
+
 def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(tmp_path, monkeypatch, capsys):
     run = tmp_path / 'runs/test'
     run.mkdir(parents=True)
     data = health_payload()
+    data['simulation'] = {'time_s': 0, 'real_time_factor': 0.1, 'clock_age_wall_s': 0.1}
     ticks = [0]
     monkeypatch.setattr(wait_ready, '__file__', str(tmp_path / 'scripts/wait_ready.py'))
     monkeypatch.setattr(wait_ready.time, 'monotonic', lambda: ticks[0])
@@ -155,6 +172,7 @@ def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(
 
     def sleep(_):
         ticks[0] += 1
+        data['simulation']['time_s'] += 0.1
         if ticks[0] == 1:
             data['uavs']['uav1']['checks']['telemetry']['ready'] = True
         if ticks[0] == 17:
