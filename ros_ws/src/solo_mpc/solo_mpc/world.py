@@ -1,6 +1,7 @@
 """Generate the same obstacle footprints in SDF, with lightweight sensors."""
 
 import copy
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -8,6 +9,9 @@ import yaml
 from solo_bringup.world import generate_world
 
 from .settings import load_settings
+from .scene_view import (
+    FOLLOW_OFFSET, OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH,
+)
 
 
 def element(parent, tag, text=None, **attrs):
@@ -114,7 +118,32 @@ def sensors(model, name, settings, cfg):
         element(publisher, tag, value)
 
 
-def generate_mpc_world(fleet, source, destination, scenario_path, settings_path):
+def overhead_camera(target):
+    # Attach to the target's existing link: set_pose then moves both together,
+    # without a second tracking process, collision geometry or physical mass.
+    camera = element(target.find("link[@name='body']"), "sensor",
+                     name="overhead_camera", type="camera")
+    x, y, z = FOLLOW_OFFSET
+    pitch = math.atan2(z, math.hypot(x, y))
+    yaw = math.atan2(-y, -x)
+    element(camera, "pose", f"{x} {y} {z} 0 {pitch} {yaw}")
+    element(camera, "topic", OVERHEAD_TOPIC)
+    element(camera, "update_rate", OVERHEAD_FPS)
+    element(camera, "always_on", "true")
+    element(camera, "visualize", "false")
+    optics = element(camera, "camera")
+    element(optics, "horizontal_fov", math.pi / 3)
+    image = element(optics, "image")
+    element(image, "width", OVERHEAD_WIDTH)
+    element(image, "height", OVERHEAD_HEIGHT)
+    element(image, "format", "R8G8B8")
+    clip = element(optics, "clip")
+    element(clip, "near", 0.1)
+    element(clip, "far", 200)
+
+
+def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
+                       record_overhead=False):
     scenario, settings, cfg = load_settings(scenario_path, settings_path)
     fleet = copy.deepcopy(fleet)
     if len(fleet["uavs"]) != len(scenario["starts"]):
@@ -154,7 +183,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path)
             "0.15 0.35 0.65 1",
         )
     first = scenario["target"]["waypoints"][0]
-    solid(
+    target = solid(
         world,
         "tracking_target",
         [first[0], first[1], settings["target_height"]],
@@ -162,6 +191,8 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path)
         [0.3, 0.3, 0.04],
         "1 0 1 1",
     )
+    if record_overhead:
+        overhead_camera(target)
     for uav in fleet["uavs"]:
         model = world.find(f"model[@name='{uav['name']}']")
         sensors(model, uav["name"], settings, cfg)
@@ -170,7 +201,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path)
     return output, fleet
 
 
-def bridge_config(names, world, destination):
+def bridge_config(names, world, destination, record_overhead=False):
     rows = [
         dict(
             ros_topic_name="/clock",
@@ -196,5 +227,14 @@ def bridge_config(names, world, destination):
                     direction="GZ_TO_ROS",
                 )
             )
+    if record_overhead:
+        rows.append(dict(
+            ros_topic_name=OVERHEAD_TOPIC,
+            gz_topic_name=OVERHEAD_TOPIC,
+            ros_type_name="sensor_msgs/msg/Image",
+            gz_type_name="gz.msgs.Image",
+            direction="GZ_TO_ROS",
+            qos_profile="SENSOR_DATA",
+        ))
     Path(destination).write_text(yaml.safe_dump(rows, sort_keys=False))
     return str(destination)

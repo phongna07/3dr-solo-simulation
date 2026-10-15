@@ -36,7 +36,7 @@ def critical(action):
     ))
 
 
-def mavros(uav, run):
+def mavros(uav, run, *, simulation=False):
     share = Path(get_package_share_directory('mavros'))
     version = ET.parse(share / 'package.xml').getroot().findtext('version')
     if version != '2.15.1':
@@ -45,7 +45,7 @@ def mavros(uav, run):
         package='mavros', executable='mavros_node', namespace=uav['name'],
         output='both', parameters=[
             str(share / 'launch/apm_pluginlists.yaml'),
-            mavros_config(uav, run / f"{uav['name']}-mavros.yaml"),
+            mavros_config(uav, run / f"{uav['name']}-mavros.yaml", simulation=simulation),
             {'fcu_url': uav['fcu_url'], 'gcs_url': '', 'tgt_system': uav['sysid'],
              'base_link_frame': f"{uav['name']}/base_link", 'map_frame': f"{uav['name']}/map",
              'odom_frame': f"{uav['name']}/odom",

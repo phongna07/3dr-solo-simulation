@@ -19,15 +19,27 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in (
-        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_RECORD_CAMERAS", "RUN_ID")}}) + "\\n")
+        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_RECORD_CAMERAS",
+        "MPC_RECORD_OVERHEAD", "RUN_ID")}}) + "\\n")
 if args[0] == "inspect":
     print('"sha256:test"')
 elif "ps" in args and "-q" in args and "--status" not in args:
     print("test-container")
+elif args[-2:] == ["printenv", "READINESS_TIMEOUT"]:
+    print("600")
 if args[-2:] == ["mission", "stop"] and os.environ.get("FAIL_MISSION_STOP"):
     sys.exit(1)
 ''')
     docker.chmod(0o755)
+    python = tmp_path / 'python3'
+    python.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+if sys.argv[1:2] == ["scripts/wait_ready.py"]:
+    with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
+        log.write(json.dumps({"args": sys.argv[1:], "env": {"RUN_ID": os.environ.get("RUN_ID")}}) + "\\n")
+    sys.exit(int(os.environ.get("FAIL_READINESS", "0")))
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+''')
+    python.chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "DOCKER_TEST_LOG": str(log)}
     return log, env
 
@@ -68,16 +80,21 @@ def test_mpc_passes_custom_configuration_to_compose(fake_docker):
 
 
 @pytest.mark.parametrize("record", [False, True])
-def test_camera_recording_is_opt_in(fake_docker, record):
+@pytest.mark.parametrize("overhead", [False, True])
+def test_camera_recording_is_opt_in(fake_docker, record, overhead):
     log, env = fake_docker
     env["MPC_RECORD_CAMERAS"] = "true"
+    env["MPC_RECORD_OVERHEAD"] = "true"
     args = ["mpc", "--no-wait"] + (["--record-cameras"] if record else [])
+    if overhead:
+        args.append("--record-overhead")
     result = invoke(args, env)
     entries = calls(log)
     try:
         assert result.returncode == 0, result.stderr
         start = next(e for e in entries if "up" in e["args"])
         assert start["env"]["MPC_RECORD_CAMERAS"] == str(record).lower()
+        assert start["env"]["MPC_RECORD_OVERHEAD"] == str(overhead).lower()
     finally:
         for entry in entries:
             if entry["env"]["RUN_ID"]:
@@ -115,10 +132,58 @@ def test_gui_commands_start_target_follow_helper(fake_docker, args):
     entries = calls(log)
     try:
         assert result.returncode == 0, result.stderr
-        assert entries[-1]["args"][-4:] == [
+        assert any(e['args'][-4:] == [
             "sim", "/usr/local/bin/solo-entrypoint", "python3", "/workspace/scripts/gazebo_gui.py"
-        ]
+        ] for e in entries)
+        if args[0] == 'mpc':
+            assert any('mission' in e['args'] and 'run' in e['args'] for e in entries)
     finally:
         for entry in entries:
             if entry["env"]["RUN_ID"]:
                 (ROOT / "runs" / (entry["env"]["RUN_ID"] + ".image-id.json")).unlink(missing_ok=True)
+                (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.gui.log')).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('no_wait', [False, True])
+def test_mpc_starts_supervised_mission_with_startup_gate_and_duration(fake_docker, no_wait):
+    log, env = fake_docker
+    result = invoke(['mpc', '--seconds', '20'] + (['--no-wait'] if no_wait else []), env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 0, result.stderr
+        commands = [e['args'] for e in entries]
+        mission = next(c for c in commands if 'mission' in c)
+        assert mission[mission.index('mission') + 1] == 'run'
+        assert '--wait-for-startup' in mission
+        assert mission[mission.index('--seconds') + 1] == '20'
+        assert '--cancel-file' in mission
+        waits = [c for c in commands if c[0] == 'scripts/wait_ready.py']
+        assert bool(waits) == (not no_wait)
+        if waits:
+            assert '--all-processes' in waits[0]
+            assert commands.index(waits[0]) < commands.index(mission)
+    finally:
+        for entry in entries:
+            if entry['env']['RUN_ID']:
+                (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.image-id.json')).unlink(missing_ok=True)
+
+
+def test_mpc_does_not_start_mission_after_readiness_failure(fake_docker):
+    log, env = fake_docker
+    env['FAIL_READINESS'] = '1'
+    result = invoke(['mpc'], env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 1
+        assert not any('mission' in e['args'] for e in entries)
+    finally:
+        for entry in entries:
+            if entry['env']['RUN_ID']:
+                (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.image-id.json')).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('seconds', ['-1', 'nan', 'inf', 'bad'])
+def test_mpc_rejects_invalid_duration_before_starting_stack(fake_docker, seconds):
+    log, env = fake_docker
+    assert invoke(['mpc', '--seconds', seconds], env).returncode != 0
+    assert calls(log) == []

@@ -24,9 +24,11 @@ services:
       MPC_SETTINGS: ${MPC_SETTINGS:-/workspace/ros_ws/src/solo_mpc/config/controller.yaml}
       MPC_TARGET_MODE: ${MPC_TARGET_MODE:-}
       MPC_RECORD_CAMERAS: ${MPC_RECORD_CAMERAS:-false}
+      MPC_RECORD_OVERHEAD: ${MPC_RECORD_OVERHEAD:-false}
     volumes:
       - .:/workspace
     command: ["ros2", "launch", "/workspace/ros_ws/src/solo_mpc/launch/mpc.launch.py"]
+    stop_signal: SIGINT
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "python3", "/workspace/scripts/healthcheck.py"]

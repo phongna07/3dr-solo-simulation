@@ -65,10 +65,24 @@ def create_run(config, mode, profile='', run_id='', resume=False):
     return run
 
 
-def mavros_config(uav, destination):
+def mavros_config(uav, destination, *, simulation=False):
     from ament_index_python.packages import get_package_share_directory
     source = Path(get_package_share_directory('mavros')) / 'launch/apm_config.yaml'
     data = yaml.safe_load(source.read_text())
+    if simulation:
+        # FCU heartbeats run on Gazebo time, but this MAVROS version uses a
+        # wall timer for connection loss. Leave room for slow rendering.
+        data['/**/sys']['ros__parameters']['conn_timeout'] = 60.0
+        # The simulation does not use FCU parameter services: SITL defaults are
+        # loaded directly. Avoid background pulls/retries competing with flight
+        # telemetry, especially after a heartbeat reconnection.
+        plugins = yaml.safe_load((source.parent / 'apm_pluginlists.yaml').read_text())
+        denylist = plugins['/**']['ros__parameters']['plugin_denylist']
+        data['/**']['ros__parameters']['plugin_denylist'] = list(dict.fromkeys([*denylist, 'param']))
+        # A single clock offset cannot synchronize a slow simulated FCU with
+        # wall time. Adapters already timestamp measurements on /clock receipt.
+        data['/**/time']['ros__parameters'].update(
+            timesync_mode='NONE', timesync_rate=0.0, system_time_rate=0.0)
     replacements = {name: f"{uav['name']}/{name}" for name in (
         'map', 'odom', 'earth', 'base_link', 'fix', 'lidar', 'camera_center',
         'target_position', 'target_attitude', 'vision_estimate', 'landing_target',

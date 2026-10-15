@@ -43,7 +43,8 @@ def start(context):
     if profile == 'mpc':
         from solo_mpc.world import generate_mpc_world
         world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf',
-                                      get('scenario'), get('settings'))
+                                      get('scenario'), get('settings'),
+                                      record_overhead=get('record_overhead') == 'true')
     else:
         world = generate_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf', profile)
     defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
@@ -67,13 +68,13 @@ def start(context):
                  '--sysid', str(uav['sysid']), '--defaults', defaults],
             cwd=str(cwd), name=f"sitl-{uav['name']}", output='both',
         )
-        bridge = mavros(uav, run)
+        bridge = mavros(uav, run, simulation=True)
         actions += [critical(sitl)] + observed(sitl, progress, f"sitl-{uav['name']}")
         actions += [critical(bridge)] + observed(bridge, progress, f"mavros-{uav['name']}")
     monitor = Node(
         package='solo_bringup', executable='readiness', name='fleet_readiness',
         output='both', arguments=['--fleet', str(run / 'fleet.yaml'), '--run-dir', str(run),
-                                  '--timeout', get('readiness_timeout')],
+                                  '--timeout', get('readiness_timeout'), '--state-timeout', '60'],
     )
     actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
     progress.stage('Starting processes; waiting for fleet telemetry')
@@ -86,6 +87,7 @@ def generate_launch_description():
         DeclareLaunchArgument('profile', default_value=os.environ.get('SIM_PROFILE', 'control')),
         DeclareLaunchArgument('scenario', default_value=os.environ.get('MPC_SCENARIO', '')),
         DeclareLaunchArgument('settings', default_value=os.environ.get('MPC_SETTINGS', '')),
+        DeclareLaunchArgument('record_overhead', default_value=os.environ.get('MPC_RECORD_OVERHEAD', 'false'), choices=['true', 'false']),
         DeclareLaunchArgument('run_id', default_value=os.environ.get('RUN_ID', '')),
         DeclareLaunchArgument('resume', default_value=os.environ.get('SIM_RESUME', 'false'), choices=['true', 'false']),
         DeclareLaunchArgument('readiness_timeout', default_value=os.environ.get('READINESS_TIMEOUT', '600')),

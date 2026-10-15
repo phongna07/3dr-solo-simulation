@@ -4,7 +4,11 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ros_ws/src/solo_bringup'))
+from solo_bringup.startup import startup_blockers
 
 
 def inspect_container(container):
@@ -121,6 +125,8 @@ def main(argv=None):
     parser.add_argument('--run-id')
     parser.add_argument('--container', help='Docker container ID; detect stopped stack immediately')
     parser.add_argument('--timeout', type=float, default=600)
+    parser.add_argument('--all-processes', action='store_true',
+                        help='Also require all launched nodes to finish initialization')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent.parent / 'runs'
     run = root / (args.run_id or 'latest')
@@ -143,6 +149,11 @@ def main(argv=None):
         try:
             lines = progress_lines(run, data, startup, time.time(), container_started)
             ready = bool(data and health_is_ready(data, time.time(), container_started))
+            if args.all_processes:
+                blockers = startup_blockers(run, startup)
+                ready = ready and not blockers and startup['started_wall_unix'] >= container_started
+        except RuntimeError as error:
+            raise SystemExit(str(error)) from error
         except (KeyError, TypeError):
             lines = ['  WAIT launch/readiness monitor: waiting for a valid status report']
             ready = False
@@ -152,7 +163,10 @@ def main(argv=None):
             last_report = now
             previous = summary
         if ready:
-            print(f'Simulation ready (FCU telemetry and local poses): {run.resolve()}', flush=True)
+            detail = 'FCU telemetry and local poses'
+            if args.all_processes:
+                detail = f'all processes initialized, {detail}'
+            print(f'Simulation ready ({detail}): {run.resolve()}', flush=True)
             return
         time.sleep(1)
     raise SystemExit('Readiness timeout. Stack left running for inspection: ./scripts/dev logs')

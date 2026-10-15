@@ -6,9 +6,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-
-TARGET = "tracking_target"
-FOLLOW_OFFSET = (-10.0, -10.0, 24.0)
+from solo_mpc.scene_view import FOLLOW_OFFSET, TARGET
 
 
 def has_target(world_path):

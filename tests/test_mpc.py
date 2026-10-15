@@ -12,7 +12,8 @@ from solo_mpc.core.mapping import SensorGrid
 from solo_mpc.core.sensors import ScanRays, pixel_to_ground, project_scan
 from solo_mpc.core.tracking import TargetTracker
 from solo_mpc.settings import load_settings
-from solo_mpc.world import generate_mpc_world
+from solo_mpc.world import bridge_config, generate_mpc_world
+from solo_mpc.scene_view import FOLLOW_OFFSET, OVERHEAD_TOPIC
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "ros_ws/src/solo_mpc"
@@ -126,7 +127,8 @@ def test_mpc_updates_do_not_integrate_measured_vehicle_state():
     assert result["uav1"]["ok"]
 
 
-def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path):
+@pytest.mark.parametrize("record_overhead", [False, True])
+def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path, record_overhead):
     source = Path("/opt/ardupilot_gazebo")
     if not source.exists():
         pytest.skip("Requires pinned Gazebo model source in image")
@@ -137,6 +139,7 @@ def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path):
         tmp_path / "world.sdf",
         PKG / "scenarios/small50_3uav.yaml",
         PKG / "config/controller.yaml",
+        record_overhead=record_overhead,
     )
     world = ET.parse(path).getroot().find("world")
     assert (
@@ -150,8 +153,26 @@ def test_mpc_world_matches_scenario_and_has_unique_sensor_topics(tmp_path):
         for s in world.iter("sensor")
         if s.get("type") in ("camera", "gpu_lidar")
     ]
-    assert len(topics) == len(set(topics)) == 6
+    assert len(topics) == len(set(topics)) == 6 + int(record_overhead)
     assert resolved["uavs"][0]["spawn"][:2] == [2.8, 1.2]
+    camera = world.find("model[@name='tracking_target']/link/sensor")
+    if record_overhead:
+        assert camera.findtext("topic") == OVERHEAD_TOPIC
+        assert camera.findtext("camera/image/width") == "1920"
+        assert camera.findtext("camera/image/height") == "1080"
+        x, y, z, roll, pitch, yaw = map(float, camera.findtext("pose").split())
+        assert (x, y, z) == FOLLOW_OFFSET
+        # Gazebo cameras look along local +X; the optical axis must hit the target.
+        forward = np.array([np.cos(yaw) * np.cos(pitch),
+                            np.sin(yaw) * np.cos(pitch), -np.sin(pitch)])
+        assert np.allclose(forward, -np.array(FOLLOW_OFFSET) / np.linalg.norm(FOLLOW_OFFSET))
+    else:
+        assert camera is None
+    bridge = bridge_config([u["name"] for u in resolved["uavs"]], "mpc_small50",
+                           tmp_path / "bridge.yaml", record_overhead=record_overhead)
+    rows = yaml.safe_load(Path(bridge).read_text())
+    assert len(rows) == 13 + int(record_overhead)
+    assert any(row["gz_topic_name"] == OVERHEAD_TOPIC for row in rows) == record_overhead
 
 
 def test_gazebo_cli_remains_available_after_ros_vendor_setup():

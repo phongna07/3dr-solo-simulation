@@ -157,11 +157,24 @@ coordinate frame, `type_mask`, and ENU/NED conversion on the target firmware.
 Gazebo bridges `/clock`. MPC, perception, target, frame, and setpoint nodes use
 simulation time; MAVROS uses wall/FCU time. The adapter timestamps measured state
 at simulation receipt time and projects sensors against nearby measured poses.
+The takeoff supervisor also uses Gazebo receipt time for vertical speed and the
+two-second altitude hold, while rejecting repeated MAVROS samples. A 10 Hz FCU
+pose stream can arrive only once per wall second when the simulator runs at
+0.1× speed; wall-time gaps must not reset an otherwise valid simulation hold.
 This approximation has latency error and does not synchronize FCU measurements
 with camera exposure time. Hardware requires a deliberate synchronization policy.
 Setting `use_sim_time=true` without a clock source stops ROS timers. A 100 ms wall
 solver duration and a 100 ms simulation period are different budgets when the
 simulator runs below real time.
+
+For simulation, MAVROS's wall-time connection timeout and local FCU status
+watchdogs allow 60 seconds between heartbeats. Setpoint delivery still expires
+FCU state after 2.5 simulation seconds and poses after three wall seconds.
+MAVLink timesync and SYSTEM_TIME transmission are disabled because a single clock
+offset cannot track two clocks advancing at different speeds. The FCU parameter
+plugin is also disabled in simulation; SITL loads its defaults directly. This
+avoids background parameter downloads and repeated pulls on reconnect. The
+hardware profile retains the upstream parameter plugin and timing defaults.
 
 ## Control ownership and failure behavior
 

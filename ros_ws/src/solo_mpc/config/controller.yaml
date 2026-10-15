@@ -25,7 +25,7 @@ command_timeout_sim: 0.4
 command_timeout_wall: 3.0
 pose_timeout_wall: 3.0
 fcu_timeout_sim: 2.5
-fcu_timeout_wall: 10.0  # low-rate FCU status follows slow SITL simulation time
+fcu_timeout_wall: 60.0  # heartbeat follows slow SITL; sim-time expiry remains 2.5 s
 target_mode: camera
 altitude_kp: 1.0
 vertical_speed_limit: 0.5

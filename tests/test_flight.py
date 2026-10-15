@@ -22,12 +22,16 @@ class SimulatedFlight:
 
     def __init__(self, monkeypatch):
         self.now = 100.0
+        self.sim_now = 100.0
+        self.sim_rate = 1.0
+        self.pose_interval_wall = 0.0
         self.timeout = 15.0
         self.names = ('uav1', 'uav2', 'uav3')
         self.states = {n: State(connected=True, mode='STABILIZE') for n in self.names}
         self.poses = {}
         self.state_at = {}
         self.pose_at = {}
+        self.pose_sim_at = {}
         self.commands = []
         self.pending = []
         self.delays = {}
@@ -55,6 +59,7 @@ class SimulatedFlight:
 
     def tick(self):
         self.now = round(self.now + 0.1, 6)
+        self.sim_now = round(self.sim_now + 0.1 * self.sim_rate, 6)
         for item in list(self.pending):
             deadline, name, suffix, request, future = item
             if self.now < deadline:
@@ -78,12 +83,15 @@ class SimulatedFlight:
             self.state_at[name] = self.now
             if name in self.frozen:
                 continue
+            if self.now - self.pose_at.get(name, 0) < self.pose_interval_wall:
+                continue
             pose = PoseStamped()
             pose.header.stamp.sec = int(self.now)
             pose.header.stamp.nanosec = round((self.now % 1) * 1e9)
             pose.pose.position.z = self.altitudes(name, self.now)
             self.poses[name] = pose
             self.pose_at[name] = self.now
+            self.pose_sim_at[name] = self.sim_now
 
 
 @pytest.fixture
@@ -164,9 +172,38 @@ def test_frozen_pose_cannot_complete_settling_interval(fleet):
         fleet.wait_for_stable_altitude(fleet.names, 3.0)
 
 
-@pytest.mark.parametrize('reaches_altitude', [True, False])
+def test_slow_simulation_settles_using_sim_time_despite_wall_pose_gaps(fleet):
+    hover(fleet)
+    fleet.sim_rate = 0.1
+    fleet.pose_interval_wall = 1.2  # A fresh 10 Hz stream in a slow simulator.
+    fleet.timeout = 60
+    fleet.wait_for_stable_altitude(fleet.names, 3.0)
+    assert 120 <= fleet.now < 140
+
+
+def test_paused_simulation_cannot_complete_settling_interval(fleet):
+    hover(fleet)
+    fleet.sim_rate = 0
+    with pytest.raises(RuntimeError, match='fleet stable'):
+        fleet.wait_for_stable_altitude(fleet.names, 3.0)
+
+
+def test_repeated_pose_stamp_cannot_accumulate_simulation_hold(fleet):
+    hover(fleet)
+    tick = fleet.tick
+    def repeat_stamps():
+        tick()
+        for pose in fleet.poses.values():
+            pose.header.stamp.sec = 100
+            pose.header.stamp.nanosec = 0
+    fleet.tick = repeat_stamps
+    with pytest.raises(RuntimeError, match='fleet stable'):
+        fleet.wait_for_stable_altitude(fleet.names, 3.0)
+
+
+@pytest.mark.parametrize('outcome', ['tracking', 'takeoff_failure', 'cancelled'])
 def test_mission_moves_only_after_entire_fleet_settles(
-        fleet, monkeypatch, tmp_path, reaches_altitude):
+        fleet, monkeypatch, tmp_path, outcome):
     from solo_mpc import mission
 
     events = []
@@ -204,14 +241,44 @@ def test_mission_moves_only_after_entire_fleet_settles(
         'ready': True, 'updated_wall_unix': time.time(),
     }))
     (tmp_path / 'alignment.json').write_text(json.dumps(dict.fromkeys(fleet.names)))
-    if reaches_altitude:
-        mission.main(['start', '--run-dir', str(tmp_path)])
+    arguments = ['start', '--run-dir', str(tmp_path)]
+    if outcome == 'cancelled':
+        cancel_file = tmp_path / 'mission.cancel'
+        arguments += ['--cancel-file', str(cancel_file)]
+        class Timer:
+            active = True
+
+            def cancel(self):
+                self.active = False
+
+        timer = Timer()
+        def create_timer(interval, callback, **kwargs):
+            timer.callback = callback
+            return timer
+
+        fleet.create_timer = create_timer
+        tick = fleet.tick
+        def interrupt_takeoff():
+            tick()
+            if fleet.launches:
+                cancel_file.touch()
+            if timer.active:
+                timer.callback()
+
+        fleet.tick = interrupt_takeoff
+        mission.main(arguments)
+        assert fleet.launches
+        assert not timer.active
+        assert not any(enabled is True for name, enabled, t in events)
+        assert events[-1][0] == 'land'
+    elif outcome == 'tracking':
+        mission.main(arguments)
         starts = [(name, t) for name, enabled, t in events if enabled is True]
         assert [name for name, t in starts] == ['/mpc/enable', '/target/run']
         assert all(t >= max(fleet.launches.values()) + 5.0 for name, t in starts)
     else:
         fleet.altitudes = lambda n, t: 0.0 if n == 'uav3' else 3.0
         with pytest.raises(SystemExit, match='fleet stable'):
-            mission.main(['start', '--run-dir', str(tmp_path)])
+            mission.main(arguments)
         assert not any(enabled is True for name, enabled, t in events)
         assert events[-1][0] == 'land'

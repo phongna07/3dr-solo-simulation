@@ -133,8 +133,7 @@ evaluation. LiDAR always uses Gazebo sensor returns.
 For a controller experiment using target ground truth, start a fresh run with:
 
 ```bash
-MPC_TARGET_MODE=ground_truth ./scripts/dev mpc
-./scripts/dev mission run --seconds 20
+MPC_TARGET_MODE=ground_truth ./scripts/dev mpc --seconds 20
 ```
 
 Missing scan rays remain unknown; observed no-return rays clear space. Strongly
@@ -155,7 +154,7 @@ arbitrary 3D obstacles. The camera detector assumes a known flat target plane.
 | `planner_failure_timeout_sim` | 3 s | Supervisor's persistent-failure deadline |
 | `command_timeout_sim` / `command_timeout_wall` | 0.4 / 3 s | Independent command expiry limits |
 | `pose_timeout_wall` | 3 s | Measured pose freshness |
-| `fcu_timeout_sim` / `fcu_timeout_wall` | 2.5 / 10 s | Separate freshness limits for low-rate FCU status |
+| `fcu_timeout_sim` / `fcu_timeout_wall` | 2.5 / 60 s | Separate freshness limits for FCU heartbeats, which follow simulation time |
 | `arrival_fleet_radius` / `arrival_timeout_sim` | 6 m / 30 s | Fleet arrival after the target reaches its last waypoint |
 
 `*_sim` values use Gazebo time; `*_wall` values use elapsed real time. At a

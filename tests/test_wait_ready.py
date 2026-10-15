@@ -171,3 +171,31 @@ def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(
     assert '[startup +17s]' in output
     assert output.count('[startup +') == 4
     assert 'Simulation ready' in output
+
+
+def test_mpc_wait_requires_node_initialization_even_with_ready_fcu_health(tmp_path, monkeypatch):
+    run = tmp_path / 'runs/test'
+    run.mkdir(parents=True)
+    (run / 'startup-components').mkdir()
+    (run / 'health.json').write_text(json.dumps({
+        'ready': True, 'updated_wall_unix': 100, 'plugin_parameters_applied': True,
+        'uavs': {},
+    }))
+    (run / 'startup.json').write_text(json.dumps({
+        'started_wall_unix': 100, 'phase': 'Processes launched',
+        'processes': {'controller': {'state': 'running', 'initializes': True, 'pid': 123}},
+    }))
+    ticks = [0]
+    monkeypatch.setattr(wait_ready, '__file__', str(tmp_path / 'scripts/wait_ready.py'))
+    monkeypatch.setattr(wait_ready.time, 'monotonic', lambda: ticks[0])
+    monkeypatch.setattr(wait_ready.time, 'time', lambda: 100 + ticks[0])
+
+    def sleep(_):
+        ticks[0] += 1
+        (run / 'startup-components/controller.json').write_text(json.dumps({
+            'state': 'initialized', 'pid': 123, 'updated_wall_unix': 101,
+        }))
+
+    monkeypatch.setattr(wait_ready.time, 'sleep', sleep)
+    wait_ready.main(['--run-id', 'test', '--all-processes', '--timeout', '3'])
+    assert ticks[0] == 1

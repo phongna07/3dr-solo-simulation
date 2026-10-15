@@ -1,6 +1,6 @@
 # 50 m wide x 10 m high, inspired by the supplied obstacle-map reference.
 # All three UAVs launch together near the lower-left corner.
-# Run: ./scripts/dev mpc, then ./scripts/dev mission run
+# Run: ./scripts/dev mpc
 # Match starts to config/fleet.yaml; provide one GRID_CELLS slot per follower.
 description: 50 x 10 m obstacle map, 3 corner-start UAVs following a target
 xlim: [0, 50]

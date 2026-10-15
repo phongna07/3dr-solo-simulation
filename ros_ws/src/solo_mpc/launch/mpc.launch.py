@@ -10,6 +10,7 @@ from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
 from solo_bringup.launching import critical, observed
 from solo_mpc.settings import load_settings
+from solo_mpc.scene_view import OVERHEAD_FPS
 from solo_mpc.world import bridge_config
 
 
@@ -67,6 +68,7 @@ def start(context):
                     [u["name"] for u in fleet["uavs"]],
                     fleet["world_name"],
                     run / "bridge.yaml",
+                    record_overhead=get("record_overhead") == "true",
                 )
             }
         ],
@@ -120,11 +122,25 @@ def start(context):
                 "--fleet", str(run / "fleet.yaml"),
                 "--output-dir", str(run / "cameras"),
                 "--fps", str(settings["camera_rate"]),
+                '--run-dir', str(run), '--startup-component', 'camera-recorder',
                 "--ros-args", "-p", "use_sim_time:=true",
             ],
             name="mpc-camera-recorder", output="both",
         )
-        actions += observed(recorder, progress, 'camera-recorder')
+        actions += observed(recorder, progress, 'camera-recorder', initializes=True)
+    if get("record_overhead") == "true":
+        recorder = ExecuteProcess(
+            cmd=[
+                "python3", "-m", "solo_mpc.camera_recorder", "--overhead",
+                '--fleet', str(run / 'fleet.yaml'),
+                "--output-dir", str(run / "overhead"),
+                "--fps", str(OVERHEAD_FPS),
+                '--run-dir', str(run), '--startup-component', 'overhead-recorder',
+                "--ros-args", "-p", "use_sim_time:=true",
+            ],
+            name="mpc-overhead-recorder", output="both",
+        )
+        actions += observed(recorder, progress, 'overhead-recorder', initializes=True)
     progress.stage('Starting processes; waiting for fleet telemetry')
     return actions
 
@@ -160,6 +176,11 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "record_cameras",
                 default_value=os.environ.get("MPC_RECORD_CAMERAS", "false"),
+                choices=["true", "false"],
+            ),
+            DeclareLaunchArgument(
+                "record_overhead",
+                default_value=os.environ.get("MPC_RECORD_OVERHEAD", "false"),
                 choices=["true", "false"],
             ),
             DeclareLaunchArgument(

@@ -10,10 +10,12 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 
 | Command | Behavior |
 |---|---|
-| `./scripts/dev mpc` | Start a fresh stack and wait for fleet readiness; no arming |
-| `./scripts/dev mpc --gui` | Wait for readiness, then attach the GUI |
-| `./scripts/dev mpc --no-wait` | Start without waiting; use `dev wait` before a mission |
+| `./scripts/dev mpc` | Initialize the stack, take off, supervise tracking, LAND, and await disarm |
+| `./scripts/dev mpc --gui` | Run the mission with a GUI alongside it |
+| `./scripts/dev mpc --no-wait` | Skip host readiness progress; the mission still waits for initialization |
+| `./scripts/dev mpc --seconds 20` | Limit tracking to 20 wall seconds after takeoff and controller initialization |
 | `./scripts/dev mpc --record-cameras` | Also record one FOV camera video per UAV in the run directory |
+| `./scripts/dev mpc --record-overhead` | Also record a 1920 × 1080 elevated target-following video |
 | `./scripts/dev wait 600` | Wait up to 600 wall seconds for the current stack |
 | `./scripts/dev mission run` | Take off, supervise tracking, LAND, and wait for disarm |
 | `./scripts/dev mission run --seconds 20` | Limit tracking to 20 wall seconds after initialization |
@@ -24,7 +26,13 @@ Gazebo” and “Record telemetry” run inside `./scripts/dev shell`.
 | `./scripts/dev stop` | Run mission stop successfully before stopping the container |
 | `./scripts/dev stop --force` | Stop simulation processes immediately, without LAND |
 
-`mission run` checks fresh readiness and common-frame alignment before takeoff.
+`mpc` automatically runs the mission after all launched processes, MPC nodes,
+camera detectors, and requested recorders initialize. It checks fresh fleet
+readiness and common-frame alignment before takeoff. `--no-wait` skips the host
+progress display, while retaining the mission's startup gate. A failed or exited
+startup process prevents arming. No second terminal command is needed to fly.
+The lower-level `mission run` command remains available for another flight in
+an existing stack after the previous mission has landed.
 It keeps the target paused and the setpoint publisher disabled during takeoff,
 then waits for usable controller inputs before enabling tracking. It finishes
 when the target and fleet reach the route endpoint, or the requested duration
@@ -40,13 +48,22 @@ policy assumes a cooperative simulation target.
 `mission start` returns after enabling tracking. It does not leave the mission
 supervisor running in the background, and does not record the supervisor's
 `truth.jsonl`. The caller must monitor the mission and invoke `mission stop`.
-Prefer `mission run` for supervised experiments and independent evaluation.
+Prefer `mpc` for supervised experiments and independent evaluation.
 
-Ctrl+C in `mission run` attempts cleanup and landing. Check for errors and confirm
+Ctrl+C, terminal closure, or termination of the `mpc` wrapper requests cancellation
+through the mounted run directory. Its Docker client stays attached while the
+supervisor attempts cleanup and landing, including interruption during takeoff.
+Forced termination such as SIGKILL cannot run this handler. Ctrl+C directly in
+the lower-level `mission run` command still depends on interrupt delivery through
+Docker. Check for errors and confirm
 disarm; cleanup can fail if required services or processes have already stopped.
 Normal `dev stop` leaves the container running if mission stop fails. Use
 `stop --force` for a crashed or failed simulation when landing cannot complete.
 Hardware shutdown is different; see [Hardware migration](HARDWARE.md).
+
+After landing, normal container shutdown sends SIGINT to ROS launch so its
+children can finish cleanup and close the AVI writers before exiting. A direct
+SIGTERM of the ROS launch process can leave buffered video files incomplete.
 
 Closing the GUI only closes its client. Ctrl+C in `dev logs` only stops log
 following. Stop an existing run before launching another; every `dev mpc` creates
@@ -77,7 +94,7 @@ Readiness uses typed ROS subscriptions and services. For each UAV it requires:
    at 10 Hz. Requests are serialized per FCU.
 3. At least three finite pose messages with distinct timestamps, with the latest
    received less than 10 wall seconds ago. FCU state must be less than 20 wall
-   seconds old.
+   seconds old for hardware, or 60 wall seconds for simulation heartbeats.
 
 The monitor writes live `health.json`, updates `ready.json` while ready, and
 publishes `/solo/readiness`. Docker health uses the live report. On disconnect,
@@ -142,6 +159,7 @@ there is no need to launch extra MAVROS instances for observation.
 | `truth.jsonl` | Independent Gazebo poses recorded by `mission run` |
 | `evaluation.json` | Derived geometry, tracking, compute, and simulation-speed metrics |
 | `cameras/<uav-name>.avi`, `cameras/<uav-name>.timestamps.jsonl` | Optional UAV camera videos and original per-frame simulation timestamps |
+| `overhead/overhead.avi`, `overhead/overhead.timestamps.jsonl` | Optional 1080p elevated scene video and original per-frame simulation timestamps |
 
 `runs/latest` selects the most recent simulation; launching another run changes
 that link. The actual image ID is stored beside the run directory in
@@ -166,8 +184,7 @@ collision avoidance; inspect physics contacts and camera tracking too.
 Enable recording when starting a fresh simulation:
 
 ```bash
-./scripts/dev mpc --record-cameras --gui
-./scripts/dev mission run --seconds 20
+./scripts/dev mpc --record-cameras --gui --seconds 20
 ./scripts/dev stop
 ls runs/latest/cameras/
 ```
@@ -179,9 +196,12 @@ recording is disabled unless `--record-cameras` is supplied. Live source mountin
 allows this option to work with the existing simulation image without a rebuild.
 For direct ROS launch, use `record_cameras:=true`.
 
-The host files are `runs/<run-id>/cameras/<uav-name>.avi` (MJPEG). Files begin
-with the first received frame, include the time before takeoff and after landing,
-and close when the simulation stops. Closing the GUI or completing `mission run`
+The host files are `runs/<run-id>/cameras/<uav-name>.avi` (MJPEG). The recorder
+subscribes during startup but discards frames until that UAV is connected, armed,
+and more than 0.15 m above its disarmed local ground altitude, using fresh MAVROS
+state and pose telemetry. Arming while sitting on the ground does not start a
+video. Recordings include the rest of takeoff, tracking, and landing, and close
+when the simulation stops. Closing the GUI or completing the mission
 leaves recording active. Use `dev stop` to finish and finalize the videos.
 
 Resolution and playback FPS come from the camera settings (default 160 × 160,
@@ -192,6 +212,34 @@ frame index and its original ROS simulation timestamp in nanoseconds (`stamp_ns`
 No video is created for a camera that never publishes. Abrupt process termination
 or a host crash can leave incomplete videos. Recorder errors appear in `dev logs`
 and do not shut down the flight stack.
+
+## Record overhead video
+
+Start a fresh simulation with the elevated scene recording enabled:
+
+```bash
+./scripts/dev mpc --record-overhead --seconds 20
+./scripts/dev stop
+ls runs/latest/overhead/
+```
+
+The video follows the pink target from 24 m above, offset by -10 m on both
+horizontal axes and looking toward it, similar to the default GUI viewpoint.
+It renders directly at **1920 × 1080 (16:9), 20 FPS**; the GUI's window size
+does not affect the recording. It works without opening the GUI. Add `--gui`
+to watch, or combine `--record-overhead --record-cameras` to save both the scene
+and the UAV FOVs. Navigating or closing the GUI does not change the scene video.
+
+Open `runs/<run-id>/overhead/overhead.avi` in your desktop file explorer after
+`dev stop` finalizes it. It uses MJPEG and starts when the first connected, armed
+UAV rises more than 0.15 m above its disarmed ground altitude. Startup frames
+are discarded. It continues through takeoff, tracking, and landing until
+the stack stops. Playback uses simulation time; dropped frames shorten the
+video. `overhead.timestamps.jsonl` preserves the received simulation timestamps.
+The extra full-HD camera and encoding consume rendering, CPU, and disk capacity;
+recording is disabled unless requested. No image rebuild is needed. For direct
+MPC ROS launch, set `record_overhead:=true`. Recorder errors appear in `dev logs`
+without stopping the flight stack.
 
 ## Record telemetry
 

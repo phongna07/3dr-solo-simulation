@@ -3,6 +3,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
@@ -11,9 +12,12 @@ from mavros_msgs.srv import SetMode, CommandBool, CommandTOL
 
 class Flight(Node):
     def __init__(self, uavs, timeout):
-        super().__init__('simulation_mission_flight')
+        super().__init__('simulation_mission_flight', parameter_overrides=[
+            Parameter('use_sim_time', value=True),
+        ])
         self.timeout = timeout
         self.states, self.poses, self.state_at, self.pose_at = {}, {}, {}, {}
+        self.pose_sim_at = {}
         self.subscriptions_keepalive = []
         self.command_clients = {}
         for uav in uavs:
@@ -33,6 +37,7 @@ class Flight(Node):
 
     def pose(self, msg, name):
         self.poses[name], self.pose_at[name] = msg, time.monotonic()
+        self.pose_sim_at[name] = self.get_clock().now().nanoseconds * 1e-9
 
     def wait(self, condition, description, timeout=None):
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
@@ -44,7 +49,7 @@ class Flight(Node):
 
     def connected(self, name):
         state = self.states.get(name)
-        return bool(state and state.connected and time.monotonic() - self.state_at[name] < 20)
+        return bool(state and state.connected and time.monotonic() - self.state_at[name] < 60)
 
     def call(self, name, suffix, request):
         client = self.command_clients[(name, suffix)]
@@ -119,8 +124,9 @@ class Flight(Node):
     def wait_for_stable_altitude(self, names, altitude):
         """Require two seconds of fresh, settled telemetry for every UAV.
 
-        Pose timestamps measure vertical speed and the settling interval;
-        repeated pose timestamps cannot satisfy the hold.
+        Gazebo receipt timestamps measure vertical speed and the settling
+        interval. MAVROS stamps are in a different clock domain; only use them
+        to reject repeated samples. Wall deadlines still detect a stalled sim.
         """
         previous, stable_since = {}, {}
 
@@ -130,24 +136,25 @@ class Flight(Node):
                 pose = self.poses.get(name)
                 if not (self.connected(name) and self.states[name].armed
                         and self.states[name].mode == 'GUIDED' and pose is not None
-                        and time.monotonic() - self.pose_at.get(name, 0) < 2):
+                        and time.monotonic() - self.pose_at.get(name, 0) < 3):
                     previous.pop(name, None)
                     stable_since.pop(name, None)
                     ready = False
                     continue
                 stamp = pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9
+                sim = self.pose_sim_at[name]
                 z = pose.pose.position.z
                 old = previous.get(name)
                 if old is None or stamp != old[0]:
-                    previous[name] = (stamp, z)
-                    if (old is not None and 0 < stamp - old[0] <= 1
+                    previous[name] = (stamp, sim, z)
+                    if (old is not None and 0 < sim - old[1] <= 1
                             and abs(z - altitude) <= 0.5
-                            and abs(old[1] - altitude) <= 0.5
-                            and abs((z - old[1]) / (stamp - old[0])) <= 0.2):
-                        stable_since.setdefault(name, old[0])
+                            and abs(old[2] - altitude) <= 0.5
+                            and abs((z - old[2]) / (sim - old[1])) <= 0.2):
+                        stable_since.setdefault(name, old[1])
                     else:
                         stable_since.pop(name, None)
-                if name not in stable_since or stamp - stable_since[name] < 2:
+                if name not in stable_since or previous[name][1] - stable_since[name] < 2:
                     ready = False
             return ready
 

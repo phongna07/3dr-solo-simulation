@@ -25,10 +25,11 @@ def atomic_json(path, payload):
 
 
 class Readiness(Node):
-    def __init__(self, config, run_dir, timeout, max_pose_age):
+    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=20.0):
         super().__init__('fleet_readiness')
         self.run_dir = Path(run_dir)
         self.timeout, self.max_pose_age = timeout, max_pose_age
+        self.state_timeout = state_timeout
         self.started = time.monotonic()
         self.ever_ready = False
         self.previous_ready = None
@@ -94,7 +95,7 @@ class Readiness(Node):
         report = {}
         for name, record in self.records.items():
             state = record['state']
-            connected = bool(state and state.connected and now - record['state_at'] < 20)
+            connected = bool(state and state.connected and now - record['state_at'] < self.state_timeout)
             if not connected:
                 self.reset(record)
             elif record['future'] is not None:
@@ -196,10 +197,11 @@ def main(args=None):
     parser.add_argument('--hardware', action='store_true')
     parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--max-pose-age', type=float, default=10)
+    parser.add_argument('--state-timeout', type=float, default=20)
     options, ros_args = parser.parse_known_args(args)
     rclpy.init(args=ros_args)
     node = Readiness(load_config(options.fleet, options.hardware), options.run_dir,
-                     options.timeout, options.max_pose_age)
+                     options.timeout, options.max_pose_age, options.state_timeout)
     code = 0
     try:
         while rclpy.ok() and not node.failed:

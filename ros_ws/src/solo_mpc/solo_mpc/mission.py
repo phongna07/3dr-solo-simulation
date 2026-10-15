@@ -10,7 +10,9 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.signals import SignalHandlerOptions
+from rclpy.clock import Clock, ClockType
 from solo_bringup.flight import Flight
+from solo_bringup.startup import startup_blockers
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
@@ -21,13 +23,38 @@ def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["run", "start", "stop", "status", "reset"])
     parser.add_argument("--run-dir", default="/workspace/runs/latest")
+    parser.add_argument('--wait-for-startup', action='store_true')
+    parser.add_argument('--startup-timeout', type=float, default=600.0)
+    parser.add_argument('--cancel-file', type=Path,
+                        help='Host cancellation request, polled while ROS is spinning')
     parser.add_argument(
         "--seconds", type=float, default=0.0, help="run only: optional wall-time limit"
     )
     args = parser.parse_args(args)
     if not math.isfinite(args.seconds) or args.seconds < 0:
         parser.error("--seconds must be finite and nonnegative")
+    if not math.isfinite(args.startup_timeout) or args.startup_timeout <= 0:
+        parser.error('--startup-timeout must be finite and positive')
     run = Path(args.run_dir)
+    if args.wait_for_startup:
+        print('Waiting for all simulation processes and MPC nodes to initialize.', flush=True)
+        deadline = time.monotonic() + args.startup_timeout
+        while True:
+            if args.cancel_file and args.cancel_file.exists():
+                print('Mission cancelled before takeoff.', flush=True)
+                return
+            try:
+                startup = json.loads((run / 'startup.json').read_text())
+            except (OSError, ValueError):
+                startup = None
+            try:
+                if not startup_blockers(run, startup):
+                    break
+            except RuntimeError as exc:
+                raise SystemExit(str(exc)) from exc
+            if time.monotonic() >= deadline:
+                raise SystemExit('Timeout: all simulation processes initialized')
+            time.sleep(0.1)
     manifest = json.loads((run / "manifest.json").read_text())
     if manifest["mode"] != "simulation" or manifest["profile"] != "mpc":
         raise SystemExit("Mission CLI requires the MPC simulation profile")
@@ -127,6 +154,15 @@ def main(args=None):
             raise RuntimeError("; ".join(errors))
 
     started = False
+    cancel_timer = None
+    if args.cancel_file:
+        def check_cancel():
+            if args.cancel_file.exists():
+                # Cleanup also spins ROS; do not interrupt LAND a second time.
+                cancel_timer.cancel()
+                raise KeyboardInterrupt
+
+        cancel_timer = node.create_timer(0.1, check_cancel, clock=Clock(clock_type=ClockType.STEADY_TIME))
     try:
         if args.command == "status":
             node.wait(lambda: bool(snapshots), "controller status", 30.0)
@@ -285,6 +321,8 @@ def main(args=None):
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     finally:
+        if cancel_timer:
+            cancel_timer.cancel()
         if started:
             try:
                 stop()

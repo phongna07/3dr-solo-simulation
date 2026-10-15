@@ -13,6 +13,33 @@ def write_status(path, payload):
     temporary.replace(path)
 
 
+def startup_blockers(run, startup):
+    """Require live processes and constructor completion from this launch."""
+    if not startup or not startup.get('processes'):
+        return ['waiting for launch process inventory']
+    blockers = []
+    for name, item in startup['processes'].items():
+        if item['state'] == 'exited':
+            raise RuntimeError(f"{name} exited during startup (code {item['exit_code']})")
+        if item['state'] != 'running':
+            blockers.append(f'{name}: not started')
+            continue
+        if not item.get('initializes'):
+            continue
+        try:
+            component = json.loads((Path(run) / 'startup-components' / f'{name}.json').read_text())
+        except (OSError, ValueError):
+            component = {}
+        if (component.get('pid') != item.get('pid') or
+                component.get('updated_wall_unix', 0) < startup['started_wall_unix']):
+            component = {}
+        if component.get('state') == 'failed':
+            raise RuntimeError(f"{name} failed during startup: {component['detail']}")
+        if component.get('state') != 'initialized':
+            blockers.append(f'{name}: initializing')
+    return blockers
+
+
 class StartupProgress:
     """The launch process owns the process inventory and lifecycle events."""
 
