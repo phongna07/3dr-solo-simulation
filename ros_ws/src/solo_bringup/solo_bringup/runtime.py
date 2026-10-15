@@ -35,6 +35,7 @@ def create_run(config, mode, profile='', run_id='', resume=False):
             'ros_domain_id': os.environ.get('ROS_DOMAIN_ID', '0'),
             'rmw': os.environ.get('RMW_IMPLEMENTATION', ''),
             'clock_policy': 'wall; FCU physics follows Gazebo in simulation',
+            'application_mode': 'development' if os.environ.get('SOLO_DEV') == '1' else 'release',
             'versions': json.loads(versions_path.read_text()) if versions_path.exists() else {},
         }
         try:
@@ -45,7 +46,7 @@ def create_run(config, mode, profile='', run_id='', resume=False):
             manifest['workspace_commit'] = None
         (run / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         (run / 'fleet.yaml').write_text(yaml.safe_dump(config, sort_keys=False))
-        for filename in ('apt-packages.lock', 'submodules.lock', 'geoid.sha256'):
+        for filename in ('apt-packages.lock', 'submodules.lock', 'geoid.sha256', 'application.sha256'):
             source = Path('/opt/solo') / filename
             if source.exists():
                 shutil.copy2(source, run / filename)

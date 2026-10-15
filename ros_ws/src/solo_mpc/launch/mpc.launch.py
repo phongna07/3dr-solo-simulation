@@ -31,7 +31,7 @@ def start(context):
     import importlib.util
 
     path = Path("/workspace/ros_ws/src/solo_bringup/launch/simulation.launch.py")
-    if not path.exists():
+    if os.environ.get("SOLO_DEV") != "1" or not path.exists():
         from ament_index_python.packages import get_package_share_directory
 
         path = Path(
@@ -156,7 +156,7 @@ def generate_launch_description():
 
     share = Path(get_package_share_directory("solo_mpc"))
     live = Path("/workspace/ros_ws/src/solo_mpc")
-    if live.exists():
+    if os.environ.get("SOLO_DEV") == "1" and live.exists():
         share = live
     return LaunchDescription(
         [

@@ -1,0 +1,110 @@
+name: release-images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04, target: simulation_mpc, inputs: simulation_inputs, service: sim}
+          - {arch: arm64, runner: ubuntu-24.04-arm, target: simulation_mpc, inputs: simulation_inputs, service: sim}
+          - {arch: amd64, runner: ubuntu-24.04, target: companion, inputs: companion_inputs, service: companion}
+          - {arch: arm64, runner: ubuntu-24.04-arm, target: companion, inputs: companion_inputs, service: companion}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - name: Make room for runtime and preserved compiler inputs
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build native runtime and preserve compiler inputs
+        env:
+          TARGET: ${{ matrix.target }}
+          INPUTS: ${{ matrix.inputs }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(docker version --format '{{.Server.Arch}}')" = "$ARCH"
+          docker build --target base_inputs -t solo-base:ci -f docker/Dockerfile .
+          docker build --build-arg SOURCE_REVISION="$GITHUB_SHA" --target "$TARGET" -t solo-runtime:ci -f docker/Dockerfile .
+          docker build --build-arg SOURCE_REVISION="$GITHUB_SHA" --target "$INPUTS" -t solo-inputs:ci -f docker/Dockerfile .
+          docker save solo-runtime:ci | gzip > runtime.tar.gz
+          docker save solo-inputs:ci solo-base:ci | gzip > inputs.tar.gz
+          sha256sum runtime.tar.gz inputs.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: images-${{ matrix.service }}-${{ matrix.arch }}
+          path: |
+            runtime.tar.gz
+            inputs.tar.gz
+            SHA256SUMS
+          compression-level: 0
+          retention-days: 90
+  validate-and-publish:
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04, service: sim, image: solo-simulation}
+          - {arch: arm64, runner: ubuntu-24.04-arm, service: sim, image: solo-simulation}
+          - {arch: amd64, runner: ubuntu-24.04, service: companion, image: solo-companion}
+          - {arch: arm64, runner: ubuntu-24.04-arm, service: companion, image: solo-companion}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Make room for runtime and preserved compiler inputs
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          df -h /
+      # Fresh native machine, deliberately no checkout. Deployment comes from image.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: images-${{ matrix.service }}-${{ matrix.arch }}
+      - name: Load preserved images
+        run: |
+          sha256sum -c SHA256SUMS
+          docker load -i runtime.tar.gz
+          docker load -i inputs.tar.gz
+      - name: Smoke test without source checkout
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          extract=$(docker create --entrypoint /bin/true solo-runtime:ci)
+          docker cp "$extract:/workspace/scripts/release-smoke" ./release-smoke
+          docker rm "$extract"
+          bash ./release-smoke solo-runtime:ci "$SERVICE" "$PWD/evidence"
+      - name: Publish only the tested native image, with its input archive
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          runtime="ghcr.io/$owner/$IMAGE:$GITHUB_SHA-$ARCH"
+          inputs="ghcr.io/$owner/$IMAGE-inputs:$GITHUB_SHA-$ARCH"
+          base="ghcr.io/$owner/$IMAGE-base-inputs:$GITHUB_SHA-$ARCH"
+          docker tag solo-runtime:ci "$runtime"
+          docker tag solo-inputs:ci "$inputs"
+          docker tag solo-base:ci "$base"
+          docker push "$runtime"
+          docker push "$inputs"
+          docker push "$base"
+          docker image inspect "$runtime" --format '{{index .RepoDigests 0}}' > evidence/runtime.digest
+          docker image inspect "$inputs" --format '{{index .RepoDigests 0}}' > evidence/inputs.digest
+          docker image inspect "$base" --format '{{index .RepoDigests 0}}' > evidence/base.digest
+          printf 'Platform: linux/%s\nCommit: %s\n' "$ARCH" "$GITHUB_SHA" > evidence/platform.txt
+          cat evidence/platform.txt evidence/runtime.digest evidence/inputs.digest evidence/base.digest >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: acceptance-${{ matrix.service }}-${{ matrix.arch }}
+          path: evidence/
+          retention-days: 90

@@ -55,7 +55,10 @@ def start(context):
     gz_command = ['gz', 'sim', '-s', '-r', '-v', '3', str(world)]
     if profile in ('reference', 'mpc'):
         gz_command.insert(2, '--headless-rendering')
-    gazebo = ExecuteProcess(cmd=gz_command, name='gazebo-server', output='both')
+    server_home = run / 'gazebo-home'
+    server_home.mkdir(exist_ok=True)
+    gazebo = ExecuteProcess(cmd=gz_command, name='gazebo-server', output='both',
+                            additional_env={'HOME': str(server_home)})
     progress.stage('Preparing SITL and MAVROS configuration')
     actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs')),
                critical(gazebo)] + observed(gazebo, progress, 'gazebo-server')

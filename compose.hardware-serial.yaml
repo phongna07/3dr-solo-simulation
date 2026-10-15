@@ -4,4 +4,4 @@ services:
     devices:
       - ${FCU_DEVICE:-/dev/solo-fcu}:/dev/solo-fcu
     group_add:
-      - "${DIALOUT_GID:-20}"
+      - "${DIALOUT_GID:?Set DIALOUT_GID to the verified FCU device group ID}"

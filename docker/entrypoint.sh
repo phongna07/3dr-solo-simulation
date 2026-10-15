@@ -6,8 +6,10 @@ source /opt/ros/jazzy/setup.bash
 source /opt/mavros_ws/install/setup.bash
 # shellcheck disable=SC1091
 source /opt/solo_ws/install/setup.bash
-# Source imports and launch files are live when /workspace is mounted.
-export PYTHONPATH="/workspace/ros_ws/src/solo_mpc:/workspace/ros_ws/src/solo_bringup:${PYTHONPATH:-}"
+# Only the development Compose service opts in to checkout imports.
+if [[ "${SOLO_DEV:-0}" == 1 ]]; then
+  export PYTHONPATH="/workspace/ros_ws/src/solo_mpc:/workspace/ros_ws/src/solo_bringup:${PYTHONPATH:-}"
+fi
 mkdir -p "${HOME}" /tmp/solo-runtime
 chmod 700 /tmp/solo-runtime
 export XDG_RUNTIME_DIR=/tmp/solo-runtime

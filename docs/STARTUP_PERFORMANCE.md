@@ -139,7 +139,7 @@ Run the command and preserve its terminal report:
 Inside `./scripts/dev shell`, inspect the server renderer and Gazebo statistics:
 
 ```bash
-grep -E 'GL_RENDERER|GL_VENDOR' "$HOME/.gz/rendering/ogre2.log"
+grep -E 'GL_RENDERER|GL_VENDOR' /workspace/runs/latest/gazebo-home/.gz/rendering/ogre2.log
 timeout 5s gz topic -e -t /world/mpc_small50/stats
 ```
 

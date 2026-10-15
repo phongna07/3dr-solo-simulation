@@ -45,17 +45,7 @@ command="${1:-help}"
 [[ $# -eq 0 ]] || shift
 case "$command" in
   doctor)
-    uname -a
-    docker version --format 'Client={{.Client.Version}} Server={{.Server.Version}}'
-    docker compose version
-    "${dc[@]}" config --quiet
-    printf 'Repository: %s\nUID:GID: %s:%s\n' "$TASK_ROOT" "$LOCAL_UID" "$LOCAL_GID"
-    if [[ "$TASK_ROOT" == /mnt/[a-z]/* ]]; then
-      printf 'Move repository to WSL Linux filesystem for better build performance.\n'
-    fi
-    if [[ -d /mnt/wslg ]]; then
-      printf 'WSLg detected. GUI override enabled. GPU acceleration requires separate validation.\n'
-    fi
+    python3 scripts/doctor.py "$@" --compose "${dc[@]:1}"
     ;;
   build)
     "${dc[@]}" --profile hardware build "${1:-sim}"
@@ -122,7 +112,7 @@ case "$command" in
   lock)
     mkdir -p artifacts
     "${dc[@]}" run --rm --no-deps sim bash -c \
-      'cp /opt/solo/*.lock /opt/solo/versions.json /opt/solo/geoid.sha256 /workspace/artifacts/'
+      'cp /opt/solo/*.lock /opt/solo/versions.json /opt/solo/geoid.sha256 /opt/solo/application.sha256 /workspace/artifacts/'
     TASK_IMAGE="$("${dc[@]}" images -q sim | head -n 1)"
     [[ -n "$TASK_IMAGE" ]] || { printf 'Start sim once before exporting its image identity.\n' >&2; exit 1; }
     docker image inspect "$TASK_IMAGE" --format '{{json .}}' > artifacts/simulation-image.json

@@ -18,6 +18,55 @@ Runtime components were ROS 2 Jazzy, ArduCopter 4.5.3, MAVROS source overlay
 Exact source pins are in [versions.json](../locks/versions.json); APT patch versions
 can change on rebuild.
 
+## Release packaging — 15 October
+
+Native AMD64 images were rebuilt from the pinned source commits with separate
+compiler/runtime stages. Runtime image sizes (`docker image inspect .Size`,
+decimal GB) changed as follows:
+
+| Image | Previous | Release runtime |
+|---|---:|---:|
+| Simulation | 8.04 GB | 4.25 GB |
+| Companion | 3.33 GB | 2.36 GB |
+
+Local tested image IDs (these are not registry pull addresses):
+
+- Simulation: `sha256:b69386064a5e9ab3031df48d9a211251db62dd783bf4f2fc9a57cb0475496733`
+- Companion: `sha256:b84608000fa4c8ca5b36cb03872ffe11b0585d78c7ab4b20396ccaf49bdd62b5`
+
+All **204 tests passed** in the final simulation runtime. The separate
+`release-smoke` acceptance test extracted deployment files from each image into
+a temporary directory with no checkout. It verified installed module imports,
+MAVROS overlay resolution, application/dataset checksums, required shared
+libraries, absence of source/build environments and compiler commands, and writes
+as UID/GID 1000. The root filesystem and configuration were read-only; only
+output binds and temporary storage were writable.
+
+Simulation reached three-FCU telemetry/pose readiness and initialized every node
+in **253 wall seconds**, without arming. Camera and LiDAR messages were sampled.
+The dedicated, live Gazebo server Ogre log reported Mesa 25.2.8 with
+`llvmpipe (LLVM 20.1.2, 256 bits)`, at approximately 0.14–0.19 of real time.
+The detector handles Gazebo's rewritten process title as well as ordinary argv;
+it does not certify logs from stopped servers or a separate GUI process.
+
+The companion smoke checks ROS/MAVROS imports, launch resolution and filesystem
+permissions; it does not connect to an FCU or qualify hardware flight. A companion
+replay from its preserved build-input image also built successfully with build
+commands' network access disabled and passed the same smoke checks.
+
+Evidence: `artifacts/release-final-tests.log`,
+`artifacts/simulation-release-final-smoke/` (readiness, server renderer, sensor
+messages, image inspection and process logs), `artifacts/companion-release-final-smoke/`,
+and `artifacts/companion-offline-smoke/`. Build inputs are retained separately in
+`solo-simulation-inputs:release`, `solo-companion-inputs:release`, and
+`solo-base:inputs`; they are not runtime image ancestors.
+
+**ARM64 runtime testing, hardware GPU validation, and registry publication were
+not performed in this local validation.** The manual `release-images` workflow
+builds and tests on separate native AMD64/ARM64 machines, then publishes passing
+platform-specific images with runtime/input/base digests and acceptance evidence.
+See [Reproducibility](REPRODUCIBILITY.md) for deployment and preservation instructions.
+
 ## Persistent mission supervision — 15 October
 
 Run: `runs/20261015T065414Z-9371`, using the default three-UAV camera scenario,

@@ -95,7 +95,7 @@ link on native Linux Pi:
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.hardware-serial.yaml
 export FCU_DEVICE=/dev/solo-fcu
-export DIALOUT_GID=$(getent group dialout | cut -d: -f3)
+export DIALOUT_GID=$(stat -Lc %g "$FCU_DEVICE")
 ./scripts/dev companion
 docker compose --profile hardware logs -f companion
 ```

@@ -41,6 +41,12 @@ ros2 topic hz /uav1/camera/image_raw
 ros2 topic hz /uav1/scan
 ```
 
+`./scripts/dev doctor` checks container device access and reads the dedicated
+`runs/latest/gazebo-home/.gz/rendering/ogre2.log` from the Gazebo server. A GUI
+renderer does not substitute for this server check. Numeric GPU and serial group
+IDs are required explicitly by the device overrides; use device ownership on the
+Docker daemon host.
+
 `glxinfo` helps inspect the display renderer; also check the Gazebo server's
 render logs because its headless rendering path can differ. `llvmpipe` indicates
 software rendering. Compare simulation and real time in Gazebo statistics;
@@ -65,8 +71,8 @@ IDs:
 
 ```bash
 export COMPOSE_FILE=compose.yaml:compose.gpu.yaml
-export RENDER_GID=$(getent group render | cut -d: -f3)
-export VIDEO_GID=$(getent group video | cut -d: -f3)
+export RENDER_GID=$(stat -c %g /dev/dri/renderD128)
+export VIDEO_GID=$(stat -c %g /dev/dri/card0)
 ./scripts/dev mpc
 ```
 

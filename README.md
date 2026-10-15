@@ -17,6 +17,10 @@ profile currently provides MAVROS and readiness monitoring. Physical sensors and
 hardware MPC flight still require integration and validation; see the
 [hardware migration guide](docs/HARDWARE.md).
 
+For deployments shared by image digest, use the separate
+[release workflow](docs/REPRODUCIBILITY.md), which runs baked application code
+without a checkout. The workflow below remains for development with live source.
+
 ## First run
 
 Use a Linux host or Ubuntu under Windows 11 WSL2 with Docker and Docker Compose
@@ -30,8 +34,8 @@ file if you have already configured the project.
 
 ```bash
 cp .env.example .env
-./scripts/dev doctor
 ./scripts/dev build sim
+./scripts/dev doctor
 ./scripts/dev test
 ./scripts/dev mpc
 ```
