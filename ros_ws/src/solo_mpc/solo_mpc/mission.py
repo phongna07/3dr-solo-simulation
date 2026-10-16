@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import sys
 import time
 
 import rclpy
@@ -67,13 +68,42 @@ def main(args=None):
     cancel_timer = None
     start_future = None
     mission_id = None
+    started = time.monotonic()
+    last_progress = None
+    last_report = -math.inf
+
+    def report(message):
+        print(f"[{time.monotonic() - started:6.1f}s] {message}", file=sys.stderr, flush=True)
+
+    def progress(snapshot):
+        nonlocal last_progress, last_report
+        # Ownership shows takeoff/landing progress even while the mission state
+        # stays unchanged. Keep controller telemetry out of the change key so
+        # high-rate updates don't flood the terminal.
+        ownership = ", ".join(f"{name}={owner}" for name, owner in
+                              sorted(snapshot.get("ownership", {}).items()))
+        current = (snapshot["state"], ownership)
+        now = time.monotonic()
+        if current != last_progress or now - last_report >= 5.0:
+            message = f"Mission {snapshot['state']}"
+            if ownership:
+                message += f"; {ownership}"
+            reason = snapshot.get("controller", {}).get("reason")
+            if reason:
+                message += f"; controller: {reason}"
+            report(message)
+            last_progress, last_report = current, now
 
     def wait(condition, description, timeout=30.0):
         deadline = time.monotonic() + timeout
+        next_report = time.monotonic() + 5.0
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
             if condition():
                 return
+            if time.monotonic() >= next_report:
+                report(f"Waiting for {description}")
+                next_report = time.monotonic() + 5.0
         raise RuntimeError(f"Timeout: {description}")
 
     def call(action, request=None):
@@ -100,6 +130,7 @@ def main(args=None):
     def await_result(return_on_tracking=False):
         while True:
             snapshot = status()
+            progress(snapshot)
             if snapshot["state"] == "failed":
                 raise RuntimeError(snapshot["error"] or "Mission failed")
             if snapshot["state"] in TERMINAL:
@@ -121,12 +152,15 @@ def main(args=None):
             print(json.dumps(status(), indent=2))
             return
         if args.command in ("stop", "reset"):
+            report(f"Requesting mission {args.command}")
             status()  # Validate the run before sending a mutating request.
             call(args.command)
             await_result()
             return
+        report("Requesting mission start")
         result = call("start", StartMission.Request(seconds=args.seconds, run_dir=str(run)))
         mission_id = result.mission_id
+        report(f"Mission accepted ({mission_id}); waiting for takeoff and tracking")
         snapshot = await_result(return_on_tracking=args.command == "start")
         if snapshot["state"] == "tracking":
             print("MPC mission started; persistent supervisor is monitoring flight.", flush=True)

@@ -37,6 +37,11 @@ trigger cleanup. During occlusion the estimate coasts, then searches; the
 simulated target pauses during prolonged loss. This assumes a cooperative target.
 Starts and resets are rejected while a mission or landing is active.
 
+Mission commands print elapsed wall time, mission state, and fleet ownership as
+they change, with a heartbeat every five seconds while waiting. Progress goes to
+stderr and is flushed immediately, including when output is piped or redirected.
+`mission status` continues to print its JSON snapshot to stdout.
+
 ## Stop and recover
 
 Ctrl+C in `mission run` requests cleanup. Check the result and confirm disarm.
