@@ -79,12 +79,12 @@ def sensors(model, name, settings, cfg):
     element(vertical, "min_angle", 0)
     element(vertical, "max_angle", 0)
     ran = element(ray, "range")
-    element(ran, "min", 0.15)
+    element(ran, "min", cfg.get("LIDAR_RANGE_MIN", 0.15))
     element(ran, "max", cfg["SENSING_RADIUS"])
     element(ran, "resolution", 0.01)
     noise = element(ray, "noise", type="gaussian")
     element(noise, "mean", 0)
-    element(noise, "stddev", 0.01)
+    element(noise, "stddev", cfg.get("LIDAR_NOISE", 0.01))
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -162,7 +162,10 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         name="gz::sim::systems::Sensors",
     )
     element(render, "render_engine", "ogre2")
-    solid(world, "field_ground", [25, 5, 0], "plane", [150, 150], "0.6 0.6 0.6 1")
+    xmin, ymin, xmax, ymax = cfg["WORLD_BOUNDS"]
+    solid(world, "field_ground", [(xmin + xmax) / 2, (ymin + ymax) / 2, 0],
+          "plane", [max(150, xmax - xmin + 100), max(150, ymax - ymin + 100)],
+          "0.6 0.6 0.6 1")
     height = settings["obstacle_height"]
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
         solid(
@@ -188,7 +191,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         "tracking_target",
         [first[0], first[1], settings["target_height"]],
         "box",
-        [0.3, 0.3, 0.04],
+        [2 * cfg.get("TAR_RADIUS", 0.15), 2 * cfg.get("TAR_RADIUS", 0.15), 0.04],
         "1 0 1 1",
     )
     if record_overhead:

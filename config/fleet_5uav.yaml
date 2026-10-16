@@ -1,0 +1,24 @@
+schema_version: 1
+world_name: iris_5uav
+# MPC launch replaces ground spawn XY with scenario.starts, in this order.
+uavs:
+  - name: uav1
+    instance: 0
+    sysid: 1
+    spawn: [474.792, 392.219, 0.195, 0, 0, 90]
+  - name: uav2
+    instance: 1
+    sysid: 2
+    spawn: [380.683, 57.46, 0.195, 0, 0, 90]
+  - name: uav3
+    instance: 2
+    sysid: 3
+    spawn: [83.569, 101.826, 0.195, 0, 0, 90]
+  - name: uav4
+    instance: 3
+    sysid: 4
+    spawn: [125.245, 337.098, 0.195, 0, 0, 90]
+  - name: uav5
+    instance: 4
+    sysid: 5
+    spawn: [28.448, 194.59, 0.195, 0, 0, 90]

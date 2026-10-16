@@ -65,6 +65,64 @@ MPC launch takes the UAV positions from the scenario, so no fleet file
 changes are needed. The row defines the initial formation; the controller can
 adjust UAV positions while following the target and avoiding obstacles.
 
+## 1000 m field with five UAVs
+
+The larger experiment uses these three files together:
+
+| Input | File |
+|---|---|
+| Scenario | [big1000_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml) |
+| Fleet | [fleet_5uav.yaml](../config/fleet_5uav.yaml) |
+| Controller | [controller_big1000.yaml](../ros_ws/src/solo_mpc/config/controller_big1000.yaml) |
+
+On the simulation machine, start it with:
+
+```bash
+./scripts/dev mpc \
+  --fleet /workspace/config/fleet_5uav.yaml \
+  --scenario /workspace/ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml \
+  --settings /workspace/ros_ws/src/solo_mpc/config/controller_big1000.yaml
+./scripts/dev mission run
+```
+
+The first command starts the simulation and waits for initialization; the
+second arms the fleet and flies until route completion. Default three-UAV
+inputs remain selected when no overrides are supplied. Use all three larger-map
+files: the default fleet has only three entries, and the default controller
+would override the larger scenario's speeds, range, inflation, and corridor size.
+
+This scenario preserves the supplied five starts, 27 waypoints, 26 leg speeds,
+33 rectangles, and 32 circles from the frozen seed-7 map. Flight altitude is
+30 m, obstacles extend to 40 m, and the downward camera sees approximately a
+50 m square at flight height. A 2 m square magenta marker remains detectable
+in the 160 × 160 image. UAV 3 starts within the initial target footprint;
+the other UAVs join from their supplied positions. Four cardinal follower
+slots have nominal spacing 43.75 m. The larger arrival radius accommodates
+this formation. The ground surface covers the whole map with a 50 m border.
+
+`target.speeds` specifies one positive speed per waypoint leg. Speeds apply to
+arc length along the sampled spline, switching at the original waypoints.
+Zero-based legs 5, 7, 10, and 17 use 13 m/s; all others use 5 m/s. Without
+`target.speeds`, every leg uses `tar_max_speed`. Sprints exceed the UAV's
+10 m/s limit and exercise target reacquisition and leadership changes; hand-offs
+depend on measured camera visibility and vehicle motion.
+
+The port uses Gazebo LiDAR returns rather than 2D ray marching, so
+`LIDAR_MARCH_STEP` is omitted. The planner is always the local planner;
+the upstream `PLANNER` selector and JPS-only `GOAL_SNAP_RADIUS` are omitted.
+Upstream `PATH_DEVIATION_THRESHOLD`, `SAFETY_MARGIN`, and `TARGET_ARRIVAL_TOL`
+are also omitted because this port uses committed-path clearance checks,
+vehicle/obstacle margins, and mission arrival checks respectively. Target
+observation noise, minimum LiDAR range/noise, and start snapping are carried
+through to their corresponding ROS/controller paths. Total obstacle inflation
+is 1.5 m (`ROBOT_RADIUS: 0.5` plus `INFLATE_MARGIN: 1.0`). The 0.1 s timestep
+and vehicle radius do not establish a no-tunnelling guarantee at 10 m/s.
+
+These are starting flight parameters. Automated checks cover configuration,
+generated SDF/bridges, target speed timing, and five numerical MPC workers;
+the larger experiment still needs flight validation and timing measurements
+on the simulation machine.
+
 ## Change fleet size
 
 For N UAVs, provide:
@@ -99,7 +157,8 @@ Instance `i` uses MAVLink TCP `5760 + 10*i` and JSON UDP `9002 + 10*i` internall
 Coordinates are metres in a shared world ENU frame: east, north, up. `xlim` and
 `ylim` bound the field. Rectangles are `[left, bottom, width, height]`; circles
 are `[center_x, center_y, radius]`. Gazebo extrudes them into boxes/cylinders.
-Target `waypoints` define a smooth route; `tar_max_speed` controls target speed.
+Target `waypoints` define a smooth route; `tar_max_speed` supplies the default
+target speed, and optional `target.speeds` overrides it per waypoint leg.
 
 Algorithm parameters resolve in this order:
 

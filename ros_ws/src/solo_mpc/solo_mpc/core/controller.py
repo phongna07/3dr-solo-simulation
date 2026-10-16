@@ -53,6 +53,7 @@ class TeamController:
                 local_radius=cfg["LOCAL_PLAN_RADIUS"],
                 unknown_policy=cfg["UNKNOWN_POLICY"],
                 unknown_cost=cfg["UNKNOWN_COST"],
+                start_snap_radius=cfg.get("START_SNAP_RADIUS", 10.0),
                 goal_clamp_margin=cfg["GOAL_CLAMP_MARGIN"],
             )
             planner.gmap = SensorGrid(

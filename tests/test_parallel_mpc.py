@@ -115,3 +115,45 @@ def test_single_vehicle_worker_handles_empty_neighbor_set_and_disconnect(cfg):
         result = parallel.step(states, scans, .1, {"solo"})["solo"]
         assert not result["ok"]
         assert "worker_disconnected" in result["reason"]
+
+
+def test_big1000_five_workers_solve_with_four_neighbors_and_follower_slots():
+    # Synthetic measured inputs exercise the real numerical workers without
+    # starting Gazebo, SITL, MAVROS or integrating simulated vehicle motion.
+    from solo_bringup.configuration import load_config
+
+    scenario, _, cfg = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
+                                     PKG / 'config/controller_big1000.yaml')
+    names = [u['name'] for u in load_config(PKG.parents[2] / 'config/fleet_5uav.yaml')['uavs']]
+    cfg['IPOPT_OPTIONS'] = {**cfg['IPOPT_OPTIONS'], 'ipopt.max_cpu_time': 1.0}
+    serial = TeamController(names, cfg)
+    assert all(solver.n_others == 4 for solver in serial.solvers.values())
+    with ParallelTeamController(names, cfg, timeout=5.0, startup_timeout=60.0) as parallel:
+        assert len({w.pid for w in parallel.workers.values()}) == 5
+        for step in range(2):
+            stamp = step * cfg['TIMESTEP']
+            states = {
+                n: VehicleState(np.array(start, float), np.zeros(3), np.zeros(3),
+                                np.array([0., 0., 0., 1.]), stamp)
+                for n, start in zip(names, scenario['starts'])
+            }
+            scans = {
+                n: project_scan(np.full(180, np.inf), -np.pi, 2*np.pi/180,
+                                .5, 50., s.position, s.quaternion, stamp)
+                for n, s in states.items()
+            }
+            for team in (serial, parallel):
+                team.track.observe([100., 100.], stamp, variance=1.0)
+            expected = serial.step(states, scans, stamp, {'uav3'})
+            actual = parallel.step(states, scans, stamp, {'uav3'})
+            assert parallel.leader == serial.leader == 'uav3'
+            assert parallel.assignment == serial.assignment
+            assert set(parallel.assignment) == set(names) - {'uav3'}
+            assert set(parallel.assignment.values()) == {0, 1, 2, 3}
+            for n in names:
+                assert expected[n]['ok'], expected[n]
+                assert actual[n]['ok'], actual[n]
+                assert actual[n]['prediction'].shape == (21, 6)
+                np.testing.assert_allclose(actual[n]['prediction'], expected[n]['prediction'], atol=1e-6)
+                assert np.max(np.linalg.norm(actual[n]['prediction'][:, 2:4], axis=1)) <= 10.0001
+    assert all(not w.process.is_alive() for w in parallel.workers.values())

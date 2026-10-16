@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from .core.target_path import target_path
+
 DEFAULTS = dict(
     HORIZON_LENGTH=10,
     TIMESTEP=0.1,
@@ -89,6 +91,8 @@ def load_settings(scenario_path, settings_path):
 
 
 def validate(scenario, settings, cfg):
+    # Validate the route before any simulator or ROS process starts.
+    target_path(scenario, cfg)
     for key in [
         "TIMESTEP",
         "VMAX",
