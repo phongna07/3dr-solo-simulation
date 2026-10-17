@@ -207,3 +207,75 @@ def test_raw_setpoints_transform_enu_and_expire_to_zero_velocity(tmp_path):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+@pytest.mark.parametrize('projection,empty,reason', [
+    ('extruded', False, 'ready'),
+    ('horizontal', False, 'insufficient_valid_scan'),
+    ('extruded', True, 'insufficient_valid_scan'),
+])
+def test_five_uav_controller_projects_tilted_scans_and_logs_why_it_stops(
+        tmp_path, monkeypatch, projection, empty, reason):
+    import json
+    import numpy as np
+    from mavros_msgs.msg import State
+    from scipy.spatial.transform import Rotation
+    from sensor_msgs.msg import LaserScan
+    from solo_mpc import controller_node
+    from solo_mpc.ros_utils import seconds
+
+    root = Path(__file__).resolve().parents[1] / 'ros_ws/src/solo_mpc'
+    scenario, settings, cfg = load_settings(root / 'scenarios/big1000_5uav.yaml',
+                                           root / 'config/controller_big1000.yaml')
+    settings['controller_execution'] = 'sequential'
+    settings['scan_projection_mode'] = projection
+    names = [f'uav{i}' for i in range(1, 6)]
+    calls = []
+
+    def step(states, scans, stamp, seers):
+        calls.append(scans)
+        return {n: dict(ok=True, position=s.position[:2], velocity=np.zeros(2),
+                        acceleration=np.zeros(2), reason='tracking',
+                        prediction=np.tile(np.r_[s.position[:2], np.zeros(4)], (21, 1)))
+                for n, s in states.items()}
+
+    team = SimpleNamespace(track=SimpleNamespace(observed_at=0., x=np.zeros(4)),
+                           leader='uav3', step=step)
+    monkeypatch.setattr(controller_node, 'TeamController', lambda *args: team)
+    args = SimpleNamespace(names=names, settings_data=settings, cfg=cfg,
+                           scenario_data=scenario, run_dir=str(tmp_path))
+    rclpy.init()
+    node = Controller(args)
+    try:
+        records = []
+        node.status_pub = SimpleNamespace(publish=lambda msg: records.append(json.loads(msg.data)))
+        stamp = node.get_clock().now().to_msg()
+        at = seconds(stamp)
+        team.track.observed_at = at
+        for n, start in zip(names, scenario['starts']):
+            p = np.asarray(start, float)
+            q = Rotation.from_euler('y', 5, degrees=True).as_quat()
+            node.poses[n] = (p, q, at)
+            node.histories[n].add(at, p, q)
+            node.velocities[n] = (np.zeros(3), at)
+            node.fcu[n] = State(connected=True, armed=True, mode='GUIDED')
+            scan = LaserScan(angle_min=-np.pi, angle_increment=2*np.pi/180,
+                             range_min=.5, range_max=50.)
+            scan.header.stamp = stamp
+            scan.ranges = [] if empty else [float('inf')] * 180
+            node.scans[n] = scan
+        node.tick()
+        record = records[-1]
+        assert record['reason'] == reason
+        if reason == 'ready':
+            assert len(calls) == 1 and set(calls[0]) == set(names)
+            assert len(record['scan_diagnostics']) == 5
+            assert all(d['retained_fraction'] == 1. for d in record['scan_diagnostics'].values())
+        else:
+            assert not calls
+            assert record['scan_diagnostics']['uav1']['retained_rays'] == (0 if empty else 26)
+        assert record['scan_diagnostics']['uav1']['pitch_deg'] == pytest.approx(5.)
+        assert record['scan_diagnostics']['uav1']['projection_mode'] == projection
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

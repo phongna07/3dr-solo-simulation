@@ -211,6 +211,30 @@ is `optimistic`, so unobserved space is not guaranteed clear. A 2D scan cannot
 represent arbitrary 3D obstacles, and camera projection assumes a known flat
 target plane.
 
+`scan_projection_mode` defaults to `horizontal`: endpoints must remain within
+`scan_height_tolerance` (1 m) of the sensor height, and above 0.3 m. The
+controller requires at least 70% of the scan's rays to survive projection.
+At a 3 m range, a 5° pitch preserves the full scan. At a 50 m range, that same
+pitch preserves only about 14%; even 2° preserves only about 39%. This can
+produce `insufficient_valid_scan` immediately after horizontal acceleration,
+then trigger the mission's planner-failure timeout and LAND.
+
+The five-UAV controller selects `scan_projection_mode: extruded` for its known
+ground-to-40 m boxes and cylinders. This mode relies on obstacle XY footprints
+being constant throughout the projection band. It clips each measured ray to
+the band from 0.3 m to `obstacle_height - ROBOT_RADIUS` (39.5 m for this scenario),
+then projects the retained prefix into XY. Returns inside the band remain
+obstacle hits; clipped endpoints only clear the observed prefix. Space beyond
+the band and missing/invalid rays stay unknown. If the sensor itself is outside
+the band, the scan is rejected. This mode does not use `scan_height_tolerance`
+and is unsuitable for arbitrary 3D geometry such as overhangs or varied building
+heights. The 70% validity requirement remains active in both modes.
+
+`mpc.jsonl` and `/mpc/status` include `scan_diagnostics` for processed vehicles:
+projection mode, total/retained rays, retained fraction, range, sensor height,
+and measured roll/pitch. Use these fields to identify which vehicle causes a
+scan rejection before adjusting projection or timeout settings.
+
 ## Timing and expiry
 
 `*_sim` means Gazebo time; `*_wall` means elapsed real time. These budgets differ

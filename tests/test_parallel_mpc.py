@@ -122,7 +122,9 @@ def test_big1000_five_workers_solve_with_four_neighbors_and_follower_slots():
     # starting Gazebo, SITL, MAVROS or integrating simulated vehicle motion.
     from solo_bringup.configuration import load_config
 
-    scenario, _, cfg = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
+    from scipy.spatial.transform import Rotation
+
+    scenario, settings, cfg = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
                                      PKG / 'config/controller_big1000.yaml')
     names = [u['name'] for u in load_config(PKG.parents[2] / 'config/fleet_5uav.yaml')['uavs']]
     cfg['IPOPT_OPTIONS'] = {**cfg['IPOPT_OPTIONS'], 'ipopt.max_cpu_time': 1.0}
@@ -134,12 +136,13 @@ def test_big1000_five_workers_solve_with_four_neighbors_and_follower_slots():
             stamp = step * cfg['TIMESTEP']
             states = {
                 n: VehicleState(np.array(start, float), np.zeros(3), np.zeros(3),
-                                np.array([0., 0., 0., 1.]), stamp)
+                                Rotation.from_euler('y', 5, degrees=True).as_quat(), stamp)
                 for n, start in zip(names, scenario['starts'])
             }
             scans = {
                 n: project_scan(np.full(180, np.inf), -np.pi, 2*np.pi/180,
-                                .5, 50., s.position, s.quaternion, stamp)
+                                .5, 50., s.position, s.quaternion, stamp,
+                                vertical_bounds=(.3, settings['obstacle_height'] - cfg['ROBOT_RADIUS']))
                 for n, s in states.items()
             }
             for team in (serial, parallel):

@@ -32,7 +32,8 @@ vertical_speed_limit: 2.0
 calibration_samples: 10
 world_from_local_yaw: 0.0
 frame_history_tolerance: 0.3
-scan_height_tolerance: 1.0
+scan_projection_mode: extruded  # constant obstacle footprints from ground to 40 m
+scan_height_tolerance: 1.0     # used only by horizontal projection mode
 marker_min_pixels: 4
 params:
   ACCEL_TAU: 0.2

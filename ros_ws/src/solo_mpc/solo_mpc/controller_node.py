@@ -161,6 +161,7 @@ class Controller(Node):
         reason = "ready"
         states = {}
         scans = {}
+        scan_diagnostics = {}
         results = {}
         if not all(
             n in self.poses and n in self.velocities and n in self.scans for n in names
@@ -199,6 +200,7 @@ class Controller(Node):
                     from scipy.spatial.transform import Rotation
 
                     sp = sp + Rotation.from_quat(sq).apply([0.0, 0.0, 0.08])
+                    projection = settings.get("scan_projection_mode", "horizontal")
                     scans[n] = project_scan(
                         scan.ranges,
                         scan.angle_min,
@@ -211,11 +213,24 @@ class Controller(Node):
                         neighbors=[self.poses[k][0] for k in names if k != n],
                         neighbor_radius=cfg["ROBOT_RADIUS"] + 0.15,
                         height_tolerance=settings["scan_height_tolerance"],
+                        vertical_bounds=(0.3, settings["obstacle_height"] - cfg["ROBOT_RADIUS"])
+                        if projection == "extruded" else None,
                     )
                 except ValueError:
                     reason = "scan_pose_unavailable"
                     break
-                if len(scans[n].endpoints) < len(scan.ranges) * 0.7:
+                roll, pitch, _ = Rotation.from_quat(sq).as_euler("xyz", degrees=True)
+                scan_diagnostics[n] = {
+                    "projection_mode": projection,
+                    "total_rays": len(scan.ranges),
+                    "retained_rays": len(scans[n].endpoints),
+                    "retained_fraction": len(scans[n].endpoints) / max(1, len(scan.ranges)),
+                    "range_max": float(scan.range_max),
+                    "roll_deg": float(roll),
+                    "pitch_deg": float(pitch),
+                    "sensor_z": float(sp[2]),
+                }
+                if len(scan.ranges) == 0 or len(scans[n].endpoints) < len(scan.ranges) * 0.7:
                     reason = "insufficient_valid_scan"
                     break
             if reason == "ready":
@@ -268,6 +283,7 @@ class Controller(Node):
             "compute_ms": 1000 * (time.perf_counter() - start),
             "execution": self.execution,
             "reason": reason,
+            "scan_diagnostics": scan_diagnostics,
             "leader": self.team.leader,
             "target_mode": settings["target_mode"],
             "target_observation_age": None

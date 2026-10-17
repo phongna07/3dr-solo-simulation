@@ -26,11 +26,17 @@ def project_scan(
     neighbors=(),
     neighbor_radius=0.5,
     height_tolerance=1.0,
+    vertical_bounds=None,
 ):
     """Only observed rays carve free space. NaN/zero/too-short rays remain unknown.
 
     Positive infinity is an observed no-return ray. Rays ending on teammates
     retain their free prefix but never permanently mark the teammate occupied.
+
+    vertical_bounds enables projection for obstacles with constant XY footprints
+    throughout that height band. Clip observed rays at the band boundary; the
+    unobserved remainder stays unknown, and clipped endpoints are never hits.
+    Without this explicit geometry assumption, retain the near-horizontal gate.
     """
     ranges = np.asarray(ranges, float)
     valid = np.isposinf(ranges) | (np.isfinite(ranges) & (ranges >= range_min))
@@ -46,11 +52,26 @@ def project_scan(
     origin = np.asarray(position, float)
     endpoints = Rotation.from_quat(quaternion).apply(local) + origin
     hits = np.isfinite(ranges[valid]) & (ranges[valid] < range_max - 1e-3)
-    # Ground hits and strongly tilted rays do not establish traversable XY space.
-    plane = (np.abs(endpoints[:, 2] - origin[2]) < height_tolerance) & (
-        endpoints[:, 2] > 0.3
-    )
-    endpoints, hits = endpoints[plane], hits[plane]
+    if vertical_bounds is None:
+        # Arbitrary 3D geometry cannot establish traversable XY space far from
+        # the flight plane. This remains the default for existing scenarios.
+        plane = (np.abs(endpoints[:, 2] - origin[2]) < height_tolerance) & (
+            endpoints[:, 2] > 0.3
+        )
+        endpoints, hits = endpoints[plane], hits[plane]
+    else:
+        lower, upper = vertical_bounds
+        if not np.isfinite([lower, upper]).all() or not lower < upper:
+            raise ValueError("Scan vertical_bounds must be finite and increasing")
+        if not lower < origin[2] < upper:
+            return ScanRays(origin, np.empty((0, 3)), np.empty(0, dtype=bool), stamp)
+        delta = endpoints - origin
+        scale = np.ones(len(endpoints))
+        up, down = delta[:, 2] > 0, delta[:, 2] < 0
+        scale[up] = np.minimum(1.0, (upper - origin[2]) / delta[up, 2])
+        scale[down] = np.minimum(1.0, (lower - origin[2]) / delta[down, 2])
+        endpoints = origin + delta * scale[:, None]
+        hits &= scale == 1.0
     for p in neighbors:
         hits &= np.linalg.norm(endpoints - np.asarray(p), axis=1) > neighbor_radius
     return ScanRays(origin, endpoints, hits, stamp)

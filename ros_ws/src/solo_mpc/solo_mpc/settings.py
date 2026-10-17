@@ -107,6 +107,11 @@ def validate(scenario, settings, cfg):
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
     if settings["target_mode"] not in ("camera", "ground_truth"):
         raise ValueError("target_mode must be camera or ground_truth")
+    if settings.get("scan_projection_mode", "horizontal") not in ("horizontal", "extruded"):
+        raise ValueError("scan_projection_mode must be horizontal or extruded")
+    if (settings.get("scan_projection_mode") == "extruded"
+            and settings["obstacle_height"] - cfg["ROBOT_RADIUS"] <= 0.3):
+        raise ValueError("Extruded scan projection needs an obstacle-height band above 0.3 m")
     if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
         raise ValueError("controller_execution must be parallel or sequential")
     for key, default in [("controller_worker_timeout_wall", 1.0),
