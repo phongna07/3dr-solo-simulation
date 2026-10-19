@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import sys
 import time
 
 import rclpy
@@ -16,6 +17,7 @@ from std_srvs.srv import Trigger
 
 
 TERMINAL = {"idle", "completed", "stopped", "failed", "released"}
+PROGRESS_INTERVAL = 5.0
 
 
 def main(args=None):
@@ -68,12 +70,21 @@ def main(args=None):
     start_future = None
     mission_id = None
 
+    def progress(message):
+        # Docker exec has no TTY; flush each update so it reaches the host now.
+        # Keep stdout available for the machine-readable status command.
+        print(message, file=sys.stderr, flush=True)
+
     def wait(condition, description, timeout=30.0):
         deadline = time.monotonic() + timeout
+        next_progress = time.monotonic() + PROGRESS_INTERVAL
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.1)
             if condition():
                 return
+            if time.monotonic() >= next_progress:
+                progress(f"Waiting for {description}...")
+                next_progress = time.monotonic() + PROGRESS_INTERVAL
         raise RuntimeError(f"Timeout: {description}")
 
     def call(action, request=None):
@@ -98,8 +109,25 @@ def main(args=None):
         return snapshot
 
     def await_result(return_on_tracking=False):
+        begin = time.monotonic()
+        last_state = None
+        next_progress = begin
         while True:
             snapshot = status()
+            now = time.monotonic()
+            state = snapshot["state"]
+            if args.command != "status" and (state != last_state or now >= next_progress):
+                controller = snapshot.get("controller", {})
+                details = []
+                if controller.get("reason"):
+                    details.append(f"controller: {controller['reason']}")
+                for name, vehicle in sorted(controller.get("vehicles", {}).items()):
+                    if vehicle.get("result"):
+                        details.append(f"{name}: {vehicle['result']}")
+                suffix = f"; {'; '.join(details)}" if details else ""
+                progress(f"Mission {state} ({now - begin:.0f}s elapsed){suffix}")
+                last_state = state
+                next_progress = now + PROGRESS_INTERVAL
             if snapshot["state"] == "failed":
                 raise RuntimeError(snapshot["error"] or "Mission failed")
             if snapshot["state"] in TERMINAL:
@@ -121,12 +149,15 @@ def main(args=None):
             print(json.dumps(status(), indent=2))
             return
         if args.command in ("stop", "reset"):
+            progress(f"Requesting mission {args.command}...")
             status()  # Validate the run before sending a mutating request.
             call(args.command)
             await_result()
             return
+        progress("Requesting mission start...")
         result = call("start", StartMission.Request(seconds=args.seconds, run_dir=str(run)))
         mission_id = result.mission_id
+        progress(f"Mission accepted: {mission_id}")
         snapshot = await_result(return_on_tracking=args.command == "start")
         if snapshot["state"] == "tracking":
             print("MPC mission started; persistent supervisor is monitoring flight.", flush=True)
