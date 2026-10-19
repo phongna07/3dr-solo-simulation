@@ -96,6 +96,16 @@ Gazebo, SITL, MAVROS, readiness, and the sensor bridge are critical: their exit
 shuts down launch. MPC adapter failures leave the flight stack available for
 cleanup. FCUs do not automatically respawn during an experiment.
 
+If mission startup repeatedly reports `worker_timeout: solve`, the timed-out
+worker has been disabled for that controller's lifetime. It will not recover
+while the CLI waits for valid MPC inputs. Stop the mission and restart the stack
+after fixing the cause. The local planner now compiles both full-grid and sliced
+window kernels during initialization; an older checkout can spend around two
+seconds compiling its first JPS window and hit the one-second flight deadline.
+Increasing the mission `--seconds` value does not fix startup: it limits tracking
+after startup succeeds. In a shell chain joined with `&&`, a failed mission also
+prevents the final `dev stop` command from running, so run cleanup explicitly.
+
 ## Inspect ROS and Gazebo
 
 Inside the container:

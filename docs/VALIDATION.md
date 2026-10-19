@@ -73,8 +73,44 @@ Evidence: `artifacts/mpc-sync-tests-20261019.log`,
 `artifacts/mpc-sync-ros-service-recheck-20261019.log`,
 `artifacts/mpc-sync-upstream-parity-20261019.json`, and
 `artifacts/mpc-sync-final-route-20261019.log`. Docker's WSL integration was
-unavailable in this session, so Gazebo/SITL flight and the complete route with
-these defaults remain unvalidated.
+unavailable during the initial sync; the later startup-fix check below includes
+a short Gazebo/SITL mission. The complete route with these defaults remains
+unvalidated.
+
+## First planning job exceeding the worker deadline — 19 October
+
+A fresh-cache Docker probe reproduced `worker_timeout: solve` for all three
+workers on their first cycle. With a diagnostic ten-second deadline, that cycle
+finished in 2.41 s: path planning spent about 1.95 s compiling a Numba specialization,
+followed by about 0.44 s in the cold optimizer. The warmup had only compiled
+contiguous grids, while real local windows are noncontiguous NumPy slices.
+The one-second operational deadline killed each worker during compilation;
+subsequent cycles retained its failure until controller restart.
+
+Warmup now compiles both layouts before workers report ready. With another
+empty cache and the unchanged one-second deadline, initialization took 9.16 s
+and the first fleet cycle took 0.58 s; all three solves succeeded. Subsequent
+cycles took about 0.14 s. The targeted container suite reported **43 passed**,
+including fresh-cache first-solve, JPS/Dijkstra layout, and stalled-worker checks.
+
+Evidence: `artifacts/mpc-cold-before.log`, `artifacts/mpc-cold-timing.log`,
+`artifacts/mpc-cold-kernel-fix.log`, and `artifacts/mpc-worker-timeout-tests.log`.
+
+Camera-mode Gazebo/SITL run `runs/20261019T043934Z-13303` then completed the
+requested **30 wall seconds of tracking**, landed and disarmed all three UAVs,
+and stopped the container cleanly. Across 64 solve cycles it recorded **zero
+worker timeouts**; first-job planning took 0.25–0.96 ms and the cold native solves
+328–338 ms. Eight individual UAV1 solves later reached IPOPT's CPU limit; they
+were reported as ordinary `mpc_failed` results and subsequent solves recovered.
+Minimum sampled ground-truth body clearance/separation was **0.847/2.438 m**.
+Airborne fleet compute median/p95 was **102/225 ms**, with about **0.094×**
+real-time simulation speed; this does not establish a 100 ms fleet guarantee.
+The finalized overhead AVI decoded all **422 frames at 1920×1080 / 20 FPS**.
+
+Flight evidence: the run's `evaluation.json`, `mpc.jsonl`, `truth.jsonl`, and
+`overhead/overhead.avi`; plus `artifacts/mpc-worker-timeout-fixed-mission.log`,
+`artifacts/mpc-worker-timeout-fixed-stop.log`, and
+`artifacts/mpc-worker-timeout-fixed-summary.json`.
 
 ## Release packaging — 15 October
 

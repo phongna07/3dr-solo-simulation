@@ -12,6 +12,7 @@ pytest.importorskip("casadi")
 pytest.importorskip("_pydecomp")
 from solo_mpc.core.controller import TeamController, VehicleState
 from solo_mpc.core.parallel_controller import ParallelTeamController
+from solo_mpc.core.planner_grid import LocalGridPlanner, _dijkstra8, _jps8, warmup
 from solo_mpc.core.sensors import project_scan
 from solo_mpc.settings import load_settings
 
@@ -40,6 +41,36 @@ def cfg():
     # Numerical equivalence, not a deadline benchmark on a shared CI machine.
     config["IPOPT_OPTIONS"] = {**config["IPOPT_OPTIONS"], "ipopt.max_cpu_time": 1.0}
     return config
+
+
+@pytest.mark.parametrize("search", ["jps", "dijkstra"])
+def test_planner_warmup_covers_real_window_layouts(search):
+    pytest.importorskip("numba")
+    warmup()
+    kernel = _jps8 if search == "jps" else _dijkstra8
+    assert {signature[0].layout for signature in kernel.signatures} >= {"C", "A"}
+    signatures = set(kernel.signatures)
+    planner = LocalGridPlanner((0., 0., 20., 20.), grid_resolution=.5,
+                               local_radius=3., unknown_policy="optimistic", search=search)
+    planner.initialize([8., 10.], [10., 11.])
+    ok, path, *_ = planner.plan(np.empty((0, 2)), .36, observe=False)
+    assert ok and len(path) >= 2
+    # Shape changes do not compile new kernels; array-layout changes do.
+    assert set(kernel.signatures) == signatures
+
+
+def test_fresh_cache_workers_finish_first_solve_with_default_deadline(cfg, tmp_path, monkeypatch):
+    # Spawned interpreters start with no cached layout specializations, just as
+    # a new deployment does. Previously every worker died on its first JPS job.
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba-cache"))
+    names = ["alpha", "bravo", "charlie"]
+    with ParallelTeamController(names, cfg) as parallel:
+        parallel.track.observe([9., 4.], 0.)
+        states, scans = inputs(names, 0.)
+        results = parallel.step(states, scans, 0., {names[0]})
+        assert all(r["ok"] for r in results.values()), {
+            n: r["reason"] for n, r in results.items()}
+        assert all(w.error is None and w.process.is_alive() for w in parallel.workers.values())
 
 
 def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg):

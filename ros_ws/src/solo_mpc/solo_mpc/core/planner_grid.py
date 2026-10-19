@@ -614,7 +614,13 @@ class LocalGridPlanner:
 
 
 def warmup():
-    """Compile the numba kernels once (otherwise the first replan takes ~1 s)."""
-    b = np.zeros((3, 3), np.bool_)
-    _dijkstra8(b, np.ones((3, 3)), 1, 1)
-    _jps8(b, 0, 0, 2, 2)
+    """Compile both full grids and strided local windows before flight.
+
+    Numba specializes on array layout. A slice of the occupancy grid is usually
+    noncontiguous, so warming only a small contiguous grid leaves compilation
+    on the first real planning job, where the worker's flight deadline applies.
+    """
+    grid = np.zeros((6, 6), np.bool_)
+    for blocked in (grid[:3, :3].copy(), grid[::2, ::2]):
+        _dijkstra8(blocked, np.ones((3, 3)), 1, 1)
+        _jps8(blocked, 0, 0, 2, 2)

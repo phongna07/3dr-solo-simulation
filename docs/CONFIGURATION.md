@@ -199,3 +199,5 @@ when simulation runs below real time. See [frames and clocks](DEVELOPMENT.md#fra
 Worker timeouts bound failures; they are not the 100 ms decision target. Initial
 native solves may take longer than warm solves. Increasing timeouts does not
 restore sensor/control rates.
+Initialization compiles both contiguous and noncontiguous planner kernels before
+workers report ready, using the separate startup timeout rather than a flight job.

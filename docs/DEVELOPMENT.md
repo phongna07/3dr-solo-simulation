@@ -76,6 +76,13 @@ failure suppresses that UAV's reference. Shutdown closes workers even if stuck
 in native code. Independent publishing and supervision remain able to expire
 commands and request LAND.
 
+Worker initialization warms the grid kernels for both contiguous arrays and
+noncontiguous local map windows. Numba specializes these layouts separately;
+warming only a contiguous test grid leaves compilation on the first flight job,
+which can exceed the one-second worker deadline and permanently disable it.
+The deadline remains active after initialization. A fresh-cache regression
+exercises the first solve with that default deadline.
+
 Camera detection runs in a separate ROS process per UAV. This is local
 multiprocessing; distribution across Pis still needs transport, common frames,
 and synchronized timestamps. Detection currently uses a magenta marker.

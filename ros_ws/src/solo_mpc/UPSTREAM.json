@@ -11,7 +11,7 @@
     "config.py": "349f59bc3e26e0dcf88701212c58259bd8967c3ab53bd54f982b2a26b0117039"
   },
   "adaptations": [
-    "Relative imports and explicit grid defaults; numerical MPC, local JPS and dynamics retained.",
+    "Relative imports and explicit grid defaults; numerical MPC, local JPS and dynamics retained. Planner warmup compiles both contiguous and noncontiguous windows before worker readiness.",
     "Upstream robot_jps.py corridor seeding, corridor selection and stop-plan fallback adapted to measured ROS states and persistent parallel workers.",
     "Fixed-altitude 3D flight, Iris physical limits, ROS perception, mapping, formation and supervision retained.",
     "Corridor margin includes occupied-cell quantization and three standard deviations of the configured Gaussian LiDAR noise.",
