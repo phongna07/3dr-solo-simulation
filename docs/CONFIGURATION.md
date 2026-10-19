@@ -112,27 +112,54 @@ scenario, world bounds, inflation from vehicle radius plus margin, and standoff
 distance from viewing radius and target speed. Inspect the final `mpc-config.json`
 in the run directory rather than relying on an overridden YAML value.
 
+`CORRIDOR_MARGIN` is derived after overrides unless explicitly supplied. It adds
+vehicle radius, range-error allowance, half the ray spacing over the longer
+horizon, and the grid-cell half diagonal. `LIDAR_ANGULAR_RES` follows `lidar_samples`, and the
+default range allowance is three times `lidar_noise_stddev` (Gaussian noise is
+unbounded). `CORRIDOR_SEED_MAX` is sensing range minus `sqrt(2)*CORRIDOR_BOX`;
+configurations leaving less than one grid cell for the seed are rejected.
+
 | Setting / parameter | Default | Meaning |
 |---|---:|---|
 | `flight_altitude` / `obstacle_height` | 3 / 5 m | Flight height / extruded obstacle height |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz | MPC decisions / independent setpoint publishing, in simulation time |
 | `HORIZON_LENGTH` | 10 steps | MPC prediction horizon |
+| `CONTINGENCY` / `BACKUP_HORIZON` | true / 25 steps | Separate stop branch sharing the nominal first control, ending at rest in the hard corridor |
+| `W_backup` / `TERMINAL_STOP` | 0.1 / false | Relative backup effort weight / optional nominal terminal stop for comparison |
+| `LOCAL_SEARCH` | `jps` | Local JPS with Dijkstra fallback; select `dijkstra` to apply `UNKNOWN_COST` |
 | `ROBOT_RADIUS` / `INFLATE_MARGIN` | 0.36 / 0.15 m | Vehicle footprint / obstacle margin |
 | `UAV_SAFE_DISTANCE` | 1 m | Initial spacing and separation parameter |
 | `VMAX` / `UMAX` | 1.2 m/s / 2 m/s² | Horizontal speed / acceleration limits |
 | `ACCEL_TAU` | 0.2 s | Acceleration-lag time constant |
 | `CORRIDOR_MAX_FACES` | 16 | Initial solver allocation; grows if needed |
+| `CORRIDOR_BOX` / derived `CORRIDOR_MARGIN` | 1.5 / approximately 0.522 m | Decomposition box half size / hard obstacle margin |
 | `MPC_SOLVER` | `ipopt` | Solver backend |
 
 Keep obstacle height above flight altitude plus vehicle radius. `IPOPT_OPTIONS`
-sets iterations, tolerances, and CPU limits; the default 0.06 s per-solve limit
+sets iterations, tolerances, and CPU limits; the default 0.2 s per-solve limit
 does not guarantee a 0.1 s fleet cycle. Planning is planar and separation/visibility
 constraints are soft, so these settings do not establish collision guarantees.
+The 500-iteration limit follows upstream. The CPU allowance was raised from
+60 ms for the additional contingency branch; worker deadlines still apply.
+
+On planner, corridor, or solver failure, the controller follows the remaining
+verified stop branch (or nominal tail with `TERMINAL_STOP`) and publishes its
+prediction to teammates. Replay is indexed by elapsed simulation time. Measured
+XY position, velocity and acceleration must agree with that branch within
+`BACKUP_POSITION_TOLERANCE` (0.15 m), `BACKUP_VELOCITY_TOLERANCE` (0.3 m/s), and
+`BACKUP_ACCEL_TOLERANCE` (0.5 m/s²). Otherwise no fresh reference is produced and
+the independent publisher's expiry behavior applies. A completed branch holds
+its terminal position with zero velocity and acceleration. New corridors must
+contain the remaining branch with the margin, or the previous static corridor
+is retained. Fallback results report `nominal_ok: false` and `stop_plan: ...`,
+so persistent failures still trigger mission cleanup. Missing sensors and failed
+workers continue to suppress references.
 
 ## Sensors and target input
 
 Defaults are a 160 × 160 camera at 8 Hz, approximately 53.13° horizontal FOV,
-and horizontal LiDAR with 180 samples at 10 Hz. At 3 m the camera sees roughly
+and horizontal LiDAR with 360 samples at 10 Hz, with 0.01 m Gaussian range-noise
+standard deviation. At 3 m the camera sees roughly
 a 3 m square of ground. Rates follow simulation time. The mission model has no
 gimbal; the optional recorders encode video separately.
 

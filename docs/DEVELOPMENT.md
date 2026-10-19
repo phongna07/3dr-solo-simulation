@@ -51,6 +51,15 @@ are in [UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json) and
 [LICENSE-MPC](../ros_ws/src/solo_mpc/LICENSE-MPC); no external upstream checkout
 is required at runtime.
 
+The algorithm sync inspected on 19 October 2026 adds upstream contingency MPC,
+optional terminal stopping, local JPS with Dijkstra fallback, LiDAR-aware corridor
+margins, bounded forward corridor seeds, and corridor retention around the last
+stop branch. The ROS controller stores a copy of each successful stop certificate;
+failed solves cannot erase it. Replay checks measured-state agreement and follows
+simulation time. Both serial and parallel execution freeze neighbor predictions
+before solving, already providing upstream's two-phase fleet snapshot behavior.
+Altitude control remains independent of the planar optimization.
+
 ### Parallel execution
 
 `ParallelTeamController` spawns one process per UAV, each owning its map,
@@ -162,8 +171,9 @@ zero horizontal velocity with altitude feedback when state is fresh. Stale pose
 or FCU status removes altitude feedback; missing connection, armed/GUIDED state,
 pose, or alignment can prevent output entirely.
 
-Corridor/solver failure produces no fresh reference; failed decomposition is not
-treated as free space. A proximity guard stops approaching teammates, but soft
+Corridor/solver failure uses a retained stop plan only while measured state agrees
+with it; otherwise it produces no fresh reference. Failed decomposition retains
+a valid previous static corridor or fails closed. A proximity guard stops approaching teammates, but soft
 constraints and sampled checks do not prove collision avoidance. Acceleration
 references describe the lag model, not motor thrust; hardware requires response
 and saturation identification.

@@ -2,7 +2,7 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
-These are recorded results from **9–15 October 2026**, not guarantees for another
+These are recorded results from **9–19 October 2026**, not guarantees for another
 machine or code revision. Evidence under `runs/` and `artifacts/` is Git-ignored
 and may be absent from a fresh clone. Test counts describe the suite at each
 recorded checkpoint.
@@ -37,6 +37,44 @@ CPU `llvmpipe`. Components were ROS 2 Jazzy, ArduCopter 4.5.3, MAVROS overlay
 2.15.1, Gazebo Harmonic / gz-sim 8.15.0, ROS Python 3.12.3, and Waf Python
 3.11.16. Source pins are in [versions.json](../locks/versions.json); APT patch
 versions can change on rebuild.
+
+## Upstream algorithm sync — 19 October
+
+Synced the numerical solver and local planner to `motion_planning_MPC` commit
+`d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae`. Both files match the inspected source
+apart from relative imports. An identical-input solve produced exactly equal
+nominal and backup trajectories. Source hashes and ROS adaptations are recorded
+in [UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json).
+
+Local ROS Jazzy tests used the project `.venv`, single-threaded BLAS, and a local
+build of `solo_mpc_interfaces` under `artifacts/mpc-sync-interface-install`.
+The final suite excluding three ROS communication cases reported **228 passed,
+4 skipped, 3 deselected**. The three cases failed in the full run and again with
+an isolated ROS domain/UDP transport: the two detached-supervisor completion
+cases and remote takeoff cancellation could not discover or receive replies
+from the spawned mission service. They do not exercise the optimizer. The
+remaining tests cover contingency/terminal stopping, forced solver/planner/
+corridor failures, rejection of divergent measured state, elapsed-time replay,
+JPS/Dijkstra correctness, corridor retention and bounds, measured-state ownership,
+parallel parity/failures, ROS reference publication, and mission failure visibility.
+
+A sequential three-UAV trace used the first **600 steps / 60 simulation seconds**
+of the current scenario, analytic 360-ray scans, exact acceleration-lag dynamics,
+and synthetic target observations. All **1,800 nominal solves succeeded**, with
+no fallback use. Minimum sampled body clearance was **0.718 m** and minimum
+center separation was **1.708 m**. Fleet compute median/p95 was **180/221 ms**
+in sequential execution; this is not a parallel flight timing measurement.
+This trace follows part of the route and does not include camera, FCU, or sensor
+transport errors. The earlier 60 ms CPU allowance repeatedly exhausted its
+budget with the new branch; current defaults allow 200 ms and 500 iterations.
+
+Evidence: `artifacts/mpc-sync-tests-20261019.log`,
+`artifacts/mpc-sync-focused-tests-20261019.log`,
+`artifacts/mpc-sync-ros-service-recheck-20261019.log`,
+`artifacts/mpc-sync-upstream-parity-20261019.json`, and
+`artifacts/mpc-sync-final-route-20261019.log`. Docker's WSL integration was
+unavailable in this session, so Gazebo/SITL flight and the complete route with
+these defaults remain unvalidated.
 
 ## Release packaging — 15 October
 

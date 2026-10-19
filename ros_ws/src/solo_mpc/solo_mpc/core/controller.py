@@ -31,6 +31,13 @@ class VehicleState:
     stamp: float
 
 
+@dataclass
+class StopPlan:
+    states: np.ndarray
+    controls: np.ndarray
+    stamp: float
+
+
 class TeamController:
     def __init__(self, names, cfg, local_names=None):
         self.names, self.cfg = list(names), dict(cfg)
@@ -43,6 +50,7 @@ class TeamController:
         self.slot_scales = {n: 1.0 for n in names}
         self.planners, self.solvers, self.warm, self.paths = {}, {}, {}, {}
         self.path_goals, self.path_age = {}, {}
+        self.stop_plans, self.active_corridors = {}, {}
         self.last_scans = {n: -np.inf for n in names}
         for n in self.local_names:
             planner = LocalGridPlanner(
@@ -54,6 +62,7 @@ class TeamController:
                 unknown_policy=cfg["UNKNOWN_POLICY"],
                 unknown_cost=cfg["UNKNOWN_COST"],
                 goal_clamp_margin=cfg["GOAL_CLAMP_MARGIN"],
+                search=cfg["LOCAL_SEARCH"],
             )
             planner.gmap = SensorGrid(
                 cfg["WORLD_BOUNDS"],
@@ -138,7 +147,8 @@ class TeamController:
         planner = self.planners[name]
         previous = self.paths.get(name)
         refresh = (
-            previous is None or self.path_age.get(name, 0) >= self.cfg["MAX_COMMIT_AGE"]
+            previous is None or len(previous) < 2
+            or self.path_age.get(name, 0) >= self.cfg["MAX_COMMIT_AGE"]
         )
         refresh |= (
             name not in self.path_goals
@@ -147,7 +157,9 @@ class TeamController:
         )
         if not refresh:
             points = np.asarray(previous, float)
-            nearest = int(np.argmin(np.linalg.norm(points - position[:2], axis=1)))
+            nearest = self._path_segment(points, position[:2])
+            if nearest + 2 < len(points) and np.linalg.norm(points[nearest + 1] - position[:2]) < 1e-6:
+                nearest += 1
             trimmed = np.vstack(
                 [position[:2], points[min(nearest + 1, len(points) - 1) :]]
             )
@@ -167,27 +179,116 @@ class TeamController:
             self.path_age[name] = 0
         return ok, path
 
-    def _corridor(self, name, position, path):
+    @staticmethod
+    def _path_segment(points, position):
+        """Project onto segments so trimming a committed path cannot skip a turn."""
+        delta = points[1:] - points[:-1]
+        along = np.clip(np.sum((position - points[:-1]) * delta, axis=1)
+                        / np.maximum(np.sum(delta * delta, axis=1), 1e-12), 0, 1)
+        return int(np.argmin(np.linalg.norm(points[:-1] + along[:, None] * delta
+                                           - position, axis=1)))
+
+    def _corridor_seed(self, position, path):
+        points = np.asarray(path, float)[:, :2]
+        pos = np.asarray(position[:2], float)
+        k = self._path_segment(points, pos)
+        nxt = points[k + 1]
+        if np.linalg.norm(nxt - pos) < 1e-6 and k + 2 < len(points):
+            nxt = points[k + 2]
+        delta = nxt - pos
+        length = np.linalg.norm(delta)
+        if length < 1e-6:
+            delta, length = np.array([self.cfg["GRID_RESOLUTION"], 0.0]), self.cfg["GRID_RESOLUTION"]
+        delta = delta * min(1.0, self.cfg["CORRIDOR_SEED_MAX"] / length)
+        return np.vstack([pos, pos + delta])
+
+    @staticmethod
+    def _contains(A, b, points, margin):
+        return bool(np.all(np.asarray(points).reshape(-1, 2) @ A.T <= b - margin + 1e-6))
+
+    def _stop_tail(self, name, state, stamp):
+        """Use simulation time and measured-state agreement, never a solve counter.
+
+        A model certificate cannot justify replay after the FCU deviates from it.
+        The publisher's existing expiry/hold behavior handles a rejected tail.
+        """
+        plan = self.stop_plans.get(name)
+        if plan is None:
+            return None
+        elapsed = (stamp - plan.stamp) / self.cfg["TIMESTEP"]
+        if not np.isfinite(elapsed) or elapsed < -1e-6:
+            self.stop_plans.pop(name, None)
+            return None
+        index = min(int(np.floor(elapsed + 1e-6)), len(plan.states) - 1)
+        measured = (state.position[:2], state.velocity[:2], state.acceleration[:2])
+        for values, expected, key in zip(
+            measured, np.split(plan.states[index], 3),
+            ("BACKUP_POSITION_TOLERANCE", "BACKUP_VELOCITY_TOLERANCE", "BACKUP_ACCEL_TOLERANCE"),
+        ):
+            if not np.isfinite(values).all() or np.linalg.norm(values - expected) > self.cfg[key]:
+                self.stop_plans.pop(name, None)
+                return None
+        return plan, index
+
+    def _select_corridor(self, name, state, stamp, candidates):
+        previous = self.active_corridors.get(name)
+        tail = self._stop_tail(name, state, stamp)
+        if tail is not None:
+            plan, index = tail
+            for A, b in candidates:
+                if self._contains(A, b, plan.states[index:, :2], self.cfg["CORRIDOR_MARGIN"]):
+                    return A, b
+            if previous is not None:
+                return previous
+        for A, b in candidates:
+            if self._contains(A, b, state.position[:2], 0.0):
+                return A, b
+        if previous is not None and self._contains(*previous, state.position[:2], 0.0):
+            return previous
+        if not candidates:
+            raise ValueError("Corridor decomposition returned no finite polytope")
+        return min(candidates, key=lambda ab: np.max(ab[0] @ state.position[:2] - ab[1]))
+
+    def _corridor(self, name, state, path, stamp):
         cfg = self.cfg
+        position = state.position
         points = self.planners[name].gmap.surface_points(
             position, cfg["SENSING_RADIUS"] + 1.0
         )
-        box = min(cfg["CORRIDOR_BOX"], cfg["SENSING_RADIUS"] / np.sqrt(2))
+        box = cfg["CORRIDOR_BOX"]
         if not len(points):
             A = np.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
-            return A, A @ position[:2] + box
-        segment = np.asarray(path[:2], float)
-        if np.linalg.norm(segment[1] - segment[0]) < 1e-6:
-            segment[1] = segment[0] + [0.05, 0.0]
-        As, bs = pdc.convex_decomposition_2D(points, segment, np.array([[box, box]]))
+            return self._select_corridor(name, state, stamp, [
+                (A, A @ position[:2] + cfg["SENSING_RADIUS"] / np.sqrt(2))])
+        segment = self._corridor_seed(position, path)
+        try:
+            As, bs = pdc.convex_decomposition_2D(points, segment, np.array([[box, box]]))
+        except Exception:
+            # Upstream retains the previous static corridor if decomposition
+            # fails; an absent previous corridor still fails closed below.
+            As, bs = [], []
         valid = [
             (np.asarray(A), np.asarray(b).ravel())
             for A, b in zip(As, bs)
-            if np.isfinite(A).all() and np.isfinite(b).all()
+            if len(b) and np.isfinite(A).all() and np.isfinite(b).all()
         ]
-        if not valid:
-            raise ValueError("Corridor decomposition returned no finite polytope")
-        return min(valid, key=lambda ab: np.max(ab[0] @ position[:2] - ab[1]))
+        return self._select_corridor(name, state, stamp, valid)
+
+    def _fallback(self, name, state, stamp, reason, **metrics):
+        self.warm.pop(name, None)
+        tail = self._stop_tail(name, state, stamp)
+        if tail is None:
+            return {"ok": False, "nominal_ok": False, "reason": reason, **metrics}
+        plan, index = tail
+        H = self.cfg["HORIZON_LENGTH"]
+        rows = plan.states[index:index + H + 1]
+        rows = np.vstack([rows, np.repeat(rows[-1:], max(0, H + 1 - len(rows)), axis=0)])
+        control = plan.controls[index] if index < len(plan.controls) else np.zeros(2)
+        self.predictions[name] = rows[:, :2].copy()
+        self.prediction_stamps[name] = stamp
+        return {"ok": True, "nominal_ok": False, "position": rows[1, :2].copy(),
+                "velocity": rows[1, 2:4].copy(), "acceleration": control.copy(),
+                "prediction": rows.copy(), "reason": f"stop_plan: {reason}", **metrics}
 
     def integrate_scans(self, scans):
         """Update only maps owned by this instance."""
@@ -237,15 +338,15 @@ class TeamController:
         metrics = {"path_ms": (time.perf_counter() - started) * 1000}
         self.paths[n] = path
         if not ok or len(path) < 2:
-            return {"ok": False, "reason": "planner_failed", **metrics}
+            return self._fallback(n, state, stamp, "planner_failed", **metrics)
         started = time.perf_counter()
         try:
-            A, b = self._corridor(n, state.position, path)
+            A, b = self._corridor(n, state, path, stamp)
             if len(b) > self.solvers[n].n_faces:
                 self.solvers[n] = MPCProblem(len(self.names) - 1, len(b) + 4, cfg)
                 self.warm.pop(n, None)
         except Exception as exc:
-            return {"ok": False, "reason": f"corridor_failed: {exc}", **metrics}
+            return self._fallback(n, state, stamp, f"corridor_failed: {exc}", **metrics)
         metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
         X, U = self.warm.get(n, (np.tile(x0, (H + 1, 1)), np.zeros((H, 2))))
@@ -288,18 +389,22 @@ class TeamController:
             solver_status = "unavailable"
         solver_ms = self.solvers[n].solve_times[-1] * 1000
         if not ok or not np.isfinite(X).all() or not np.isfinite(U).all():
-            return {
-                "ok": False,
-                "reason": "mpc_failed",
-                "solver_status": solver_status,
-                "solver_ms": solver_ms,
-                **metrics,
-            }
+            return self._fallback(n, state, stamp, "mpc_failed", solver_status=solver_status,
+                                  solver_ms=solver_ms, **metrics)
+        self.active_corridors[n] = (A.copy(), b.copy())
+        backup = self.solvers[n].last_backup if cfg["CONTINGENCY"] else None
+        if backup is not None:
+            self.stop_plans[n] = StopPlan(backup[0].copy(), backup[1].copy(), stamp)
+        elif cfg["TERMINAL_STOP"]:
+            self.stop_plans[n] = StopPlan(X.copy(), U.copy(), stamp)
+        else:
+            self.stop_plans.pop(n, None)
         self.predictions[n] = X[:, :2].copy()
         self.prediction_stamps[n] = stamp
         self.warm[n] = (np.vstack([X[1:], X[-1:]]), np.vstack([U[1:], U[-1:]]))
         return {
             "ok": True,
+            "nominal_ok": True,
             "position": X[1, :2],
             "velocity": X[1, 2:4],
             "acceleration": U[0],

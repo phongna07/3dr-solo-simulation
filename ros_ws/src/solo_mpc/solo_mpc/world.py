@@ -84,7 +84,7 @@ def sensors(model, name, settings, cfg):
     element(ran, "resolution", 0.01)
     noise = element(ray, "noise", type="gaussian")
     element(noise, "mean", 0)
-    element(noise, "stddev", 0.01)
+    element(noise, "stddev", settings.get("lidar_noise_stddev", 0.01))
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")

@@ -231,7 +231,7 @@ class Controller(Node):
                     }
                 try:
                     results = self.team.step(states, scans, stamp, seers)
-                    if any(not result["ok"] for result in results.values()):
+                    if any(not result.get("nominal_ok", result["ok"]) for result in results.values()):
                         reason = "partial_solver_failure"
                 except Exception as exc:
                     reason = f"controller_error: {exc}"
@@ -278,6 +278,7 @@ class Controller(Node):
                     "position": p.tolist(),
                     "velocity": self.velocities.get(n, (np.zeros(3), 0))[0].tolist(),
                     "result": results.get(n, {}).get("reason", reason),
+                    "nominal_ok": results.get(n, {}).get("nominal_ok", False),
                     "solver_status": results.get(n, {}).get("solver_status"),
                     "solver_ms": results.get(n, {}).get("solver_ms"),
                     **{

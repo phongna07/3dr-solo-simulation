@@ -58,6 +58,51 @@ def node_args(tmp_path):
     )
 
 
+@pytest.mark.parametrize("accepted", [True, False])
+def test_stop_plan_reference_keeps_nominal_failure_visible(tmp_path, monkeypatch, accepted):
+    import json
+    import numpy as np
+    from geometry_msgs.msg import TwistStamped
+    from mavros_msgs.msg import State
+    from sensor_msgs.msg import LaserScan
+    from solo_mpc.ros_utils import pose_message, seconds
+
+    args = node_args(tmp_path)
+    args.settings_data["controller_execution"] = "sequential"
+    rclpy.init()
+    node = Controller(args)
+    try:
+        name = args.names[0]
+        stamp = node.get_clock().now().to_msg()
+        node.pose(name, pose_message([8., 4., 3.], stamp))
+        velocity = TwistStamped()
+        velocity.header.stamp = stamp
+        node.velocity(name, velocity)
+        node.state(name, State(connected=True, armed=True, mode="GUIDED"))
+        scan = LaserScan(angle_min=-np.pi, angle_increment=2*np.pi/360,
+                         range_min=.1, range_max=3., ranges=[float("inf")] * 360)
+        scan.header.stamp = stamp
+        node.scan(name, scan)
+        node.team.track.observe([9., 4.], seconds(stamp))
+        references, status = [], []
+        node.outputs[name] = (SimpleNamespace(publish=references.append),
+                              SimpleNamespace(publish=lambda msg: None))
+        node.status_pub = SimpleNamespace(publish=lambda msg: status.append(json.loads(msg.data)))
+        result = dict(ok=accepted, nominal_ok=False, reason="stop_plan: mpc_failed",
+                      position=np.array([8.1, 4.]), velocity=np.zeros(2),
+                      acceleration=np.zeros(2), prediction=np.tile([8., 4., 0., 0., 0., 0.], (11, 1)))
+        monkeypatch.setattr(node.team, "step", lambda *args: {name: result})
+        node.tick()
+        assert len(references) == int(accepted)
+        if accepted:
+            assert references[0].position.z == args.settings_data["flight_altitude"]
+        assert status[-1]["reason"] == "partial_solver_failure"
+        assert status[-1]["vehicles"][name]["nominal_ok"] is False
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 def test_per_vehicle_camera_subscribes_only_to_its_own_topics(tmp_path):
     args = node_args(tmp_path)
     args.names = ["alpha", "bravo", "charlie"]

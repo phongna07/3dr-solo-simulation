@@ -54,6 +54,7 @@ class MPCProblem:
         H = cfg["HORIZON_LENGTH"]
         dt = cfg["TIMESTEP"]
         R = cfg["ROBOT_RADIUS"]
+        Rc = cfg["CORRIDOR_MARGIN"]          # hard-corridor margin (R + LiDAR sampling error)
         Ls = cfg["COST_LENGTH_SCALE"]
         Us = cfg["COST_ACCEL_SCALE"]
 
@@ -101,13 +102,54 @@ class MPCProblem:
         # deeper than now, a UAV at rest can always comply (half of UMAX), and the
         # time to get out grows with e: ~0.7 s for 0.25 m, ~1.6 s for 2.25 m (a
         # fixed 1 s deadline was infeasible for 2.25 m, another deadlock in scen2).
-        # A UAV outside the margin has e = 0: plain A p <= b - R at every step.
+        # A UAV outside the margin has e = 0: plain A p <= b - Rc at every step
+        # (Rc = CORRIDOR_MARGIN: R plus the LiDAR sampling error, see config.py).
         a_rec = cfg["CORRIDOR_RECOVER_ACCEL_RATIO"] * cfg["UMAX"]
         t_hold = cfg["CORRIDOR_RECOVER_HOLD"]
         for i in range(1, H + 1):
             s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
             allow = ca.fmax(0, p["corr_relax"] - s_i)
-            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - R + allow)
+            opti.subject_to(ca.mtimes(p["A_hard"], X[i, :2].T) <= p["b_hard"] - Rc + allow)
+
+        # ── terminal set: every plan ends at rest (TERMINAL_STOP) ──
+        # With the corridor hard on steps 1..H and v = a = 0 at step H, the rest
+        # of a successful plan (shifted by one step, then hovering) satisfies the
+        # same constraints at the next step. When a later solve fails the UAV
+        # keeps flying that rest of the plan (robot_jps.py) and stops inside a
+        # corridor that was obstacle-free when it was built: static obstacles are
+        # never hit, instead of braking blindly along the current velocity.
+        # Cost: the UAV must be able to stop within H*dt, so its sustainable
+        # speed is ~UMAX * (H*dt - ACCEL_TAU - dt); HORIZON_LENGTH is chosen so
+        # that this exceeds VMAX.
+        if cfg["TERMINAL_STOP"]:
+            opti.subject_to(X[H, 2:6] == 0)
+
+        # ── contingency (backup) branch: CONTINGENCY ──
+        # A second trajectory Xb, Ub that shares the first control with the plan
+        # (Ub[0] = U[0], so Xb[1] = X[1]), stays in the same hard corridor and
+        # ends at rest within BACKUP_HORIZON steps. Every successful solve thus
+        # leaves a verified way to stop from the state the UAV is about to
+        # reach; when a later solve fails the UAV flies it (robot_jps.py) and
+        # never meets a static obstacle. Unlike TERMINAL_STOP, the plan itself
+        # is free, so tracking is not made conservative: only the first control
+        # must keep a stop possible (FASTER, Tordesillas et al. 2019; contingency
+        # MPC, Alsterda et al. 2019).
+        Hb = int(cfg["BACKUP_HORIZON"]) if cfg["CONTINGENCY"] else 0
+        Xb = Ub = None
+        if Hb:
+            Xb = opti.variable(Hb + 1, 6)
+            Ub = opti.variable(Hb, 2)
+            opti.subject_to(Xb[0, :] == p["x0"])
+            opti.subject_to(Ub[0, :] == U[0, :])
+            for i in range(Hb):
+                opti.subject_to(Xb[i + 1, :] == ca.mtimes(Xb[i, :], Ad.T) + ca.mtimes(Ub[i, :], Bd.T))
+                opti.subject_to(ca.sumsqr(Xb[i + 1, 2:4]) <= cfg["VMAX"] ** 2)
+                opti.subject_to(ca.sumsqr(Ub[i, :]) <= cfg["UMAX"] ** 2)
+            for i in range(1, Hb + 1):
+                s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
+                allow = ca.fmax(0, p["corr_relax"] - s_i)
+                opti.subject_to(ca.mtimes(p["A_hard"], Xb[i, :2].T) <= p["b_hard"] - Rc + allow)
+            opti.subject_to(Xb[Hb, 2:6] == 0)
 
         # ── neighbours: |p - p_j| >= UAV_SAFE_DISTANCE, active only if flagged ──
         # Soft-hard: a slack with a large penalty keeps the problem feasible when
@@ -170,7 +212,7 @@ class MPCProblem:
         # The hard corridor with its recovery rule handles that case.
         eps = cfg["CORRIDOR_BARRIER_EPS"]
         for i in range(H):
-            dist = p["b_cost"] - ca.mtimes(p["A_cost"], X[i, :2].T) - R
+            dist = p["b_cost"] - ca.mtimes(p["A_cost"], X[i, :2].T) - Rc
             cost += p["w_corr"] * ca.sum1(Ls / (ca.fmax(dist, 0) + eps))
         # soft collision margin to every other UAV
         d_safe = cfg["COLLISION_AVOID_DISTANCE"]
@@ -190,6 +232,10 @@ class MPCProblem:
         cost += cfg["W_uav_slack"] * (ca.sum1(ca.sum2(sc)) + ca.sumsqr(sc))
         sb = Sb / Ls
         cost += cfg["W_bounds_slack"] * (ca.sum1(sb) + ca.sumsqr(sb))
+        # backup branch: a small effort cost only (it is a feasibility certificate)
+        if Hb:
+            for i in range(1, Hb):
+                cost += cfg["W_backup"] * cfg["W_u"] * ca.sumsqr(Ub[i, :] / Us)
 
         opti.minimize(cost)
         solver = cfg.get("MPC_SOLVER", "ipopt")
@@ -198,6 +244,9 @@ class MPCProblem:
         opti.solver("sqpmethod" if solver == "sqp" else "ipopt", opts)
         self.opti, self.X, self.U, self.S, self.p = opti, X, U, S, p
         self.Sc, self.Sb = Sc, Sb
+        self.Hb, self.Xb, self.Ub = Hb, Xb, Ub
+        self.last_backup = None              # (Xb, Ub) of the last successful solve
+        self._bk_init = None
         self.solve_times = []                # wall time of every solve() call, fallback included (s)
         self.n_fail = 0
         self.n_fallback = 0                  # SQP failures re-solved with IPOPT
@@ -223,6 +272,7 @@ class MPCProblem:
             if not ok and self.fallback is not None:
                 self.n_fallback += 1
                 ok, X, U = self.fallback._solve(*args, **kwargs)
+                self.last_backup = self.fallback.last_backup
             self.n_fail += not ok
             return ok, X, U
         finally:
@@ -238,7 +288,7 @@ class MPCProblem:
         o.set_value(p["A_hard"], Ah)
         o.set_value(p["b_hard"], bh)
         x_now = np.asarray(x0, float).reshape(-1)[:2]
-        o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["ROBOT_RADIUS"])))
+        o.set_value(p["corr_relax"], np.maximum(0.0, Ah @ x_now[:, None] - (bh - cfg["CORRIDOR_MARGIN"])))
         o.set_value(p["A_cost"], Ac)
         o.set_value(p["b_cost"], bc)
         o.set_value(p["w_corr"], cfg["W_corridor"] if use_corr_cost else 0.0)
@@ -263,8 +313,20 @@ class MPCProblem:
         o.set_initial(self.S, 0)
         o.set_initial(self.Sc, 0)
         o.set_initial(self.Sb, 0)
+        if self.Hb:
+            x0r = np.asarray(x0, float).reshape(1, 6)
+            Xb0, Ub0 = self._bk_init if self._bk_init is not None else (
+                np.tile(x0r, (self.Hb + 1, 1)), np.zeros((self.Hb, 2)))
+            o.set_initial(self.Xb, Xb0)
+            o.set_initial(self.Ub, Ub0)
         try:
             sol = o.solve()
-            return True, sol.value(self.X), sol.value(self.U)
         except RuntimeError:
+            self.last_backup = None
+            self._bk_init = None
             return False, None, None
+        if self.Hb:
+            Xb, Ub = sol.value(self.Xb), sol.value(self.Ub)
+            self.last_backup = (Xb, Ub)
+            self._bk_init = (np.vstack([Xb[1:], Xb[-1:]]), np.vstack([Ub[1:], np.zeros((1, 2))]))
+        return True, sol.value(self.X), sol.value(self.U)

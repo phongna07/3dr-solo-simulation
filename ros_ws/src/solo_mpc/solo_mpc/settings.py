@@ -2,6 +2,7 @@
 
 import math
 from pathlib import Path
+import warnings
 
 import numpy as np
 import yaml
@@ -19,6 +20,7 @@ DEFAULTS = dict(
     GRID_RESOLUTION=0.15,
     INFLATE_MARGIN=0.15,
     LOCAL_PLAN_RADIUS=10.0,
+    LOCAL_SEARCH="jps",
     UNKNOWN_POLICY="optimistic",
     UNKNOWN_COST=1.5,
     GOAL_CLAMP_MARGIN=0.6,
@@ -31,8 +33,15 @@ DEFAULTS = dict(
     STANDOFF_DISTANCE=0.9,
     CORRIDOR_BARRIER_EPS=0.1,
     W_corridor=1.0,
-    CORRIDOR_BOX=2.0,
+    CORRIDOR_BOX=1.5,
     CORRIDOR_MAX_FACES=16,
+    TERMINAL_STOP=False,
+    CONTINGENCY=True,
+    BACKUP_HORIZON=25,
+    W_backup=0.1,
+    BACKUP_POSITION_TOLERANCE=0.15,
+    BACKUP_VELOCITY_TOLERANCE=0.3,
+    BACKUP_ACCEL_TOLERANCE=0.5,
     COLLISION_AVOID_DISTANCE=1.5,
     W_collision_avoid=5.0,
     UAV_SAFE_DISTANCE=1.0,
@@ -54,8 +63,8 @@ DEFAULTS = dict(
     GRID_CELLS=[[0, 1], [0, -1]],
     SWITCH_MARGIN=0.75,
     IPOPT_OPTIONS={
-        "ipopt.max_iter": 100,
-        "ipopt.max_cpu_time": 0.06,
+        "ipopt.max_iter": 500,
+        "ipopt.max_cpu_time": 0.2,
         "ipopt.print_level": 0,
         "ipopt.tol": 1e-4,
         "print_time": 0,
@@ -84,6 +93,23 @@ def load_settings(scenario_path, settings_path):
     cfg["STANDOFF_DISTANCE"] = max(
         0.2, cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"]
     )
+    samples = settings["lidar_samples"]
+    if isinstance(samples, bool) or not isinstance(samples, int) or samples < 4:
+        raise ValueError("lidar_samples must be an integer of at least four")
+    cfg["LIDAR_ANGULAR_RES"] = 2 * math.pi / samples
+    noise = settings.get("lidar_noise_stddev", 0.01)
+    if not math.isfinite(noise) or noise < 0:
+        raise ValueError("lidar_noise_stddev must be finite and nonnegative")
+    cfg.setdefault("LIDAR_NOISE", 3 * noise)
+    # Upstream's sampling allowance plus cell-centre quantization: this port
+    # decomposes occupied grid cells rather than the raw LiDAR endpoints.
+    reach = cfg["VMAX"] * max(
+        cfg["HORIZON_LENGTH"], cfg["BACKUP_HORIZON"] if cfg["CONTINGENCY"] else 0
+    ) * cfg["TIMESTEP"]
+    cfg.setdefault("CORRIDOR_MARGIN", cfg["ROBOT_RADIUS"] + cfg["LIDAR_NOISE"]
+                   + reach * cfg["LIDAR_ANGULAR_RES"] / 2
+                   + cfg["GRID_RESOLUTION"] / math.sqrt(2))
+    cfg["CORRIDOR_SEED_MAX"] = cfg["SENSING_RADIUS"] - math.sqrt(2) * cfg["CORRIDOR_BOX"]
     validate(scenario, settings, cfg)
     return scenario, settings, cfg
 
@@ -96,9 +122,36 @@ def validate(scenario, settings, cfg):
         "ROBOT_RADIUS",
         "GRID_RESOLUTION",
         "SENSING_RADIUS",
+        "CORRIDOR_BOX",
+        "CORRIDOR_MARGIN",
+        "BACKUP_POSITION_TOLERANCE",
+        "BACKUP_VELOCITY_TOLERANCE",
+        "BACKUP_ACCEL_TOLERANCE",
     ]:
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
+    for key in ("HORIZON_LENGTH", "BACKUP_HORIZON", "CORRIDOR_MAX_FACES"):
+        if isinstance(cfg[key], bool) or not isinstance(cfg[key], int) or cfg[key] < 1:
+            raise ValueError(f"{key} must be a positive integer")
+    for key in ("TERMINAL_STOP", "CONTINGENCY"):
+        if not isinstance(cfg[key], bool):
+            raise ValueError(f"{key} must be a boolean")
+    for key in ("W_backup", "LIDAR_NOISE"):
+        if not math.isfinite(cfg[key]) or cfg[key] < 0:
+            raise ValueError(f"{key} must be finite and nonnegative")
+    if cfg["CORRIDOR_MARGIN"] < cfg["ROBOT_RADIUS"]:
+        raise ValueError("CORRIDOR_MARGIN must be at least ROBOT_RADIUS")
+    if cfg["CORRIDOR_SEED_MAX"] < cfg["GRID_RESOLUTION"]:
+        raise ValueError("CORRIDOR_BOX leaves no corridor seed within SENSING_RADIUS")
+    if cfg["LOCAL_SEARCH"] not in ("jps", "dijkstra"):
+        raise ValueError("LOCAL_SEARCH must be jps or dijkstra")
+    for enabled, horizon in (("CONTINGENCY", "BACKUP_HORIZON"),
+                             ("TERMINAL_STOP", "HORIZON_LENGTH")):
+        if cfg[enabled] and cfg["UMAX"] * (
+            cfg[horizon] * cfg["TIMESTEP"] - cfg["ACCEL_TAU"] - cfg["TIMESTEP"]
+        ) < cfg["VMAX"]:
+            warnings.warn(f"{enabled}: {horizon} may limit speed below VMAX when stopping",
+                          UserWarning, stacklevel=2)
     if cfg["MPC_SOLVER"] != "ipopt":
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
     if settings["target_mode"] not in ("camera", "ground_truth"):
