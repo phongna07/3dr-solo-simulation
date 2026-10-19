@@ -69,7 +69,7 @@ def own_flight(node):
 
 
 def mock_landing(node, callback):
-    def land(names, *, poll, landing_timeout):
+    def land(names, *, poll):
         poll()
         callback(names)
         for name in names:
@@ -77,29 +77,6 @@ def mock_landing(node, callback):
             if node.ownership[name] != Ownership.RELEASED:
                 node.ownership[name] = Ownership.UNOWNED
     node.land = land
-
-
-def test_field_flight_and_landing_deadlines_are_applied(run_dir):
-    with (run_dir / "controller.yaml").open("a") as stream:
-        stream.write("flight_timeout_wall: 900.0\nlanding_timeout_wall: 900.0\n")
-    rclpy.init()
-    node = MissionSupervisor(run_dir)
-    try:
-        assert node.timeout == 900.0
-        node.service_call = lambda *args: None
-        mock_cleanup_clients(node)
-        observed = []
-
-        def land(names, *, poll, landing_timeout):
-            poll()
-            observed.append((list(names), landing_timeout))
-
-        node.land = land
-        node.stop_flight()
-        assert observed == [(node.names, 900.0)]
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
 
 
 def healthy(node, stamp=1.0, position=0.0):

@@ -145,8 +145,7 @@ class Controller(Node):
         stamp = seconds(msg.header.stamp)
         self.observed[n] = stamp
         if stamp > self.last_observation:
-            self.team.track.observe(pose_arrays(msg)[0], stamp,
-                                    variance=self.args.cfg["KF_OBS_NOISE_STD"] ** 2)
+            self.team.track.observe(pose_arrays(msg)[0], stamp)
             self.last_observation = stamp
 
     def tick(self):

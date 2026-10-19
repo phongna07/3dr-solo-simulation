@@ -15,10 +15,6 @@ it does not need a ROS or Gazebo installation.
 **Start with [Getting started](docs/GETTING_STARTED.md)** to build the image,
 launch a simulation, fly a short mission, and inspect its results.
 
-The [1000 m field configuration](docs/CONFIGURATION.md#1000-m-field-with-five-uavs)
-provides five UAVs at 30 m altitude, the frozen seed-7 obstacle map, and a target
-route with sprint legs. It includes matching fleet and controller settings.
-
 Simulation is the working environment. The Raspberry Pi / 3DR Solo profile
 currently starts MAVROS and readiness monitoring only. Physical sensors and
 hardware MPC flight require further integration and validation. The

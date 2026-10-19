@@ -239,7 +239,7 @@ def test_mission_moves_only_after_entire_fleet_settles(
         node.wait = fleet.wait
         node.takeoff = fleet.takeoff
         node.ownership = fleet.ownership
-        def land(names, *, poll, landing_timeout):
+        def land(names, *, poll):
             poll()
             events.append(('land', None, fleet.now))
         node.land = land

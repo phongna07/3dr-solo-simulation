@@ -44,7 +44,7 @@ class MissionSupervisor(Flight):
         self.scenario = yaml.safe_load((self.run_dir / "scenario.yaml").read_text())
         uavs = manifest["config"]["uavs"]
         self.names = [u["name"] for u in uavs]
-        super().__init__(uavs, timeout=self.settings.get("flight_timeout_wall", 240.0))
+        super().__init__(uavs, timeout=240.0)
         self.mission_state = "idle"
         self.mission_id = ""
         self.error = ""
@@ -157,8 +157,7 @@ class MissionSupervisor(Flight):
                     del pending[name]
 
         try:
-            self.land(self.names, poll=poll,
-                      landing_timeout=self.settings.get("landing_timeout_wall", 240.0))
+            self.land(self.names, poll=poll)
         except Exception as exc:
             errors.append(str(exc))
         while pending and rclpy.ok():

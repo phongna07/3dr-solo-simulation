@@ -8,7 +8,7 @@ from gz.transport13 import Node as GazeboNode
 from rclpy.node import Node
 from std_srvs.srv import SetBool, Trigger
 
-from .core.geometry import timed_target_path
+from .core.geometry import catmull_rom
 from .ros_utils import pose_message, run_node
 
 
@@ -20,7 +20,12 @@ class MovingTarget(Node):
         self.started = 0.0
         self.elapsed = 0.0
         self.gz = GazeboNode()
-        self.path, self.times = timed_target_path(args.scenario_data, args.cfg)
+        points = np.asarray(args.scenario_data["target"]["waypoints"], float)[:, :2]
+        self.path, _ = catmull_rom(points, args.cfg.get("TAR_SPLINE_DS", 0.1))
+        distance = np.r_[
+            0.0, np.cumsum(np.linalg.norm(np.diff(self.path, axis=0), axis=1))
+        ]
+        self.times = distance / args.scenario_data["tar_max_speed"]
         self.publisher = self.create_publisher(PoseStamped, "/target/ground_truth", 10)
         self.create_service(SetBool, "/target/run", self.set_running)
         self.create_service(Trigger, "/target/reset", self.reset)

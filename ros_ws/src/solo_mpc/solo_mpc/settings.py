@@ -1,9 +1,7 @@
 """Scenario configuration without import-time side effects or global state."""
 
-import copy
 import math
 from pathlib import Path
-import re
 
 import numpy as np
 import yaml
@@ -18,12 +16,6 @@ DEFAULTS = dict(
     ACCEL_TAU=0.2,
     SENSING_RADIUS=3.0,
     SENSING_NEIGHBOR=5.0,
-    LIDAR_RANGE_MIN=0.15,
-    LIDAR_NOISE=0.01,
-    KF_OBS_NOISE_STD=math.sqrt(0.03),
-    TAR_RADIUS=0.15,
-    TAR_SMOOTH_ENABLE=True,
-    TAR_SPLINE_DS=0.1,
     GRID_RESOLUTION=0.15,
     INFLATE_MARGIN=0.15,
     LOCAL_PLAN_RADIUS=10.0,
@@ -104,35 +96,9 @@ def validate(scenario, settings, cfg):
         "ROBOT_RADIUS",
         "GRID_RESOLUTION",
         "SENSING_RADIUS",
-        "LIDAR_RANGE_MIN",
-        "KF_OBS_NOISE_STD",
-        "TAR_RADIUS",
-        "TAR_SPLINE_DS",
     ]:
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
-    if not 0 <= cfg["LIDAR_NOISE"] < math.inf:
-        raise ValueError("LIDAR_NOISE must be finite and nonnegative")
-    if cfg["LIDAR_RANGE_MIN"] >= cfg["SENSING_RADIUS"]:
-        raise ValueError("LIDAR_RANGE_MIN must be below SENSING_RADIUS")
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", scenario.get("world_name", "mpc_small50")):
-        raise ValueError("Invalid scenario world_name")
-    for key in ("flight_timeout_wall", "landing_timeout_wall"):
-        value = settings.get(key, 240.0)
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(f"{key} must be finite and positive")
-    speed = scenario["tar_max_speed"]
-    if not math.isfinite(speed) or speed <= 0:
-        raise ValueError("tar_max_speed must be finite and positive")
-    points = np.asarray(scenario["target"]["waypoints"], float)
-    if (points.ndim != 2 or points.shape[1] != 2 or len(points) < 2
-            or not np.isfinite(points).all()
-            or np.any(np.linalg.norm(np.diff(points, axis=0), axis=1) == 0)):
-        raise ValueError("target.waypoints must contain distinct consecutive finite XY points")
-    speeds = np.asarray(scenario["target"].get("speeds", [speed] * (len(points) - 1)), float)
-    if (speeds.shape != (len(points) - 1,) or not np.isfinite(speeds).all()
-            or np.any(speeds <= 0)):
-        raise ValueError("target.speeds needs one finite positive speed per waypoint leg")
     if cfg["MPC_SOLVER"] != "ipopt":
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
     if settings["target_mode"] not in ("camera", "ground_truth"):
@@ -161,8 +127,6 @@ def validate(scenario, settings, cfg):
         or not np.isfinite(starts).all()
     ):
         raise ValueError("starts must be finite XYZ coordinates")
-    if not np.allclose(starts[:, 2], settings["flight_altitude"]):
-        raise ValueError("All starts Z must match flight_altitude for fixed-altitude MPC")
     for i, a in enumerate(starts):
         if any(
             np.linalg.norm(a[:2] - b[:2]) < cfg["UAV_SAFE_DISTANCE"]
@@ -180,14 +144,3 @@ def validate(scenario, settings, cfg):
         np.linalg.norm(cell) == 0 for cell in cells
     ):
         raise ValueError("GRID_CELLS offsets must be unique and nonzero")
-
-
-def scenario_fleet(fleet, scenario):
-    """Use one world identity and spawn layout throughout bringup and sensors."""
-    if len(fleet["uavs"]) != len(scenario["starts"]):
-        raise ValueError("Fleet and scenario must contain the same number of UAVs")
-    fleet = copy.deepcopy(fleet)
-    fleet["world_name"] = scenario.get("world_name", "mpc_small50")
-    for uav, point in zip(fleet["uavs"], scenario["starts"]):
-        uav["spawn"] = [point[0], point[1], 0.195, 0, 0, 90]
-    return fleet

@@ -24,7 +24,7 @@ PKG = ROOT / "ros_ws/src/solo_mpc"
                     reason="Requires Gazebo and the pinned models in the simulation image")
 def test_overhead_video_renders_full_hd_and_follows_target(tmp_path):
     fleet = load_config(ROOT / "config/fleet.yaml")
-    world, fleet = generate_mpc_world(
+    world, _ = generate_mpc_world(
         fleet, "/opt/ardupilot_gazebo", tmp_path / "world.sdf",
         PKG / "scenarios/small50_3uav.yaml", PKG / "config/controller.yaml",
         record_overhead=True,

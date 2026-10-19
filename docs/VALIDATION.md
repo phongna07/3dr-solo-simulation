@@ -2,29 +2,10 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
-These are recorded results from **9–19 October 2026**, not guarantees for another
+These are recorded results from **9–15 October 2026**, not guarantees for another
 machine or code revision. Evidence under `runs/` and `artifacts/` is Git-ignored
 and may be absent from a fresh clone. Test counts describe the suite at each
 recorded checkpoint.
-
-## Five-UAV field configuration — 19 October
-
-The [1000 m field profile](CONFIGURATION.md#1000-m-field-with-five-uavs) passed
-**220 tests**, with **3 skipped** for missing pinned Gazebo model sources. The
-separate Gazebo rendering test was excluded; no simulation was started for this
-change. Checks covered five distinct MPC workers, numerical parity with serial
-solves, four neighbor constraints per solver, persistent maps, bounded cleanup,
-and one stationary solve at all five supplied starts with analytic obstacle scans.
-Launch actions were constructed without executing them to check independent
-ArduPilot instances, state directories, SYSIDs, MAVROS frames, camera processes,
-and shared coordinator/publisher/supervisor ownership. Field geometry, camera
-footprint, banked LiDAR rays, and all target sprint legs were checked offline.
-
-The host needed a temporary build of the mission service interface and Cyclone
-DDS with explicit loopback peers for cross-process ROS tests; default discovery
-timed out even in a minimal service test. These were test-environment inputs,
-with no change to the container middleware configuration. Five-UAV Gazebo rates,
-flight behavior, handoffs, and route completion remain unvalidated.
 
 ## Scope and remaining work
 
