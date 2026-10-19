@@ -1,6 +1,5 @@
 """Generate the same obstacle footprints in SDF, with lightweight sensors."""
 
-import copy
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -8,9 +7,9 @@ from pathlib import Path
 import yaml
 from solo_bringup.world import generate_world
 
-from .settings import load_settings
+from .settings import load_settings, scenario_fleet
 from .scene_view import (
-    FOLLOW_OFFSET, OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH,
+    OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
 )
 
 
@@ -79,12 +78,12 @@ def sensors(model, name, settings, cfg):
     element(vertical, "min_angle", 0)
     element(vertical, "max_angle", 0)
     ran = element(ray, "range")
-    element(ran, "min", 0.15)
+    element(ran, "min", cfg["LIDAR_RANGE_MIN"])
     element(ran, "max", cfg["SENSING_RADIUS"])
     element(ran, "resolution", 0.01)
     noise = element(ray, "noise", type="gaussian")
     element(noise, "mean", 0)
-    element(noise, "stddev", 0.01)
+    element(noise, "stddev", cfg["LIDAR_NOISE"])
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -118,12 +117,12 @@ def sensors(model, name, settings, cfg):
         element(publisher, tag, value)
 
 
-def overhead_camera(target):
+def overhead_camera(target, flight_altitude):
     # Attach to the target's existing link: set_pose then moves both together,
     # without a second tracking process, collision geometry or physical mass.
     camera = element(target.find("link[@name='body']"), "sensor",
                      name="overhead_camera", type="camera")
-    x, y, z = FOLLOW_OFFSET
+    x, y, z = follow_offset(flight_altitude)
     pitch = math.atan2(z, math.hypot(x, y))
     yaw = math.atan2(-y, -x)
     element(camera, "pose", f"{x} {y} {z} 0 {pitch} {yaw}")
@@ -139,17 +138,13 @@ def overhead_camera(target):
     element(image, "format", "R8G8B8")
     clip = element(optics, "clip")
     element(clip, "near", 0.1)
-    element(clip, "far", 200)
+    element(clip, "far", max(200, 3 * math.sqrt(x*x + y*y + z*z)))
 
 
 def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
                        record_overhead=False):
     scenario, settings, cfg = load_settings(scenario_path, settings_path)
-    fleet = copy.deepcopy(fleet)
-    if len(fleet["uavs"]) != len(scenario["starts"]):
-        raise ValueError("Fleet and scenario must contain the same number of UAVs")
-    for uav, start in zip(fleet["uavs"], scenario["starts"]):
-        uav["spawn"] = [start[0], start[1], 0.195, 0, 0, 90]
+    fleet = scenario_fleet(fleet, scenario)
     output = generate_world(fleet, source, destination, "control")
     tree = ET.parse(output)
     world = tree.getroot().find("world")
@@ -162,7 +157,12 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         name="gz::sim::systems::Sensors",
     )
     element(render, "render_engine", "ogre2")
-    solid(world, "field_ground", [25, 5, 0], "plane", [150, 150], "0.6 0.6 0.6 1")
+    xmin, ymin, xmax, ymax = cfg["WORLD_BOUNDS"]
+    # Leave ground beneath every spawn and the entire route, plus sensor range.
+    margin = max(50.0, cfg["SENSING_RADIUS"])
+    solid(world, "field_ground", [(xmin + xmax) / 2, (ymin + ymax) / 2, 0],
+          "plane", [xmax - xmin + 2 * margin, ymax - ymin + 2 * margin],
+          "0.6 0.6 0.6 1")
     height = settings["obstacle_height"]
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
         solid(
@@ -188,11 +188,11 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         "tracking_target",
         [first[0], first[1], settings["target_height"]],
         "box",
-        [0.3, 0.3, 0.04],
+        [2 * cfg["TAR_RADIUS"], 2 * cfg["TAR_RADIUS"], 0.04],
         "1 0 1 1",
     )
     if record_overhead:
-        overhead_camera(target)
+        overhead_camera(target, settings["flight_altitude"])
     for uav in fleet["uavs"]:
         model = world.find(f"model[@name='{uav['name']}']")
         sensors(model, uav["name"], settings, cfg)

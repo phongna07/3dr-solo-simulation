@@ -44,3 +44,16 @@ def densify(points, ds):
         n = max(1, int(np.ceil(np.linalg.norm(b - a) / ds)))
         out.extend(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
     return np.asarray(out)
+
+
+def timed_target_path(scenario, cfg):
+    """Time the sampled route by arc length, preserving each waypoint's leg speed."""
+    points = np.asarray(scenario["target"]["waypoints"], float)
+    if cfg["TAR_SMOOTH_ENABLE"]:
+        path, knots = catmull_rom(points, cfg["TAR_SPLINE_DS"])
+    else:
+        path, knots = points.copy(), np.arange(len(points))
+    speeds = scenario["target"].get("speeds", [scenario["tar_max_speed"]] * (len(points) - 1))
+    edge_speeds = np.repeat(np.asarray(speeds, float), np.diff(knots))
+    times = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1) / edge_speeds)]
+    return path, times

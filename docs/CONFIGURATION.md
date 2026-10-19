@@ -94,12 +94,86 @@ Append `[0.6, 1.8, 3]` to the default scenario's `starts`, and set
 Count/slot mismatches fail before launch; validate each new fleet size in flight.
 Instance `i` uses MAVLink TCP `5760 + 10*i` and JSON UDP `9002 + 10*i` internally.
 
+## 1000 m field with five UAVs
+
+Use these three files together:
+
+- [big1000_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml): the
+  supplied seed-7 geometry (60 rectangles and 48 circles), five starts at 30 m,
+  33 target waypoints, and 32 leg speeds, including five 13 m/s sprints.
+- [fleet_5uav.yaml](../config/fleet_5uav.yaml): `uav1` through `uav5`, independent
+  SITL instances 0–4 and SYSIDs 1–5. TCP ports are 5760–5800 in increments of 10;
+  JSON UDP ports are 9002–9042 in increments of 10.
+- [controller_big1000.yaml](../ros_ws/src/solo_mpc/config/controller_big1000.yaml):
+  30 m flight altitude, a roughly 50 m square camera footprint, 50 m LiDAR,
+  and field-scale arrival and flight-operation deadlines. It leaves scenario
+  speed, acceleration, horizon and map parameters intact. The default
+  `controller.yaml` overrides those parameters for the small map and must not
+  be paired with this scenario; a mismatched start altitude fails validation.
+
+On the simulation machine, after building the image as described in
+[Getting started](GETTING_STARTED.md), initialize the stack with:
+
+```bash
+READINESS_TIMEOUT=1200 ./scripts/dev mpc \
+  --fleet /workspace/config/fleet_5uav.yaml \
+  --scenario /workspace/ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml \
+  --settings /workspace/ros_ws/src/solo_mpc/config/controller_big1000.yaml
+```
+
+This starts the simulation and waits for initialization with all vehicles
+disarmed. Flight is a separate command: `./scripts/dev mission run`.
+Stop with `./scripts/dev stop`, which requests landing and disarming first.
+The existing small-map defaults remain available through `./scripts/dev mpc`.
+
+One Gazebo server simulates the shared world. One sensor bridge, frame adapter,
+target mover, MPC coordinator, independent setpoint publisher, readiness monitor,
+and mission supervisor serve the whole fleet. Target filtering, leadership,
+formation assignment, and the immutable neighbor-prediction snapshot are shared
+in the coordinator. Each UAV has its own ArduCopter process, SITL state directory,
+MAVROS process with prefixed frames, camera detector process, and persistent MPC
+worker. Each MPC worker owns its map, planner, CasADi/IPOPT solver and warm start,
+with four neighbor slots. Mutable native solver instances are process-local;
+workers reuse the same implementation and configuration. Worker failures expire
+commands through the separate publisher and supervisor; bounded shutdown cleans
+up native workers. Camera recording remains optional. The GUI follow view and
+optional overhead camera scale above the 30 m fleet (240 m above the target).
+
+The Gazebo adaptation uses ground covering the field plus a 50 m border,
+70 m tall obstacle prisms, and a 2 m wide magenta marker visible at 30 m. The
+larger scan-height tolerance accommodates banking while discarding ground hits;
+obstacle prisms extend above that scan envelope. Four cardinal follower slots
+have nominal offsets of 43.75 m; the 75 m arrival radius accommodates the
+formation around the final target. All vehicles spawn on the ground and take off
+under their own FCU. Flight and landing have 900 wall-second deadlines for the
+higher altitude on slow rendering hosts.
+
+The port computes inflation as `ROBOT_RADIUS + INFLATE_MARGIN`, so this scenario
+uses **1.5 m**, rather than the 2 m stated in the original 2D comment. Its
+two-second MPC horizon reaches 20 m at VMAX. The imported 2D simulator's backup
+rollout, synthetic LiDAR marching, JPS snap radii, path-deviation trigger,
+`SAFETY_MARGIN`, and `TARGET_ARRIVAL_TOL` are not implemented by this ROS
+controller and are omitted. This port uses measured Gazebo scans, the local
+grid planner, and the mission supervisor's arrival settings instead.
+
+Offline coverage checks five-worker numerical parity, one stationary solve at
+the supplied starts with analytic obstacle scans, world/sensor generation,
+launch ownership and isolation, per-leg target speeds, and worker cleanup.
+No five-UAV Gazebo flight has been run for this configuration. Achieved rates,
+handoffs and full-route completion still need validation on the destination
+machine; this remains fixed-altitude planar MPC in a 3D physics world.
+
 ## Scenario and controller parameters
 
 Coordinates are metres in a shared world ENU frame: east, north, up. `xlim` and
 `ylim` bound the field. Rectangles are `[left, bottom, width, height]`; circles
 are `[center_x, center_y, radius]`. Gazebo extrudes them into boxes/cylinders.
-Target `waypoints` define a smooth route; `tar_max_speed` controls target speed.
+Target `waypoints` define a smooth route; `tar_max_speed` supplies the default
+target speed. Optional `target.speeds` supplies one finite positive speed per
+waypoint leg, indexed from zero. Speeds apply to arc length along each smoothed
+leg, so sprints may exceed `tar_max_speed`. `TAR_SMOOTH_ENABLE: false` selects
+straight waypoint segments. Optional `world_name` selects the Gazebo world and
+clock/service namespace; the default is `mpc_small50`.
 
 Algorithm parameters resolve in this order:
 
@@ -168,6 +242,7 @@ when simulation runs below real time. See [frames and clocks](DEVELOPMENT.md#fra
 | `pose_timeout_wall` | 3 s | Measured pose freshness |
 | `fcu_timeout_sim` / `fcu_timeout_wall` | 2.5 / 60 s | FCU heartbeat freshness |
 | `arrival_fleet_radius` / `arrival_timeout_sim` | 6 m / 30 s | Fleet arrival after the last target waypoint |
+| `flight_timeout_wall` / `landing_timeout_wall` | 240 / 240 s | Flight-operation and LAND/disarm wall deadlines |
 
 Worker timeouts bound failures; they are not the 100 ms decision target. Initial
 native solves may take longer than warm solves. Increasing timeouts does not

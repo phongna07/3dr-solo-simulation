@@ -9,7 +9,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
 from solo_bringup.launching import critical, observed
-from solo_mpc.settings import load_settings
+from solo_mpc.settings import load_settings, scenario_fleet
 from solo_mpc.scene_view import OVERHEAD_FPS
 from solo_mpc.world import bridge_config
 
@@ -22,11 +22,7 @@ def start(context):
         )
     fleet = load_config(get("fleet"))
     scenario, settings, cfg = load_settings(get("scenario"), get("settings"))
-    if len(fleet["uavs"]) != len(scenario["starts"]):
-        raise ValueError("Fleet/scenario UAV count mismatch")
-    for uav, point in zip(fleet["uavs"], scenario["starts"]):
-        uav["spawn"] = [point[0], point[1], 0.195, 0, 0, 90]
-    fleet["world_name"] = "mpc_small50"
+    fleet = scenario_fleet(fleet, scenario)
     # Reuse all existing SITL, readiness, critical-process and parameter behavior.
     import importlib.util
 
@@ -44,7 +40,7 @@ def start(context):
     actions = module.start(context)
     progress = context.solo_startup_progress
     progress.stage('Preparing MPC nodes and sensor bridges')
-    run = Path("/workspace/runs/latest").resolve()
+    run = progress.path.parent
     # Save the actual resolved experiment input alongside the existing manifests.
     import json
     import shutil

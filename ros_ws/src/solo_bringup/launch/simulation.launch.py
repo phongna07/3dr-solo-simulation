@@ -19,13 +19,9 @@ def start(context):
     config = load_config(get('fleet'))
     profile = get('profile')
     if profile == 'mpc':
-        from solo_mpc.settings import load_settings
+        from solo_mpc.settings import load_settings, scenario_fleet
         scenario, _, _ = load_settings(get('scenario'), get('settings'))
-        if len(config['uavs']) != len(scenario['starts']):
-            raise ValueError('Fleet/scenario UAV count mismatch')
-        config['world_name'] = 'mpc_small50'
-        for uav, point in zip(config['uavs'], scenario['starts']):
-            uav['spawn'] = [point[0], point[1], 0.195, 0, 0, 90]
+        config = scenario_fleet(config, scenario)
     # All ports live inside one container; no host port mapping is needed.
     for uav in config['uavs']:
         for kind, port in ((socket.SOCK_STREAM, uav['tcp_port']),
