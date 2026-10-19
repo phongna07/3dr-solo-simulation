@@ -6,7 +6,9 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-from solo_mpc.scene_view import FOLLOW_OFFSET, TARGET
+import yaml
+
+from solo_mpc.scene_view import FOLLOW_OFFSET, TARGET, follow_offset
 
 
 def has_target(world_path):
@@ -16,7 +18,7 @@ def has_target(world_path):
     return world is not None and world.find(f"model[@name='{TARGET}']") is not None
 
 
-def follow_target(gui, timeout=60.0):
+def follow_target(gui, timeout=60.0, offset=FOLLOW_OFFSET):
     from gz.msgs10.cameratrack_pb2 import CameraTrack
     from gz.transport13 import Node
 
@@ -35,7 +37,7 @@ def follow_target(gui, timeout=60.0):
     request = CameraTrack()
     request.track_mode = CameraTrack.FOLLOW
     request.follow_target.name = TARGET
-    request.follow_offset.x, request.follow_offset.y, request.follow_offset.z = FOLLOW_OFFSET
+    request.follow_offset.x, request.follow_offset.y, request.follow_offset.z = offset
     request.follow_pgain = 0.08
     request.track_pgain = 0.08
     deadline = time.monotonic() + timeout
@@ -44,7 +46,7 @@ def follow_target(gui, timeout=60.0):
         # Require several status updates so a target still loading into the
         # render scene does not count as a successfully established follow.
         if confirmed >= 3:
-            print("Gazebo view follows the pink target from 24 m above.", flush=True)
+            print(f"Gazebo view follows the pink target from {offset[2]:g} m above.", flush=True)
             return True
         if publisher.has_connections() and time.monotonic() >= next_publish:
             publisher.publish(request)
@@ -61,7 +63,9 @@ def main():
     gui = subprocess.Popen(["gz", "sim", "-g", "-v", "3"])
     try:
         if track:
-            follow_target(gui)
+            settings_path = world_path.parent / 'controller.yaml'
+            settings = yaml.safe_load(settings_path.read_text()) if settings_path.is_file() else {}
+            follow_target(gui, offset=follow_offset(settings))
         return gui.wait()
     except KeyboardInterrupt:
         # The GUI shares the foreground process group and also receives Ctrl+C.

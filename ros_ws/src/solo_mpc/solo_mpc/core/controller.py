@@ -62,6 +62,7 @@ class TeamController:
                 unknown_policy=cfg["UNKNOWN_POLICY"],
                 unknown_cost=cfg["UNKNOWN_COST"],
                 goal_clamp_margin=cfg["GOAL_CLAMP_MARGIN"],
+                start_snap_radius=cfg.get("START_SNAP_RADIUS", 10.0),
                 search=cfg["LOCAL_SEARCH"],
             )
             planner.gmap = SensorGrid(
@@ -317,7 +318,8 @@ class TeamController:
     def step(self, states, scans, stamp, seers):
         cfg = self.cfg
         target = self.track.trajectory(
-            stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"], cfg["VMAX"]
+            stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"],
+            cfg.get("TARGET_MAX_SPEED", cfg["VMAX"]),
         )
         self.integrate_scans(scans)
         slots = self._slots(states, seers)

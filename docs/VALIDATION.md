@@ -7,6 +7,27 @@ machine or code revision. Evidence under `runs/` and `artifacts/` is Git-ignored
 and may be absent from a fresh clone. Test counts describe the suite at each
 recorded checkpoint.
 
+## Five-UAV large-map profile — 19 October 2026
+
+The `big1000_5uav.yaml` profile was prepared with offline checks only. No Gazebo
+server, SITL FCU, or flight mission was started for this change. Tests construct
+the five-vehicle world and launch actions, check isolated ports and sensor
+topics, exercise target leg timing and tilted LiDAR geometry, and run five real
+MPC worker processes against dispersed and compact measured-state snapshots.
+The compact snapshot activates all four neighbors per solver; shutdown joins
+every worker. Numerical tests are not flight or timing benchmarks.
+
+The host regression run passed 247 tests, with four Gazebo/model-dependent tests
+skipped. Three existing cross-process mission service tests timed out on this
+host during service discovery/replies and were excluded from that passing run:
+`test_start_cli_exit_keeps_supervision_and_automatic_landing` (two cases) and
+`test_cli_cancellation_interrupts_remote_takeoff_with_paused_sim_clock`.
+The ROS mission interface was built in a temporary overlay for these checks;
+native numerical libraries used the image's single-thread settings.
+Full simulation, tracking quality, and 10 Hz performance of this five-UAV
+profile remain to be checked on the destination machine. See the
+[configuration and launch instructions](CONFIGURATION.md#1000-m-field-with-five-uavs).
+
 ## Scope and remaining work
 
 Simulation has demonstrated a complete camera-driven route, short missions with

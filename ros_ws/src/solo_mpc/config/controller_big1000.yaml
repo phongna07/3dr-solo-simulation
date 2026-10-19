@@ -1,0 +1,57 @@
+# Full settings profile for big1000_5uav.yaml; no small-field parameter overrides.
+# Takeoff is from the ground. Horizontal MPC remains planar at 30 m altitude.
+flight_altitude: 30.0
+obstacle_height: 60.0      # includes the tilted 50 m LiDAR envelope at 5 m/s²
+target_height: 0.05
+camera_width: 160
+camera_height: 160
+camera_rate: 8.0
+camera_hfov: 1.389475     # ~79.61 degrees: 50 m square footprint at 30 m
+lidar_rate: 10.0
+lidar_samples: 360
+lidar_noise_stddev: 0.016666667  # 3 sigma ~ LIDAR_NOISE = 0.05 m
+control_period: 0.1
+controller_execution: parallel
+controller_worker_timeout_wall: 2.0
+controller_worker_startup_timeout_wall: 120.0
+publish_rate: 20.0
+state_timeout_sim: 0.5
+sensor_timeout_sim: 0.5
+target_timeout_sim: 1.5
+target_search_timeout_sim: 8.0
+planner_failure_timeout_sim: 3.0
+arrival_fleet_radius: 65.0  # four satellite slots are 43.75 m from the leader
+arrival_timeout_sim: 60.0
+command_timeout_sim: 0.4
+command_timeout_wall: 3.0
+pose_timeout_wall: 3.0
+fcu_timeout_sim: 2.5
+fcu_timeout_wall: 60.0
+target_mode: camera
+altitude_kp: 1.0
+vertical_speed_limit: 2.0
+calibration_samples: 10
+world_from_local_yaw: 0.0
+frame_history_tolerance: 0.3
+scan_height_tolerance: 25.0  # ~23 m ray-height change at atan(5 / 9.81) lean
+marker_min_pixels: 4
+sitl_params:             # ArduCopter 4.5.3 GUIDED limits, in cm/s and cm/s²
+  WPNAV_SPEED: 1000
+  WPNAV_ACCEL: 500
+params:
+  ACCEL_TAU: 0.2
+  CONTINGENCY: true
+  BACKUP_HORIZON: 25
+  W_backup: 0.1
+  TERMINAL_STOP: false
+  CORRIDOR_MAX_FACES: 16
+  SLOT_MIN_RATIO: 0.45
+  SLOT_EXPAND_SPEED: 5.0
+  IPOPT_OPTIONS:
+    ipopt.max_iter: 500
+    ipopt.max_cpu_time: 0.5
+    ipopt.print_level: 0
+    ipopt.tol: 0.0001
+    ipopt.acceptable_tol: 0.01
+    ipopt.acceptable_iter: 10
+    print_time: 0

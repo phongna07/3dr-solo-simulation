@@ -10,7 +10,7 @@ from solo_bringup.world import generate_world
 
 from .settings import load_settings
 from .scene_view import (
-    FOLLOW_OFFSET, OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH,
+    OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
 )
 
 
@@ -79,7 +79,7 @@ def sensors(model, name, settings, cfg):
     element(vertical, "min_angle", 0)
     element(vertical, "max_angle", 0)
     ran = element(ray, "range")
-    element(ran, "min", 0.15)
+    element(ran, "min", cfg.get("LIDAR_RANGE_MIN", 0.15))
     element(ran, "max", cfg["SENSING_RADIUS"])
     element(ran, "resolution", 0.01)
     noise = element(ray, "noise", type="gaussian")
@@ -118,12 +118,12 @@ def sensors(model, name, settings, cfg):
         element(publisher, tag, value)
 
 
-def overhead_camera(target):
+def overhead_camera(target, settings):
     # Attach to the target's existing link: set_pose then moves both together,
     # without a second tracking process, collision geometry or physical mass.
     camera = element(target.find("link[@name='body']"), "sensor",
                      name="overhead_camera", type="camera")
-    x, y, z = FOLLOW_OFFSET
+    x, y, z = follow_offset(settings)
     pitch = math.atan2(z, math.hypot(x, y))
     yaw = math.atan2(-y, -x)
     element(camera, "pose", f"{x} {y} {z} 0 {pitch} {yaw}")
@@ -139,7 +139,7 @@ def overhead_camera(target):
     element(image, "format", "R8G8B8")
     clip = element(optics, "clip")
     element(clip, "near", 0.1)
-    element(clip, "far", 200)
+    element(clip, "far", max(200, 2 * math.sqrt(x * x + y * y + z * z)))
 
 
 def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
@@ -162,7 +162,11 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         name="gz::sim::systems::Sensors",
     )
     element(render, "render_engine", "ogre2")
-    solid(world, "field_ground", [25, 5, 0], "plane", [150, 150], "0.6 0.6 0.6 1")
+    xmin, ymin, xmax, ymax = cfg["WORLD_BOUNDS"]
+    padding = 2 * cfg["SENSING_RADIUS"]
+    solid(world, "field_ground", [(xmin + xmax) / 2, (ymin + ymax) / 2, 0],
+          "plane", [max(150, xmax - xmin + padding), max(150, ymax - ymin + padding)],
+          "0.6 0.6 0.6 1")
     height = settings["obstacle_height"]
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
         solid(
@@ -188,11 +192,11 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         "tracking_target",
         [first[0], first[1], settings["target_height"]],
         "box",
-        [0.3, 0.3, 0.04],
+        [2 * cfg.get("TAR_RADIUS", 0.15), 2 * cfg.get("TAR_RADIUS", 0.15), 0.04],
         "1 0 1 1",
     )
     if record_overhead:
-        overhead_camera(target)
+        overhead_camera(target, settings)
     for uav in fleet["uavs"]:
         model = world.find(f"model[@name='{uav['name']}']")
         sensors(model, uav["name"], settings, cfg)

@@ -2,10 +2,13 @@
 
 import math
 from pathlib import Path
+import re
 import warnings
 
 import numpy as np
 import yaml
+
+from .core.target_motion import target_route
 
 DEFAULTS = dict(
     HORIZON_LENGTH=10,
@@ -24,6 +27,7 @@ DEFAULTS = dict(
     UNKNOWN_POLICY="optimistic",
     UNKNOWN_COST=1.5,
     GOAL_CLAMP_MARGIN=0.6,
+    START_SNAP_RADIUS=10.0,
     TARGET_REPLAN_THRESHOLD=0.6,
     MAX_COMMIT_AGE=20,
     VIEWING_RADIUS=1.5,
@@ -90,6 +94,11 @@ def load_settings(scenario_path, settings_path):
         )
     )
     cfg["INFLATE_RADIUS"] = cfg["ROBOT_RADIUS"] + cfg["INFLATE_MARGIN"]
+    target_route(scenario, cfg)  # Reject malformed routes before any process starts.
+    cfg["TARGET_MAX_SPEED"] = max(
+        [float(cfg["VMAX"]), float(scenario["tar_max_speed"]),
+         *scenario["target"].get("speeds", [])]
+    )
     cfg["STANDOFF_DISTANCE"] = max(
         0.2, cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"]
     )
@@ -115,6 +124,16 @@ def load_settings(scenario_path, settings_path):
 
 
 def validate(scenario, settings, cfg):
+    starts = np.asarray(scenario["starts"], float)
+    if (
+        starts.ndim != 2
+        or len(starts) == 0
+        or starts.shape[1] != 3
+        or not np.isfinite(starts).all()
+    ):
+        raise ValueError("starts must be finite XYZ coordinates")
+    if not np.allclose(starts[:, 2], settings["flight_altitude"], rtol=0, atol=1e-6):
+        raise ValueError("starts altitude must match flight_altitude; select matching controller settings")
     for key in [
         "TIMESTEP",
         "VMAX",
@@ -124,6 +143,7 @@ def validate(scenario, settings, cfg):
         "SENSING_RADIUS",
         "CORRIDOR_BOX",
         "CORRIDOR_MARGIN",
+        "START_SNAP_RADIUS",
         "BACKUP_POSITION_TOLERANCE",
         "BACKUP_VELOCITY_TOLERANCE",
         "BACKUP_ACCEL_TOLERANCE",
@@ -172,14 +192,15 @@ def validate(scenario, settings, cfg):
         )
     if not 0 < settings["camera_hfov"] < math.pi:
         raise ValueError("camera_hfov must be in radians between zero and pi")
-    starts = np.asarray(scenario["starts"], float)
-    if (
-        starts.ndim != 2
-        or len(starts) == 0
-        or starts.shape[1] != 3
-        or not np.isfinite(starts).all()
-    ):
-        raise ValueError("starts must be finite XYZ coordinates")
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", scenario.get("world_name", "mpc_small50")):
+        raise ValueError("Invalid scenario world_name")
+    for key, default in (("LIDAR_RANGE_MIN", 0.15), ("TAR_RADIUS", 0.15),
+                         ("KF_OBS_NOISE_STD", math.sqrt(0.03))):
+        value = cfg.get(key, default)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{key} must be finite and positive")
+    if cfg.get("LIDAR_RANGE_MIN", 0.15) >= cfg["SENSING_RADIUS"]:
+        raise ValueError("LIDAR_RANGE_MIN must be less than SENSING_RADIUS")
     for i, a in enumerate(starts):
         if any(
             np.linalg.norm(a[:2] - b[:2]) < cfg["UAV_SAFE_DISTANCE"]

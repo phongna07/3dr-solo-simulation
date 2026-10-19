@@ -9,7 +9,7 @@ from launch_ros.actions import Node
 
 from solo_bringup.configuration import load_config
 from solo_bringup.launching import critical, mavros, observed
-from solo_bringup.runtime import create_run
+from solo_bringup.runtime import create_run, sitl_parameter_file
 from solo_bringup.startup import StartupProgress
 from solo_bringup.world import generate_world
 
@@ -20,10 +20,10 @@ def start(context):
     profile = get('profile')
     if profile == 'mpc':
         from solo_mpc.settings import load_settings
-        scenario, _, _ = load_settings(get('scenario'), get('settings'))
+        scenario, settings, _ = load_settings(get('scenario'), get('settings'))
         if len(config['uavs']) != len(scenario['starts']):
             raise ValueError('Fleet/scenario UAV count mismatch')
-        config['world_name'] = 'mpc_small50'
+        config['world_name'] = scenario.get('world_name', 'mpc_small50')
         for uav, point in zip(config['uavs'], scenario['starts']):
             uav['spawn'] = [point[0], point[1], 0.195, 0, 0, 90]
     # All ports live inside one container; no host port mapping is needed.
@@ -36,6 +36,7 @@ def start(context):
                 except OSError as error:
                     raise RuntimeError(f"{uav['name']}: port {port} occupied") from error
     run = create_run(config, 'simulation', profile, get('run_id'), get('resume') == 'true')
+    context.solo_run_dir = run
     progress = StartupProgress(run)
     # The MPC launch extends this same inventory before any process starts.
     context.solo_startup_progress = progress
@@ -52,6 +53,8 @@ def start(context):
     for path in defaults.split(','):
         if not Path(path).is_file():
             raise RuntimeError(f'Missing defaults: {path}')
+    if profile == 'mpc' and settings.get('sitl_params'):
+        defaults += ',' + sitl_parameter_file(settings['sitl_params'], run / 'sitl-overrides.parm')
     gz_command = ['gz', 'sim', '-s', '-r', '-v', '3', str(world)]
     if profile in ('reference', 'mpc'):
         gz_command.insert(2, '--headless-rendering')

@@ -146,3 +146,35 @@ def test_single_vehicle_worker_handles_empty_neighbor_set_and_disconnect(cfg):
         result = parallel.step(states, scans, .1, {"solo"})["solo"]
         assert not result["ok"]
         assert "worker_disconnected" in result["reason"]
+
+
+def test_big1000_five_workers_solve_with_four_neighbors_and_shut_down():
+    scenario, settings, config = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
+                                              PKG / 'config/controller_big1000.yaml')
+    # Exercise the real large-map solver dimensions, without simulating a flight.
+    config['IPOPT_OPTIONS'] = {**config['IPOPT_OPTIONS'], 'ipopt.max_cpu_time': 2.0}
+    names = [f'uav{i}' for i in range(1, 6)]
+    with ParallelTeamController(names, config, timeout=10., startup_timeout=120.) as team:
+        assert len({w.pid for w in team.workers.values()}) == 5
+        assert team.solvers == {}
+        # Independent measured snapshots: original dispersed starts, then a
+        # compact formation where every solver's four neighbor flags are active.
+        compact = [[95, 100, 30], [105, 100, 30], [100, 95, 30],
+                   [100, 100, 30], [100, 105, 30]]
+        for stamp, positions in [(0., scenario['starts']), (.1, compact)]:
+            states = {n: VehicleState(np.asarray(p, float), np.zeros(3), np.zeros(3),
+                                      np.array([0., 0., 0., 1.]), stamp)
+                      for n, p in zip(names, positions)}
+            scans = {n: project_scan(np.full(360, np.inf), -np.pi, 2 * np.pi / 360,
+                                     .5, 50., s.position, s.quaternion, stamp)
+                     for n, s in states.items()}
+            team.track.observe(scenario['target']['waypoints'][0], stamp)
+            results = team.step(states, scans, stamp, {'uav4'})
+            assert team.leader == 'uav4'
+            assert len(team.assignment) == len(set(team.assignment.values())) == 4
+            assert set(results) == set(names)
+            assert all(r['ok'] for r in results.values()), {n: r['reason'] for n, r in results.items()}
+            assert all(r['prediction'].shape == (21, 6) for r in results.values())
+            assert all(team.planners[n].gmap.blocked.shape == (501, 501) for n in names)
+            assert all(w.error is None for w in team.workers.values())
+    assert all(not w.process.is_alive() for w in team.workers.values())

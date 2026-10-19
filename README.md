@@ -8,6 +8,9 @@ follow a target along a winding route across the field. Each vehicle uses
 MAVROS flight telemetry, horizontal LiDAR, and a downward camera that detects a
 magenta target marker. Planning and control operate in the horizontal plane.
 
+An additional [1000 × 1000 m, five-UAV profile](docs/CONFIGURATION.md#1000-m-field-with-five-uavs)
+uses the supplied seed-7 map and a 30 m flight altitude.
+
 Docker provides ROS 2 Jazzy, ArduCopter 4.5.3 software-in-the-loop (SITL),
 MAVROS 2.15.1, and Gazebo Harmonic. The host needs Docker Compose and Python 3;
 it does not need a ROS or Gazebo installation.

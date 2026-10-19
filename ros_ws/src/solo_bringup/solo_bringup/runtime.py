@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -9,6 +10,20 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import yaml
+
+
+def sitl_parameter_file(parameters, destination):
+    """Shared read-only defaults; each SITL still owns its own EEPROM directory."""
+    if not isinstance(parameters, dict):
+        raise ValueError('sitl_params must be a mapping of FCU parameter names to numbers')
+    lines = []
+    for name, value in parameters.items():
+        if (not isinstance(name, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,15}', name)
+                or type(value) not in (int, float) or not math.isfinite(value)):
+            raise ValueError(f'Invalid SITL parameter: {name}')
+        lines.append(f'{name} {value}\n')
+    Path(destination).write_text(''.join(lines))
+    return str(destination)
 
 
 def create_run(config, mode, profile='', run_id='', resume=False):

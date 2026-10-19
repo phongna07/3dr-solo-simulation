@@ -125,3 +125,154 @@ def test_mission_world_rejects_mismatched_fleet(tmp_path, upstream):
         generate_mpc_world(fleet, upstream, tmp_path / "world.sdf",
                            pkg / "scenarios/small50_3uav.yaml",
                            pkg / "config/controller.yaml")
+
+
+@pytest.mark.parametrize('record_overhead', [False, True])
+def test_big1000_world_covers_field_and_scales_five_vehicle_sensors(tmp_path, upstream, record_overhead):
+    import numpy as np
+    from solo_mpc.settings import load_settings
+    from solo_mpc.world import bridge_config, generate_mpc_world
+
+    pkg = ROOT / 'ros_ws/src/solo_mpc'
+    scenario_path = pkg / 'scenarios/big1000_5uav.yaml'
+    settings_path = pkg / 'config/controller_big1000.yaml'
+    scenario, settings, cfg = load_settings(scenario_path, settings_path)
+    fleet = load_config(ROOT / 'config/fleet_5uav.yaml')
+    assert len(fleet['uavs']) == len(scenario['starts']) == 5
+    assert len(cfg['GRID_CELLS']) == 4
+    assert (cfg['VMAX'], cfg['UMAX'], cfg['SENSING_RADIUS']) == (10, 5, 50)
+    assert cfg['TARGET_MAX_SPEED'] == 13
+    assert np.allclose(np.asarray(scenario['starts'])[:, 2], settings['flight_altitude'])
+    assert settings['obstacle_height'] > settings['flight_altitude'] + cfg['ROBOT_RADIUS']
+    footprint = settings['flight_altitude'] * np.tan(settings['camera_hfov'] / 2)
+    assert abs(footprint - scenario['viewing_radius']) < 0.1
+    assert max(abs(np.asarray(scenario['starts'][3][:2]) - scenario['target']['waypoints'][0])) < footprint
+
+    output, resolved = generate_mpc_world(fleet, upstream, tmp_path / 'world.sdf',
+                                         scenario_path, settings_path, record_overhead=record_overhead)
+    world = ET.parse(output).getroot().find('world')
+    assert world.get('name') == 'mpc_big1000'
+    ground = world.find("model[@name='field_ground']")
+    assert list(map(float, ground.findtext('pose').split()))[:2] == [500, 500]
+    assert all(v >= 1000 for v in map(float, ground.findtext('.//plane/size').split()))
+    assert len([m for m in world.findall('model') if m.get('name').startswith('obstacle_')]) == 108
+    assert world.findtext("model[@name='tracking_target']//box/size") == '2.0 2.0 0.04'
+    topics, ports = [], []
+    for uav, start in zip(resolved['uavs'], scenario['starts']):
+        model = world.find(f"model[@name='{uav['name']}']")
+        assert uav['spawn'][:3] == [*start[:2], 0.195]
+        ports.append(int(model.findtext("plugin[@name='ArduPilotPlugin']/fdm_port_in")))
+        assert model.findtext('.//ray/range/max') == '50'
+        assert model.findtext('.//ray/range/min') == '0.5'
+        topics.extend(s.findtext('topic') for s in model.iter('sensor'))
+    assert ports == [9002, 9012, 9022, 9032, 9042]
+    assert len(set(topics)) == len(topics) == 10
+    if record_overhead:
+        camera = world.find("model[@name='tracking_target']//sensor")
+        offset = np.array(list(map(float, camera.findtext('pose').split()))[:3])
+        assert offset[2] > settings['obstacle_height']
+        assert float(camera.findtext('camera/clip/far')) > np.linalg.norm(offset)
+    bridge = tmp_path / 'bridge.yaml'
+    bridge_config([u['name'] for u in resolved['uavs']], 'mpc_big1000', bridge)
+    rows = yaml.safe_load(bridge.read_text())
+    assert len(rows) == 21
+    assert sum(r['ros_topic_name'] == '/clock' for r in rows) == 1
+    assert rows[0]['gz_topic_name'] == '/world/mpc_big1000/clock'
+
+
+def test_big1000_rejects_small_field_controller_settings():
+    from solo_mpc.settings import load_settings
+
+    pkg = ROOT / 'ros_ws/src/solo_mpc'
+    with pytest.raises(ValueError, match='starts altitude must match flight_altitude'):
+        load_settings(pkg / 'scenarios/big1000_5uav.yaml', pkg / 'config/controller.yaml')
+
+
+def test_big1000_lidar_stays_usable_at_commanded_acceleration():
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+    from solo_mpc.core.sensors import project_scan
+    from solo_mpc.settings import load_settings
+
+    pkg = ROOT / 'ros_ws/src/solo_mpc'
+    _, settings, cfg = load_settings(pkg / 'scenarios/big1000_5uav.yaml',
+                                     pkg / 'config/controller_big1000.yaml')
+    lean = np.arctan(cfg['UMAX'] / 9.81)
+    position = np.array([100., 100., settings['flight_altitude'] + 0.08])
+    scan = project_scan(np.full(settings['lidar_samples'], np.inf), -np.pi,
+                        cfg['LIDAR_ANGULAR_RES'], cfg['LIDAR_RANGE_MIN'], cfg['SENSING_RADIUS'],
+                        position, Rotation.from_euler('y', lean).as_quat(), 0.,
+                        height_tolerance=settings['scan_height_tolerance'])
+    assert len(scan.endpoints) == settings['lidar_samples']
+    assert np.min(scan.endpoints[:, 2]) > 0
+    assert np.max(scan.endpoints[:, 2]) < settings['obstacle_height']
+
+
+@pytest.mark.parametrize('record', [False, True])
+def test_five_vehicle_launch_builds_shared_and_per_vehicle_processes_without_starting(
+    tmp_path, upstream, monkeypatch, record,
+):
+    import importlib.util
+    import json
+    from unittest.mock import MagicMock
+
+    pytest.importorskip('launch')
+    import ament_index_python.packages
+    from launch import LaunchContext
+    from launch.actions import ExecuteProcess
+    from launch_ros.actions import Node
+    import solo_bringup.launching
+    import solo_mpc.world
+
+    # Construct launch actions only. No LaunchService, Gazebo, SITL, or MAVROS runs.
+    monkeypatch.setenv('SOLO_DEV', '0')
+    monkeypatch.setenv('RUNS_ROOT', str(tmp_path / 'runs'))
+    monkeypatch.setattr(ament_index_python.packages, 'get_package_share_directory',
+                        lambda name: str(ROOT / 'ros_ws/src' / name))
+    monkeypatch.setattr(solo_bringup.launching, 'mavros',
+                        lambda uav, run, **kw: ExecuteProcess(cmd=['test-mavros', uav['name']]))
+    generate = solo_mpc.world.generate_mpc_world
+    monkeypatch.setattr(solo_mpc.world, 'generate_mpc_world',
+                        lambda fleet, source, *a, **kw: generate(fleet, upstream, *a, **kw))
+    is_file = Path.is_file
+    monkeypatch.setattr(Path, 'is_file', lambda p: (
+        str(p).startswith('/opt/ardupilot/Tools/autotest/default_params/') or is_file(p)))
+    # Port availability is independent of the action topology tested here.
+    import socket
+    monkeypatch.setattr(socket, 'socket', MagicMock())
+    pkg = ROOT / 'ros_ws/src/solo_mpc'
+    spec = importlib.util.spec_from_file_location('mpc_launch_test', pkg / 'launch/mpc.launch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    context = LaunchContext()
+    context.launch_configurations.update({
+        'fleet': str(ROOT / 'config/fleet_5uav.yaml'),
+        'scenario': str(pkg / 'scenarios/big1000_5uav.yaml'),
+        'settings': str(pkg / 'config/controller_big1000.yaml'),
+        'resume': 'false', 'run_id': 'five-uav-offline', 'readiness_timeout': '600',
+        'record_cameras': str(record).lower(), 'record_overhead': str(record).lower(), 'target_mode': '',
+    })
+    actions = module.start(context)
+    run = context.solo_run_dir
+    inventory = json.loads((run / 'startup.json').read_text())['processes']
+    shared = {'gazebo-server', 'readiness-monitor', 'sensor-bridge', 'frames',
+              'target', 'controller', 'setpoints', 'mission-supervisor'}
+    if record:
+        shared |= {'camera-recorder', 'overhead-recorder'}
+    individual = {f'{kind}-uav{i}' for kind in ('sitl', 'mavros', 'camera-detector')
+                  for i in range(1, 6)}
+    assert set(inventory) == shared | individual
+    assert all(item['state'] == 'pending' for item in inventory.values())
+    processes = [a for a in actions if isinstance(a, ExecuteProcess)]
+    assert len(processes) == 23 + 2 * int(record)
+    from launch.utilities import perform_substitutions
+    commands = [[perform_substitutions(context, part) for part in a.cmd]
+                for a in processes if not isinstance(a, Node)]
+    sitl_commands = [c for c in commands if c[0].endswith('/arducopter')]
+    assert len(sitl_commands) == 5
+    assert {c[c.index('-I') + 1] for c in sitl_commands} == {'0', '1', '2', '3', '4'}
+    assert all(c[c.index('--defaults') + 1].endswith(','+str(run / 'sitl-overrides.parm'))
+               for c in sitl_commands)
+    assert len(list((run / 'sitl').iterdir())) == 5
+    assert (run / 'sitl-overrides.parm').read_text() == 'WPNAV_SPEED 1000\nWPNAV_ACCEL 500\n'
+    assert yaml.safe_load((run / 'fleet.yaml').read_text())['world_name'] == 'mpc_big1000'

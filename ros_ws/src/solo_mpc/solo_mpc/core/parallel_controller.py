@@ -177,7 +177,8 @@ class ParallelTeamController(TeamController):
         self.cycle += 1
         self.vehicle_metrics = {}
         cfg = self.cfg
-        target = self.track.trajectory(stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"], cfg["VMAX"])
+        target = self.track.trajectory(stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"],
+                                       cfg.get("TARGET_MAX_SPEED", cfg["VMAX"]))
         # Capture predictions before dispatch; no within-cycle solve feeds another.
         predictions = self.neighbor_predictions(states, stamp)
         mapped = self._dispatch("map", {n: {"scan": scans[n]} for n in self.names})

@@ -26,7 +26,7 @@ def start(context):
         raise ValueError("Fleet/scenario UAV count mismatch")
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
         uav["spawn"] = [point[0], point[1], 0.195, 0, 0, 90]
-    fleet["world_name"] = "mpc_small50"
+    fleet["world_name"] = scenario.get("world_name", "mpc_small50")
     # Reuse all existing SITL, readiness, critical-process and parameter behavior.
     import importlib.util
 
@@ -44,7 +44,7 @@ def start(context):
     actions = module.start(context)
     progress = context.solo_startup_progress
     progress.stage('Preparing MPC nodes and sensor bridges')
-    run = Path("/workspace/runs/latest").resolve()
+    run = Path(context.solo_run_dir)
     # Save the actual resolved experiment input alongside the existing manifests.
     import json
     import shutil

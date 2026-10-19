@@ -94,12 +94,97 @@ Append `[0.6, 1.8, 3]` to the default scenario's `starts`, and set
 Count/slot mismatches fail before launch; validate each new fleet size in flight.
 Instance `i` uses MAVLink TCP `5760 + 10*i` and JSON UDP `9002 + 10*i` internally.
 
+## 1000 m field with five UAVs
+
+The supplied large-map experiment is available as
+[big1000_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml), paired with
+[fleet_5uav.yaml](../config/fleet_5uav.yaml) and
+[controller_big1000.yaml](../ros_ws/src/solo_mpc/config/controller_big1000.yaml).
+Select all three files together: the default controller overrides speeds,
+sensor range, inflation, and altitude for the small field.
+Scenario start altitudes must match the controller's fixed `flight_altitude`;
+mixing the large scenario with the small-field controller fails validation.
+
+On the simulation machine, build the updated image, then launch when ready:
+
+```bash
+./scripts/dev build sim
+./scripts/dev mpc \
+  --fleet /workspace/config/fleet_5uav.yaml \
+  --scenario /workspace/ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml \
+  --settings /workspace/ros_ws/src/solo_mpc/config/controller_big1000.yaml
+```
+
+The launch remains disarmed. Start a mission separately with
+`./scripts/dev mission run --seconds 20` for a short first check, or
+`./scripts/dev mission run` for the full route. Mission duration is wall time;
+the unpaused route takes approximately 706 simulation seconds.
+
+The scenario preserves all five starting coordinates, 33 target waypoints,
+32 leg speeds, 60 rectangles, and 48 circles from the frozen seed-7 map.
+Gazebo uses world `mpc_big1000`, a ground surface covering the field, 60 m tall
+obstacles, and a 2 m square target marker. Vehicles spawn on the ground and
+take off to 30 m. Planning remains horizontal; altitude is controlled separately.
+The 79.61° square camera sees approximately 50 × 50 m at flight height,
+and UAV 4 can initially observe the target. LiDAR uses 360 rays over 50 m.
+The 25 m scan-height tolerance accommodates the approximately 27° lean needed
+for 5 m/s² horizontal acceleration; the tall extrusions cover these rays.
+The larger marker remains visible at the existing 160 × 160 camera resolution.
+The optional GUI follow view and overhead recorder scale their camera height
+with the flight altitude, so the elevated view stays above vehicles and obstacles.
+
+Four cardinal follower slots support the five-vehicle formation. Nominal speed
+and acceleration limits are 10 m/s and 5 m/s². `sitl_params` applies matching
+ArduCopter `WPNAV_SPEED: 1000` and `WPNAV_ACCEL: 500` limits through a shared
+`sitl-overrides.parm` defaults file; values use centimetres. Every FCU retains
+its own working directory, EEPROM, instance, system ID, and ports. The five
+TCP/JSON port pairs are 5760/9002 through 5800/9042, in increments of ten.
+
+The supplied 2D settings are adapted to this port as follows:
+
+- `target.speeds` controls each sampled spline leg, including the 13 m/s sprints;
+  the estimator's prediction speed limit includes those sprints. The base
+  `tar_max_speed: 5` still supplies the default for routes without a schedule.
+- `GRID_CELLS` adds four unique follower offsets. `UAV_SAFE_DISTANCE` is 2 m and
+  `SENSING_NEIGHBOR` is 55 m, covering both 25 m backup reaches plus separation.
+- `INFLATE_MARGIN: 1` plus `ROBOT_RADIUS: 0.5` gives 1.5 m inflation. The actual
+  corridor margin also accounts for LiDAR sampling and grid quantization.
+- Local JPS is selected with `LOCAL_SEARCH`; this port always uses local
+  planning. The 2D-only `PLANNER`, `GOAL_SNAP_RADIUS`, `LIDAR_MARCH_STEP`,
+  `PATH_DEVIATION_THRESHOLD`, `SAFETY_MARGIN`, and `TARGET_ARRIVAL_TOL` keys are
+  omitted. Local goal selection, measured scan integration, path-clearance/
+  age checks, hard corridor margins, and mission arrival settings supply the
+  corresponding behavior in this project. There is no runtime random generation.
+
+Process ownership scales with the configured fleet:
+
+| Ownership | Processes for this profile |
+|---|---|
+| Shared simulation | One Gazebo server, one sensor/clock bridge, one readiness monitor |
+| Per UAV | Five SITL FCUs, five MAVROS nodes, five camera detector nodes |
+| Shared coordination | One frame adapter, one moving target, one MPC coordinator, one independent setpoint publisher, one mission supervisor |
+| Per UAV computation | Five persistent spawned workers, each owning its map, local planner, corridor, solver, and warm start |
+
+The coordinator exchanges frozen predictions and assigns formation slots for
+all five vehicles. Worker startup, failure deadlines, and shutdown remain
+bounded; the setpoint publisher can expire commands independently, and the
+supervisor can land the fleet. Optional camera and overhead recorders each add
+one shared recorder process. This is multiprocessing on one simulation machine.
+
+Configuration, generated world/launch actions, target timing, and five-worker
+numerical checks can run offline. Flight behavior and 10 Hz performance still
+need validation on the destination machine; no simulation was run to prepare
+this profile.
+
 ## Scenario and controller parameters
 
 Coordinates are metres in a shared world ENU frame: east, north, up. `xlim` and
 `ylim` bound the field. Rectangles are `[left, bottom, width, height]`; circles
 are `[center_x, center_y, radius]`. Gazebo extrudes them into boxes/cylinders.
-Target `waypoints` define a smooth route; `tar_max_speed` controls target speed.
+Target `waypoints` define a smooth route; `tar_max_speed` supplies constant target
+speed unless `target.speeds` provides one positive speed per waypoint leg.
+`TAR_SMOOTH_ENABLE: false` selects a polyline instead. An optional scenario
+`world_name` selects the Gazebo world/service namespace (default `mpc_small50`).
 
 Algorithm parameters resolve in this order:
 
