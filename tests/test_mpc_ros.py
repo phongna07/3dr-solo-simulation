@@ -317,6 +317,8 @@ def test_callbacks_continue_with_frozen_cycle_and_obsolete_results_are_rejected(
         node.tick()
         assert not references
         assert statuses[-1]['reason'] == 'obsolete_cycle'
+        assert statuses[-1]['target_input_fresh'] is True
+        assert statuses[-1]['target_observation_age'] == pytest.approx(.5)
     finally:
         release.set()
         node.destroy_node()
@@ -379,7 +381,8 @@ def test_controller_accepts_only_the_selected_target_source(tmp_path, monkeypatc
         rclpy.shutdown()
 
 
-def test_external_target_drives_cycles_outside_camera_view_and_expires(tmp_path, monkeypatch):
+@pytest.mark.parametrize('at_boundary', [False, True])
+def test_external_target_cycles_use_upstream_visibility_and_expire(tmp_path, monkeypatch, at_boundary):
     import json
     import numpy as np
     from geometry_msgs.msg import TwistStamped
@@ -407,14 +410,15 @@ def test_external_target_drives_cycles_outside_camera_view_and_expires(tmp_path,
                          range_min=.1, range_max=3., ranges=[float('inf')] * 360)
         scan.header.stamp = stamp
         node.scan(name, scan)
-        node.observation('ground_truth', pose_message([20, 4, 0], stamp))
+        target = [8 + args.cfg['VIEWING_RADIUS'] if at_boundary else 20, 4, 0]
+        node.observation('ground_truth', pose_message(target, stamp))
         statuses, calls = [], []
         node.status_pub = SimpleNamespace(publish=lambda msg: statuses.append(json.loads(msg.data)))
 
         def step(states, scans, at, seers, tracker):
             calls.append(at)
-            assert seers == set()
-            np.testing.assert_array_equal(tracker.position(at), [20, 4])
+            assert seers == ({name} if at_boundary else set())
+            np.testing.assert_array_equal(tracker.position(at), target[:2])
             return {}
 
         monkeypatch.setattr(node.team, 'step', step)
@@ -423,10 +427,12 @@ def test_external_target_drives_cycles_outside_camera_view_and_expires(tmp_path,
         node.tick()
         assert calls == [10.]
         assert statuses[-1]['reason'] == 'ready'
+        assert statuses[-1]['target_input_fresh'] is True
         # A feed outage cannot use the camera mode's longer SEARCH/coast budget.
         current[0] += int((args.settings_data['target_timeout_sim'] + .1) * 1e9)
         node.tick()
         assert statuses[-1]['reason'] == 'target_unavailable'
+        assert statuses[-1]['target_input_fresh'] is False
         assert node.cycles.future is None
     finally:
         node.destroy_node()

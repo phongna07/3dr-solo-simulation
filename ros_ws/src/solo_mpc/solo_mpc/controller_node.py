@@ -105,7 +105,8 @@ class Controller(Node):
             sequential=self.execution == 'sequential',
         )
         if args.settings_data["target_mode"] == "ground_truth":
-            self.team.track = ExactTargetTracker()
+            self.team.track = ExactTargetTracker(
+                cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
         self.cycles = CycleRunner()
         self.cycle_context = None
         try:
@@ -281,7 +282,7 @@ class Controller(Node):
                         n
                         for n in names
                         if max(abs(self.poses[n][0][:2] - target))
-                        < cfg["VIEWING_RADIUS"]
+                        <= cfg["VIEWING_RADIUS"]
                     }
                 self.cycle_context = start, now, stamp
                 self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
@@ -313,6 +314,12 @@ class Controller(Node):
                 for x in out["prediction"]
             ]
             self.outputs[n][1].publish(path)
+        # Callbacks can receive a newer target while this cycle is solving.
+        # Freshness describes the live input when reporting, not the solve's
+        # earlier timestamp (which could produce a negative observation age).
+        reported_at = self.get_clock().now().nanoseconds * 1e-9
+        target_age = (None if self.team.track.observed_at is None
+                      else reported_at - self.team.track.observed_at)
         record = {
             "stamp": stamp,
             "wall": time.time(),
@@ -324,9 +331,8 @@ class Controller(Node):
             "assignment": self.team.assignment,
             "slot_scales": self.team.slot_scales,
             "target_mode": settings["target_mode"],
-            "target_observation_age": None
-            if self.team.track.observed_at is None
-            else stamp - self.team.track.observed_at,
+            "target_input_fresh": target_age is not None and 0 <= target_age <= settings['target_timeout_sim'],
+            "target_observation_age": target_age,
             "target_estimate": None
             if self.team.track.x is None
             else self.team.track.x.tolist(),

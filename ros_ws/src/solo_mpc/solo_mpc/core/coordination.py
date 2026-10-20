@@ -1,7 +1,8 @@
 """Upstream robot_jps mode/assignment/slot semantics over a fleet snapshot.
 
-Visibility is supplied by physical detections. Geometric strict/relaxed gates
-only qualify those detections; an estimate alone never makes a UAV a seer.
+Camera mode supplies physical detections; external mode supplies geometric
+visibility from a fresh global position. SEARCH is active target pursuit:
+distant followers join formation after passing the leader-distance hysteresis.
 """
 
 import numpy as np

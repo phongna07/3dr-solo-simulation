@@ -85,7 +85,8 @@ def test_capture_is_complete_before_solve_bounded_and_replays_backup_warm_start(
     import sys
     for flags in ([], ['--iteration-only']):
         result = subprocess.run([sys.executable, '-m', 'solo_mpc.replay_optimizer', str(path), *flags],
-                                env={**os.environ, 'PYTHONPATH': str(pkg)}, text=True,
+                                env={**os.environ, 'PYTHONPATH': os.pathsep.join(
+                                    [str(pkg), os.environ.get('PYTHONPATH', '')])}, text=True,
                                 capture_output=True, timeout=10)
         assert result.returncode == 0, result.stdout + result.stderr
         report = json.loads(result.stdout[result.stdout.index('{'):])

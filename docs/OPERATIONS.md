@@ -193,8 +193,15 @@ zero-based frame indices and original simulation timestamps (`stamp_ns`). No
 video is created without images. Recorder errors appear in logs without stopping
 the flight stack.
 
-Overhead recording is independent of GUI navigation and window size. The camera
-sits 24 m above the target, offset -10 m on each horizontal axis. A lazy bridge
+Overhead recording is independent of GUI navigation and window size. The default
+small-field camera sits 24 m above the target, offset -10 m on each horizontal
+axis. This offset scales with flight altitude and obstacle height; the five-UAV
+profile uses (-120, -120, 288) m relative to the target. This is a target view,
+not a view of the entire fleet. In the five-UAV profile, four starting positions
+are outside its frame at 30 m altitude, and the nearby UAV is only about three
+pixels wide. Absence from this video alone does not establish a missing Gazebo
+model or a failure to take off. Check `truth.jsonl` or use the GUI to inspect
+distant vehicles. A lazy bridge
 activates its feed on arming, avoiding unused Full HD rendering during startup.
 Rendering/encoding costs return during flight; an external image subscriber can
 activate rendering earlier. Direct ROS launch accepts `record_cameras:=true` and

@@ -95,8 +95,9 @@ upstream comparisons and bounded optimizer replay capture.
 
 With `./scripts/dev mpc --ground-truth-target`, the external target process
 publishes timestamped route positions directly to the controller. An
-`ExactTargetTracker` preserves each position and estimates velocity using the
-sample interval; camera mode retains `TargetTracker` and its Kalman filter.
+`ExactTargetTracker` preserves each position while using the same Kalman
+velocity estimator, confidence gate, and filtered lead-pursuit goal as upstream;
+sample intervals follow simulation timestamps. Camera mode uses `TargetTracker`.
 The controller subscribes only to the selected source. World generation, sensor
 bridging, and the startup inventory omit unused cameras and detectors. Recording
 can independently enable camera streams without enabling detection.

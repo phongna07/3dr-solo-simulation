@@ -123,7 +123,12 @@ def main(args=None):
                     details.append(f"controller: {controller['reason']}")
                 for name, vehicle in sorted(controller.get("vehicles", {}).items()):
                     if vehicle.get("result"):
-                        details.append(f"{name}: {vehicle['result']}")
+                        result = vehicle['result']
+                        if result == 'search' and controller.get('target_mode') == 'ground_truth':
+                            result = 'search (target pursuit)'
+                        details.append(f"{name}: {result}")
+                if controller.get('target_mode') == 'ground_truth' and 'target_input_fresh' in controller:
+                    details.append('external target: ' + ('fresh' if controller['target_input_fresh'] else 'stale'))
                 suffix = f"; {'; '.join(details)}" if details else ""
                 progress(f"Mission {state} ({now - begin:.0f}s elapsed){suffix}")
                 last_state = state

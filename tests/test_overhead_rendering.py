@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import pytest
 from solo_bringup.configuration import load_config
+from solo_mpc.settings import load_settings
 from solo_mpc.world import bridge_config, generate_mpc_world
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,11 @@ PKG = ROOT / "ros_ws/src/solo_mpc"
                     reason="Requires Gazebo and the pinned models in the simulation image")
 def test_overhead_video_renders_full_hd_and_follows_target(tmp_path):
     fleet = load_config(ROOT / "config/fleet.yaml")
+    scenario, settings, _ = load_settings(PKG / 'scenarios/small50_3uav.yaml',
+                                         PKG / 'config/controller.yaml')
+    # Move to a clear route waypoint. The old (12, 4) fixture was inside a box,
+    # so the obstacle legitimately hid the target in the final camera frames.
+    destination = scenario['target']['waypoints'][1]
     world, _ = generate_mpc_world(
         fleet, "/opt/ardupilot_gazebo", tmp_path / "world.sdf",
         PKG / "scenarios/small50_3uav.yaml", PKG / "config/controller.yaml",
@@ -127,8 +133,8 @@ while rclpy.ok():
             ["gz", "service", "-s", f"/world/{fleet['world_name']}/set_pose",
              "--reqtype", "gz.msgs.Pose", "--reptype", "gz.msgs.Boolean",
              "--timeout", "5000", "--req",
-             'name: "tracking_target", position: {x: 12, y: 4, z: 0.025}, '
-             'orientation: {w: 1}'],
+             'name: "tracking_target", position: {x: %s, y: %s, z: %s}, orientation: {w: 1}'
+             % (destination[0], destination[1], settings['target_height'])],
             env=env, capture_output=True, text=True, timeout=10,
         )
         assert move.returncode == 0 and "data: true" in move.stdout, move.stdout + move.stderr

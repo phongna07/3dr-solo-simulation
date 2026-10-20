@@ -67,6 +67,37 @@ working tree was clean; no unrelated changes were replaced.
 
 ## Required ROS/physical adaptations retained
 
+### External input and distant UAVs in `scen4`
+
+Upstream `main.py` supplies `target.state` to every robot before
+`computeControlSignal`; `robot_jps.py` still uses geometric visibility and
+leader-distance hysteresis to select SEARCH/TRACK. Global target knowledge
+does not put distant robots into formation. SEARCH enables `W_search_track`
+and plans toward the predicted target; only a TRACK satellite plans to its slot.
+For `scen4`, the square target gate has half-width 25 m (strict: 22.5 m),
+followers enter within 50 m of the leader for three cycles, and normally leave
+after ten cycles at or beyond 62.5 m. A previous outer slot can enlarge the exit
+distance. An all-SEARCH fleet is valid when no leader meets the geometric gate.
+
+The saved reference run `scen4_n5_s0_20261019-150106/data.pkl` starts with UAV4
+as leader and the other four in SEARCH. Their first TRACK times are 25.9 s
+(UAV1), 16.7 s (UAV2), 12.4 s (UAV3), and 34.8 s (UAV5), in simulation time.
+These are observations of that saved run, not timing guarantees for Gazebo.
+A `--seconds 30` mission is limited by wall time and can cover much less
+simulation time when rendering is slow.
+
+External mode preserves the exact supplied positions but now uses upstream's
+Kalman velocity/lead estimator and confidence gate. It previously assumed
+finite-difference velocity with zero uncertainty, which changed distant lead
+pursuit. The geometric gate now also includes the exact viewing-radius boundary,
+as upstream does. `test_external_scen4_pursuit_and_formation_match_actual_upstream`
+compares the actual upstream methods using scen4 starts and controlled approach,
+departure, visibility-loss, boundary, and handoff snapshots. It verifies mode
+counters, slots, target horizons, velocity covariance, and pursuit goals against
+the reference code. This is an algorithm comparison, not a physical flight replay.
+
+### Runtime adaptations
+
 - Camera detections, never filtered predictions alone, establish the supplied
   visibility set. Strict/relaxed geometric checks qualify detections; they do
   not invent detections. Production profiles remain `target_mode: camera`.

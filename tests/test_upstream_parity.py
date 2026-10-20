@@ -15,7 +15,7 @@ pytest.importorskip('casadi')
 pytest.importorskip('_pydecomp')
 from solo_mpc.core.controller import TeamController, VehicleState
 from solo_mpc.core.mapping import SensorGrid
-from solo_mpc.core.tracking import TargetTracker
+from solo_mpc.core.tracking import ExactTargetTracker, TargetTracker
 from solo_mpc.settings import load_settings
 from upstream_oracle import REFERENCE, REFERENCE_RUN, configuration, oracle, robot
 
@@ -128,6 +128,98 @@ def test_modes_slots_leader_hysteresis_and_prediction_match_actual_upstream(coun
                 np.testing.assert_allclose(guidance[n]['target'], r._target_trajectory(target), atol=1e-12)
                 np.testing.assert_allclose(guidance[n]['goal'], r._compute_predicted_goal()[:2], atol=1e-12)
             stamp += cfg['TIMESTEP']
+
+
+def test_external_scen4_pursuit_and_formation_match_actual_upstream():
+    """Actual scen4 starts, with controlled approach/loss/boundary snapshots."""
+    import yaml
+    from solo_mpc.core.target_motion import target_route
+
+    scenario = yaml.safe_load((REFERENCE / 'scenarios/scen4.yaml').read_text())
+    pkg = Path(__file__).resolve().parents[1] / 'ros_ws/src/solo_mpc'
+    production, _, _ = load_settings(pkg / 'scenarios/big1000_5uav.yaml',
+                                     pkg / 'config/controller_big1000.yaml')
+    np.testing.assert_array_equal(production['starts'], scenario['starts'])
+    assert production['target'] == scenario['target']
+    cfg = configuration()
+    Robot, Tracker, _ = oracle(cfg)
+    names = [f'uav{i+1}' for i in range(5)]
+    team = TeamController(names, cfg, local_names=[])
+    team.track = ExactTargetTracker(cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
+    reference_track = Tracker(cfg['TIMESTEP'], cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
+    starts = np.asarray(scenario['starts'])[:, :2]
+    initial_target = np.asarray(scenario['target']['waypoints'][0])
+    states = {n: state(p, velocity=(0, 0)) for n, p in zip(names, starts)}
+    pred = predictions(states, cfg)
+    robots = [robot(Robot, reference_track, cfg, i, states[n], pred[n], initial_target)
+              for i, n in enumerate(names)]
+    grid = SensorGrid(cfg['WORLD_BOUNDS'], resolution=cfg['GRID_RESOLUTION'],
+                      inflate_radius=cfg['INFLATE_RADIUS'], treat_unknown_as_blocked=False)
+    team.planners = {n: SimpleNamespace(gmap=grid) for n in names}
+    for r in robots:
+        r.planner = SimpleNamespace(gmap=grid)
+    route, times = target_route(scenario, cfg)
+    phases = [('initial', 1), ('approach', 3), ('depart', 10),
+              ('lost', 1), ('boundary', 1), ('handoff', 1)]
+    k = 0
+    for phase, cycles in phases:
+        for cycle in range(cycles):
+            stamp = k * cfg['TIMESTEP']
+            target = np.array([np.interp(stamp, times, route[:, axis]) for axis in range(2)])
+            if phase == 'boundary':
+                target = np.round(target)  # make the exact 25 m edge representable
+            team.track.observe(target, stamp)
+            reference_track.update(target)
+            np.testing.assert_array_equal(team.track.position(stamp), target)
+            np.testing.assert_allclose(team.track.x[2:], reference_track.x[2:], atol=1e-12)
+            np.testing.assert_allclose(team.track.P, reference_track.P, atol=1e-12)
+            positions = starts + target - initial_target
+            if phase in ('approach', 'depart'):
+                positions[2] = positions[3] + [49 if phase == 'approach' else 70, 0]
+            elif phase in ('lost', 'boundary', 'handoff'):
+                positions[3] = target + [25 if phase == 'boundary' else 26, 0]
+                if phase == 'handoff':
+                    positions[2] = target + [1, 1]
+            states = {n: state(p, stamp, velocity=(0, 0)) for n, p in zip(names, positions)}
+            pred = predictions(states, cfg)
+            seers = {n for n, s in states.items()
+                     if np.max(np.abs(s.position[:2] - target)) <= cfg['VIEWING_RADIUS']}
+            guidance = team.prepare_guidance(states, pred, stamp, seers)
+            for i, r in enumerate(robots):
+                n = names[i]
+                r.state = np.r_[states[n].position, states[n].velocity]
+                r.states_prediction = np.column_stack([pred[n][:, :2], np.full(len(pred[n]), 30.),
+                                                       pred[n][:, 2:4], np.zeros(len(pred[n]))])
+                r.time_stamp, r.goal = stamp, np.r_[target, 0.]
+            for i, r in enumerate(robots):
+                n = names[i]
+                r._update_mode_and_role(robots)
+                r._slot = r._slot_target(robots) if r.mode == 'TRACK' and not r.is_leader_role else None
+                assert team.modes[n] == r.mode
+                assert team.leader == (None if r.leader_index is None else names[r.leader_index])
+                assert team.c_in[n] == r.c_in and team.c_out[n] == r.c_out
+                np.testing.assert_allclose(guidance[n]['goal'], r._compute_predicted_goal()[:2], atol=1e-12)
+                np.testing.assert_allclose(guidance[n]['target'], r._target_trajectory(target), atol=1e-12)
+                if r._slot is None:
+                    assert guidance[n]['slot'] is None
+                else:
+                    np.testing.assert_allclose(guidance[n]['slot'], r._slot, atol=1e-12)
+            if phase == 'initial':
+                assert team.leader == 'uav4'
+                assert [team.modes[n] for n in names] == ['SEARCH', 'SEARCH', 'SEARCH', 'TRACK', 'SEARCH']
+                assert all(guidance[n]['slot'] is None for n in names)
+            elif phase == 'approach':
+                assert team.modes['uav3'] == ('TRACK' if cycle == 2 else 'SEARCH')
+            elif phase == 'depart':
+                assert team.modes['uav3'] == ('SEARCH' if cycle == 9 else 'TRACK')
+            elif phase == 'lost':
+                assert team.leader is None and set(team.modes.values()) == {'SEARCH'}
+                assert team.track.observed_at == stamp  # global input is still fresh
+            elif phase == 'boundary':
+                assert team.leader == 'uav4'  # upstream includes the 25 m boundary
+            elif phase == 'handoff':
+                assert team.leader == 'uav3'
+            k += 1
 
 
 class RecordingSolver:

@@ -78,17 +78,24 @@ class TargetTracker:
 
 
 class ExactTargetTracker(TargetTracker):
-    """Use external positions directly; derive velocity from simulation timestamps."""
+    """Keep exact external positions with upstream Kalman velocity/lead pursuit."""
+
+    def __init__(self, process_noise_std=2.0, obs_noise_std=0.3, coast_time=1.5):
+        super().__init__(process_noise_std, obs_noise_std, coast_time)
+        self.estimator = TargetTracker(process_noise_std, obs_noise_std, coast_time)
 
     def observe(self, position, stamp, variance=None):
-        z = np.asarray(position, float)[:2]
-        if z.shape != (2,) or not np.isfinite(z).all() or not np.isfinite(stamp):
+        if not self.estimator.observe(position, stamp, variance):
             return False
-        if self.stamp is not None and stamp <= self.stamp:
-            return False
-        velocity = np.zeros(2) if self.x is None else (z - self.observation) / (stamp - self.stamp)
-        self.x = np.r_[z, velocity]
-        self.P = np.zeros((4, 4))
+        # Upstream also receives the true target position globally. Its SEARCH
+        # horizon starts at that measurement, while lead pursuit uses the CV
+        # filter's position, velocity and velocity-confidence gate.
+        self.x = self.estimator.x.copy()
+        self.x[:2] = self.estimator.observation
+        self.P = self.estimator.P.copy()
         self.stamp = self.observed_at = stamp
-        self.observation = z.copy()
+        self.observation = self.estimator.observation.copy()
         return True
+
+    def pursuit(self, position, stamp, cfg):
+        return self.estimator.pursuit(position, stamp, cfg)

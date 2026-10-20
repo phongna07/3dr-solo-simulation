@@ -100,6 +100,21 @@ def test_service_discovery_logs_while_waiting(cli, capsys):
     assert any('Waiting for mission supervisor start service' in text for text in output)
 
 
+def test_external_target_progress_explains_search_as_target_pursuit(cli, capsys):
+    cli.snapshots.extend([
+        cli.snapshot('tracking', controller={
+            'reason': 'ready', 'target_mode': 'ground_truth', 'target_input_fresh': True,
+            'vehicles': {'uav1': {'result': 'search'}, 'uav4': {'result': 'tracking'}},
+        }),
+        cli.snapshot('completed'),
+    ])
+    cli.main()
+    progress = capsys.readouterr().err
+    assert 'uav1: search (target pursuit)' in progress
+    assert 'uav4: tracking' in progress
+    assert 'external target: fresh' in progress
+
+
 def test_status_stdout_remains_json(cli, capsys):
     snapshot = cli.snapshot('tracking')
     cli.snapshots.append(snapshot)

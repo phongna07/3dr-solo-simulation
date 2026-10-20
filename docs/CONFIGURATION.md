@@ -262,9 +262,11 @@ The target process evaluates the configured route and per-leg speed schedule
 at Gazebo simulation timestamps, including mission pause, resume, and reset.
 It publishes the same position used to move the pink marker on
 `/target/ground_truth`, stamped at the route evaluation time. The controller
-uses those positions directly without the camera Kalman filter, deriving
-velocity from successive timestamps. Future MPC references still use bounded
-constant-velocity prediction; the controller does not read the future route.
+preserves those exact position measurements. As in upstream `scen4`, its
+constant-velocity Kalman estimator supplies velocity, velocity confidence, and
+lead pursuit. An external position does not imply perfect knowledge of velocity
+or future motion. Future MPC references still use bounded constant-velocity
+prediction; the controller does not read the future route.
 
 This flag overrides `MPC_TARGET_MODE` and the controller's `target_mode` setting.
 The environment variable and `target_mode:=ground_truth` ROS launch argument
@@ -276,6 +278,15 @@ startup readiness. UAV camera sensors and bridges are omitted unless
 `--record-cameras` is requested. Both recording flags and `--gui` can be combined
 with `--ground-truth-target`. LiDAR, measured UAV state, frame alignment,
 formation distance gates, and independent setpoint expiry still apply.
+`SEARCH` retains the upstream meaning: actively pursue the supplied target,
+rather than hold position or wait for a detection. Target availability and
+formation membership are separate. A leader must be inside the square viewing
+radius; a distant follower pursues the target until it is close enough to join
+the leader's formation. If no UAV satisfies the viewing gate, all UAVs can be
+in `SEARCH` while the external target input remains fresh. Mission progress
+prints `search (target pursuit)` and `external target: fresh` to distinguish
+this case from a missing input. `/mpc/status` and `mpc.jsonl` also expose
+`target_input_fresh` independently of the controller modes.
 Completion uses the scenario's `viewing_radius` as the nearest-UAV distance
 threshold. Camera occlusion does not pause the target in this mode; an external
 sample older than `target_timeout_sim` suppresses controller output and fails
