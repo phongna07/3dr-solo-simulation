@@ -59,9 +59,14 @@ Optionally replace the launch command with one of these:
 ```bash
 ./scripts/dev mpc --gui                              # Viewer after readiness
 ./scripts/dev mpc --record-cameras --record-overhead  # UAV and elevated videos
+./scripts/dev mpc --ground-truth-target               # Exact target input without FPV detection
 ```
 
 Choose options before launching; stop an existing run before starting another.
+`--ground-truth-target` uses the scenario route evaluated at Gazebo simulation
+timestamps. It skips camera detectors and UAV camera streams unless
+`--record-cameras` is also enabled. LiDAR and measured flight telemetry remain
+active. The target still pauses during takeoff and starts with the mission.
 With `--gui`, use a second terminal for mission commands. You can also attach
 the viewer later with `./scripts/dev gui`. Closing it leaves the server running.
 

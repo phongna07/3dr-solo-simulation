@@ -47,7 +47,8 @@ class MovingTarget(Node):
         return res
 
     def tick(self):
-        elapsed = self.now() - self.started if self.running else self.elapsed
+        sampled_at = self.get_clock().now()
+        elapsed = sampled_at.nanoseconds * 1e-9 - self.started if self.running else self.elapsed
         point = np.array(
             [
                 np.interp(elapsed, self.times, self.path[:, 0]),
@@ -63,7 +64,7 @@ class MovingTarget(Node):
             f"/world/{self.args.world}/set_pose", request, Pose, Boolean, 200
         )
         if ok and response.data:
-            self.publisher.publish(pose_message(point, self.get_clock().now().to_msg()))
+            self.publisher.publish(pose_message(point, sampled_at.to_msg()))
         if elapsed >= self.times[-1]:
             self.running = False
             self.elapsed = self.times[-1]

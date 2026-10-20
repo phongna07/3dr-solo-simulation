@@ -33,8 +33,10 @@ The persistent supervisor handles both `run` and `start`. It records independent
 Gazebo poses in `truth.jsonl`, enforces duration limits after the CLI exits, and
 lands after route completion or timeout. Prolonged target loss, controller or
 publisher failure, stale inputs, connection loss, and flight-envelope violations
-trigger cleanup. During occlusion the estimate coasts, then searches; the
+trigger cleanup. In camera mode, during occlusion the estimate coasts, then searches; the
 simulated target pauses during prolonged loss. This assumes a cooperative target.
+With `--ground-truth-target`, a stale external feed fails the mission without
+camera reacquisition or occlusion pauses.
 Starts and resets are rejected while a mission or landing is active.
 
 ## Stop and recover
@@ -171,7 +173,9 @@ Enable recording when launching a fresh simulation:
 ./scripts/dev stop
 ```
 
-Either flag works alone; `--gui` is optional.
+Either recording flag works alone; `--gui` is optional. Add
+`--ground-truth-target` to the launch command to record video while tracking
+the external timestamped target input. Camera detectors remain disabled in that mode.
 
 | Option | View and defaults | Host output |
 |---|---|---|

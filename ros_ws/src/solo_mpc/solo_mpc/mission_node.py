@@ -350,13 +350,15 @@ class MissionSupervisor(Flight):
                     for v in self.snapshots.get("vehicles", {}).values()
                 ]
                 distances = [np.linalg.norm(p - goal) for p in positions]
-                camera_radius = self.settings["flight_altitude"] * np.tan(
-                    self.settings["camera_hfov"] / 2
+                tracking_radius = (
+                    self.scenario["viewing_radius"]
+                    if self.settings.get("target_mode", "camera") == "ground_truth"
+                    else self.settings["flight_altitude"] * np.tan(self.settings["camera_hfov"] / 2)
                 )
                 if (
                     len(distances) == len(self.names)
                     and max(distances) < self.settings.get("arrival_fleet_radius", 6.0)
-                    and min(distances) < camera_radius
+                    and min(distances) < tracking_radius
                 ):
                     break
                 arrival_since = (
@@ -399,10 +401,13 @@ class MissionSupervisor(Flight):
                     "planner_failure_timeout_sim", 3.0
                 ):
                     raise RuntimeError("Planner inputs or solves remained unavailable")
-            # Pause the simulated target during long occlusion while UAVs SEARCH
-            # from their last observation. This experiment policy is explicit.
             age = self.snapshots.get("target_observation_age")
-            if age is not None:
+            if age is not None and self.settings.get("target_mode", "camera") == "ground_truth":
+                if age > self.settings["target_timeout_sim"]:
+                    raise RuntimeError("External target position stopped updating")
+            elif age is not None:
+                # Pause during camera occlusion while UAVs SEARCH from their
+                # last observation. Exact external input has no reacquisition.
                 lost = age > self.settings["target_timeout_sim"]
                 if lost != target_paused:
                     self.service_call("/target/run", not lost)

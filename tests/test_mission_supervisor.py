@@ -168,6 +168,44 @@ def test_persistent_supervision_handles_completion_and_failures(supervisor, monk
     assert node.truth_log is None
 
 
+@pytest.mark.parametrize('case,error', [
+    ('arrival', None),
+    ('external_stale', 'External target position stopped updating'),
+    ('target_stale', 'Target simulator stopped reporting'),
+])
+def test_external_target_supervision_does_not_depend_on_camera(supervisor, monkeypatch, case, error):
+    node = supervisor
+    node.settings['target_mode'] = 'ground_truth'
+    node.settings['camera_hfov'] = .01
+    node.scenario['viewing_radius'] = 2.
+    events = []
+
+    def prepare():
+        own_flight(node)
+        healthy(node)
+
+    def tick(*args, **kwargs):
+        healthy(node)
+        if case == 'arrival':
+            node.target['pose'].pose.position.x = 10.
+            node.snapshots['vehicles']['test_uav']['position'] = [11.5, 0, 3]
+        elif case == 'external_stale':
+            node.snapshots['target_observation_age'] = 2.
+        else:
+            node.target['wall'] -= 10.
+
+    node.prepare_flight = prepare
+    node.service_call = lambda name, value=None: events.append((name, value))
+    mock_landing(node, lambda names: events.append(('LAND', tuple(names))))
+    monkeypatch.setattr(rclpy, 'spin_once', tick)
+    assert start(node).success
+    node.process_pending()
+    assert node.mission_state == ('failed' if error else 'completed')
+    assert error is None or error in node.error
+    # No camera-loss pause/resume requests; helper cleanup and LAND still run.
+    assert events == [('/mpc/enable', False), ('/target/run', False), ('LAND', ('test_uav',))]
+
+
 def test_requests_serialize_flight_ownership(supervisor):
     node = supervisor
     assert start(node, seconds=7).success

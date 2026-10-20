@@ -7,6 +7,8 @@ They launch in a horizontal row, facing north perpendicular to the row, then
 follow a target along a winding route across the field. Each vehicle uses
 MAVROS flight telemetry, horizontal LiDAR, and a downward camera that detects a
 magenta target marker. Planning and control operate in the horizontal plane.
+Use `./scripts/dev mpc --ground-truth-target` to track exact timestamped target
+positions from the simulator instead of camera detections.
 
 An additional [1000 × 1000 m, five-UAV profile](docs/CONFIGURATION.md#1000-m-field-with-five-uavs)
 uses the supplied seed-7 map and a 30 m flight altitude.

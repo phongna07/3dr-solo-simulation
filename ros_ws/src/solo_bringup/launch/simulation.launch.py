@@ -45,7 +45,9 @@ def start(context):
         from solo_mpc.world import generate_mpc_world
         world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf',
                                       get('scenario'), get('settings'),
-                                      record_overhead=get('record_overhead') == 'true')
+                                      record_overhead=get('record_overhead') == 'true',
+                                      target_mode=get('target_mode') or None,
+                                      record_cameras=get('record_cameras') == 'true')
     else:
         world = generate_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf', profile)
     defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
@@ -93,6 +95,8 @@ def generate_launch_description():
         DeclareLaunchArgument('profile', default_value=os.environ.get('SIM_PROFILE', 'control')),
         DeclareLaunchArgument('scenario', default_value=os.environ.get('MPC_SCENARIO', '')),
         DeclareLaunchArgument('settings', default_value=os.environ.get('MPC_SETTINGS', '')),
+        DeclareLaunchArgument('target_mode', default_value=os.environ.get('MPC_TARGET_MODE', '')),
+        DeclareLaunchArgument('record_cameras', default_value=os.environ.get('MPC_RECORD_CAMERAS', 'false'), choices=['true', 'false']),
         DeclareLaunchArgument('record_overhead', default_value=os.environ.get('MPC_RECORD_OVERHEAD', 'false'), choices=['true', 'false']),
         DeclareLaunchArgument('run_id', default_value=os.environ.get('RUN_ID', '')),
         DeclareLaunchArgument('resume', default_value=os.environ.get('SIM_RESUME', 'false'), choices=['true', 'false']),

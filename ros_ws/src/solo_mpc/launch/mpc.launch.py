@@ -22,6 +22,13 @@ def start(context):
         )
     fleet = load_config(get("fleet"))
     scenario, settings, cfg = load_settings(get("scenario"), get("settings"))
+    if get("target_mode"):
+        settings["target_mode"] = get("target_mode")
+    if settings["target_mode"] not in ("camera", "ground_truth"):
+        raise ValueError("Invalid target_mode")
+    # Resolve before world generation so sensors and ROS processes agree.
+    context.launch_configurations["target_mode"] = settings["target_mode"]
+    camera_enabled = settings["target_mode"] == "camera" or get("record_cameras") == "true"
     if len(fleet["uavs"]) != len(scenario["starts"]):
         raise ValueError("Fleet/scenario UAV count mismatch")
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
@@ -52,10 +59,6 @@ def start(context):
     shutil.copyfile(get("scenario"), run / "scenario.yaml")
     import yaml
 
-    if get("target_mode"):
-        settings["target_mode"] = get("target_mode")
-    if settings["target_mode"] not in ("camera", "ground_truth"):
-        raise ValueError("Invalid target_mode")
     (run / "controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
     (run / "mpc-config.json").write_text(json.dumps(cfg, indent=2) + "\n")
     bridge = Node(
@@ -69,6 +72,7 @@ def start(context):
                     fleet["world_name"],
                     run / "bridge.yaml",
                     record_overhead=get("record_overhead") == "true",
+                    camera_enabled=camera_enabled,
                 )
             }
         ],
@@ -111,7 +115,7 @@ def start(context):
     actions += observed(supervisor, progress, 'mission-supervisor', initializes=True)
     # Each camera callback runs in its own process, independently of the other
     # vehicles and of all optimization workers. Reuse the installed executable.
-    for uav in fleet["uavs"]:
+    for uav in fleet["uavs"] if settings["target_mode"] == "camera" else []:
         name = f"camera-detector-{uav['name']}"
         node = Node(
             package="solo_mpc", executable="marker_detector",

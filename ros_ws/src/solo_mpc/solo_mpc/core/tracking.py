@@ -1,4 +1,4 @@
-"""Upstream CV Kalman filter with timestamped observations and bounded coasting."""
+"""Timestamped target inputs with bounded coasting and optional camera filtering."""
 
 import numpy as np
 
@@ -75,3 +75,20 @@ class TargetTracker:
         filtered = self.x[:2] + current - self.observation
         travel_time = np.linalg.norm(filtered - position[:2]) / max(cfg['VMAX'], 1e-3)
         return filtered + velocity * travel_time * gain
+
+
+class ExactTargetTracker(TargetTracker):
+    """Use external positions directly; derive velocity from simulation timestamps."""
+
+    def observe(self, position, stamp, variance=None):
+        z = np.asarray(position, float)[:2]
+        if z.shape != (2,) or not np.isfinite(z).all() or not np.isfinite(stamp):
+            return False
+        if self.stamp is not None and stamp <= self.stamp:
+            return False
+        velocity = np.zeros(2) if self.x is None else (z - self.observation) / (stamp - self.stamp)
+        self.x = np.r_[z, velocity]
+        self.P = np.zeros((4, 4))
+        self.stamp = self.observed_at = stamp
+        self.observation = z.copy()
+        return True

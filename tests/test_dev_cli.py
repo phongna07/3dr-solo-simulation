@@ -19,7 +19,7 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in (
-        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_RECORD_CAMERAS",
+        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_TARGET_MODE", "MPC_RECORD_CAMERAS",
         "MPC_RECORD_OVERHEAD", "RUN_ID")}}) + "\\n")
 if args[0] == "inspect":
     print('"sha256:test"')
@@ -99,6 +99,23 @@ def test_camera_recording_is_opt_in(fake_docker, record, overhead):
         for entry in entries:
             if entry["env"]["RUN_ID"]:
                 (ROOT / "runs" / (entry["env"]["RUN_ID"] + ".image-id.json")).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('configured_mode', ['', 'camera', 'ground_truth'])
+@pytest.mark.parametrize('ground_truth', [False, True])
+def test_ground_truth_flag_overrides_configured_source(fake_docker, configured_mode, ground_truth):
+    log, env = fake_docker
+    env['MPC_TARGET_MODE'] = configured_mode
+    result = invoke(['mpc', '--no-wait'] + (['--ground-truth-target'] if ground_truth else []), env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 0, result.stderr
+        start = next(e for e in entries if 'up' in e['args'])
+        assert start['env']['MPC_TARGET_MODE'] == ('ground_truth' if ground_truth else configured_mode)
+    finally:
+        for entry in entries:
+            if entry['env']['RUN_ID']:
+                (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.image-id.json')).unlink(missing_ok=True)
 
 
 def test_stop_lands_mission_before_stopping_container(fake_docker):

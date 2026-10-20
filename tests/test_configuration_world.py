@@ -208,9 +208,11 @@ def test_big1000_lidar_stays_usable_at_commanded_acceleration():
     assert np.max(scan.endpoints[:, 2]) < settings['obstacle_height']
 
 
-@pytest.mark.parametrize('record', [False, True])
+@pytest.mark.parametrize('target_mode', ['', 'ground_truth', 'settings_ground_truth'])
+@pytest.mark.parametrize('record_cameras', [False, True])
+@pytest.mark.parametrize('record_overhead', [False, True])
 def test_five_vehicle_launch_builds_shared_and_per_vehicle_processes_without_starting(
-    tmp_path, upstream, monkeypatch, record,
+    tmp_path, upstream, monkeypatch, target_mode, record_cameras, record_overhead,
 ):
     import importlib.util
     import json
@@ -244,27 +246,39 @@ def test_five_vehicle_launch_builds_shared_and_per_vehicle_processes_without_sta
     spec = importlib.util.spec_from_file_location('mpc_launch_test', pkg / 'launch/mpc.launch.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    settings_path = pkg / 'config/controller_big1000.yaml'
+    if target_mode == 'settings_ground_truth':
+        settings = yaml.safe_load(settings_path.read_text())
+        settings['target_mode'] = 'ground_truth'
+        settings_path = tmp_path / 'controller.yaml'
+        settings_path.write_text(yaml.safe_dump(settings, sort_keys=False))
+    resolved_mode = 'ground_truth' if target_mode else 'camera'
     context = LaunchContext()
     context.launch_configurations.update({
         'fleet': str(ROOT / 'config/fleet_5uav.yaml'),
         'scenario': str(pkg / 'scenarios/big1000_5uav.yaml'),
-        'settings': str(pkg / 'config/controller_big1000.yaml'),
+        'settings': str(settings_path),
         'resume': 'false', 'run_id': 'five-uav-offline', 'readiness_timeout': '600',
-        'record_cameras': str(record).lower(), 'record_overhead': str(record).lower(), 'target_mode': '',
+        'record_cameras': str(record_cameras).lower(),
+        'record_overhead': str(record_overhead).lower(),
+        'target_mode': target_mode if target_mode != 'settings_ground_truth' else '',
     })
     actions = module.start(context)
     run = context.solo_run_dir
     inventory = json.loads((run / 'startup.json').read_text())['processes']
     shared = {'gazebo-server', 'readiness-monitor', 'sensor-bridge', 'frames',
               'target', 'controller', 'setpoints', 'mission-supervisor'}
-    if record:
-        shared |= {'camera-recorder', 'overhead-recorder'}
-    individual = {f'{kind}-uav{i}' for kind in ('sitl', 'mavros', 'camera-detector')
+    if record_cameras:
+        shared.add('camera-recorder')
+    if record_overhead:
+        shared.add('overhead-recorder')
+    kinds = ['sitl', 'mavros'] + (['camera-detector'] if resolved_mode == 'camera' else [])
+    individual = {f'{kind}-uav{i}' for kind in kinds
                   for i in range(1, 6)}
     assert set(inventory) == shared | individual
     assert all(item['state'] == 'pending' for item in inventory.values())
     processes = [a for a in actions if isinstance(a, ExecuteProcess)]
-    assert len(processes) == 23 + 2 * int(record)
+    assert len(processes) == 8 + 5 * len(kinds) + int(record_cameras) + int(record_overhead)
     from launch.utilities import perform_substitutions
     commands = [[perform_substitutions(context, part) for part in a.cmd]
                 for a in processes if not isinstance(a, Node)]
@@ -276,3 +290,17 @@ def test_five_vehicle_launch_builds_shared_and_per_vehicle_processes_without_sta
     assert len(list((run / 'sitl').iterdir())) == 5
     assert (run / 'sitl-overrides.parm').read_text() == 'WPNAV_SPEED 1000\nWPNAV_ACCEL 500\n'
     assert yaml.safe_load((run / 'fleet.yaml').read_text())['world_name'] == 'mpc_big1000'
+    assert yaml.safe_load((run / 'controller.yaml').read_text())['target_mode'] == resolved_mode
+    world = ET.parse(run / 'world.sdf').getroot().find('world')
+    cameras_enabled = resolved_mode == 'camera' or record_cameras
+    rows = yaml.safe_load((run / 'bridge.yaml').read_text())
+    topics = {r['ros_topic_name'] for r in rows}
+    for i in range(1, 6):
+        model = world.find(f"model[@name='uav{i}']")
+        assert len(model.findall(".//sensor[@type='camera']")) == int(cameras_enabled)
+        assert model.find(".//sensor[@type='gpu_lidar']") is not None
+        assert (f'/uav{i}/camera/image_raw' in topics) == cameras_enabled
+        assert (f'/uav{i}/camera/camera_info' in topics) == cameras_enabled
+        assert f'/uav{i}/scan' in topics
+        assert f'/uav{i}/ground_truth/pose' in topics
+    assert len(world.findall("model[@name='tracking_target']//sensor")) == int(record_overhead)

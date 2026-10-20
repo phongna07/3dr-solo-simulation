@@ -47,7 +47,7 @@ def solid(world, name, position, shape, size, color):
     return model
 
 
-def sensors(model, name, settings, cfg):
+def sensors(model, name, settings, cfg, camera_enabled=True):
     link = element(model, "link", name="perception_link")
     element(link, "pose", "0 0 0 0 0 0", relative_to="iris_with_standoffs::base_link")
     inertial = element(link, "inertial")
@@ -85,6 +85,8 @@ def sensors(model, name, settings, cfg):
     noise = element(ray, "noise", type="gaussian")
     element(noise, "mean", 0)
     element(noise, "stddev", settings.get("lidar_noise_stddev", 0.01))
+    if not camera_enabled:
+        return
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -143,8 +145,12 @@ def overhead_camera(target, settings):
 
 
 def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
-                       record_overhead=False):
+                       record_overhead=False, *, target_mode=None, record_cameras=False):
     scenario, settings, cfg = load_settings(scenario_path, settings_path)
+    target_mode = target_mode or settings["target_mode"]
+    if target_mode not in ("camera", "ground_truth"):
+        raise ValueError("Invalid target_mode")
+    camera_enabled = target_mode == "camera" or record_cameras
     fleet = copy.deepcopy(fleet)
     if len(fleet["uavs"]) != len(scenario["starts"]):
         raise ValueError("Fleet and scenario must contain the same number of UAVs")
@@ -199,13 +205,13 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         overhead_camera(target, settings)
     for uav in fleet["uavs"]:
         model = world.find(f"model[@name='{uav['name']}']")
-        sensors(model, uav["name"], settings, cfg)
+        sensors(model, uav["name"], settings, cfg, camera_enabled=camera_enabled)
     ET.indent(tree, space="  ")
     tree.write(output, encoding="utf-8", xml_declaration=True)
     return output, fleet
 
 
-def bridge_config(names, world, destination, record_overhead=False):
+def bridge_config(names, world, destination, record_overhead=False, *, camera_enabled=True):
     rows = [
         dict(
             ros_topic_name="/clock",
@@ -222,6 +228,8 @@ def bridge_config(names, world, destination, record_overhead=False):
             ("camera/camera_info", "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo"),
             ("ground_truth/pose", "geometry_msgs/msg/PoseStamped", "gz.msgs.Pose"),
         ]:
+            if suffix.startswith("camera/") and not camera_enabled:
+                continue
             rows.append(
                 dict(
                     ros_topic_name=f"/{n}/{suffix}",

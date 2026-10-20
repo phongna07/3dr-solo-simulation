@@ -17,6 +17,7 @@ from .core.controller import VehicleState
 from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
 from .core.parallel_controller import ParallelTeamController
 from .core.sensors import PoseHistory, project_scan
+from .core.tracking import ExactTargetTracker
 from .ros_utils import (
     pose_arrays,
     pose_message,
@@ -67,13 +68,15 @@ class Controller(Node):
                 self.create_publisher(PositionTarget, f"/{n}/mpc/reference", 10),
                 self.create_publisher(RosPath, f"/{n}/mpc/prediction", 10),
             )
-            for typ, suffix, cb in [
+            subscriptions = [
                 (PoseStamped, "mpc/pose", self.pose),
                 (TwistStamped, "mpc/velocity", self.velocity),
                 (LaserScan, "scan", self.scan),
                 (State, "mavros/state", self.state),
-                (PoseStamped, "target/observation", self.observation),
-            ]:
+            ]
+            if args.settings_data["target_mode"] == "camera":
+                subscriptions.append((PoseStamped, "target/observation", self.observation))
+            for typ, suffix, cb in subscriptions:
                 self.subscriptions_keep.append(
                     self.create_subscription(
                         typ,
@@ -101,6 +104,8 @@ class Controller(Node):
             startup_timeout=args.settings_data.get("controller_worker_startup_timeout_wall", 30.0),
             sequential=self.execution == 'sequential',
         )
+        if args.settings_data["target_mode"] == "ground_truth":
+            self.team.track = ExactTargetTracker()
         self.cycles = CycleRunner()
         self.cycle_context = None
         try:
@@ -152,6 +157,9 @@ class Controller(Node):
         self.fcu[n] = msg
 
     def observation(self, n, msg):
+        sources = ("ground_truth",) if self.args.settings_data["target_mode"] == "ground_truth" else self.args.names
+        if n not in sources:
+            return
         stamp = seconds(msg.header.stamp)
         now = self.get_clock().now().nanoseconds * 1e-9
         position = pose_arrays(msg)[0]
@@ -215,7 +223,10 @@ class Controller(Node):
             reason = "waiting_for_armed_guided_fleet"
         elif (
             self.team.track.observed_at is None
-            or not 0 <= stamp - self.team.track.observed_at <= settings["target_search_timeout_sim"]
+            or not 0 <= stamp - self.team.track.observed_at <= settings[
+                "target_timeout_sim" if settings["target_mode"] == "ground_truth"
+                else "target_search_timeout_sim"
+            ]
         ):
             reason = "target_unavailable"
         else:
@@ -264,7 +275,8 @@ class Controller(Node):
                     if 0 <= stamp - at < settings["sensor_timeout_sim"]
                 }
                 if settings["target_mode"] == "ground_truth":
-                    target = self.team.track.x[:2]
+                    # Geometric tracking/formation gates need no camera visibility.
+                    target = self.team.track.position(stamp)
                     seers = {
                         n
                         for n in names

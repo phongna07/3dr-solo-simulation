@@ -15,6 +15,7 @@ from solo_mpc.core.controller import TeamController, VehicleState
 from solo_mpc.core.parallel_controller import ParallelTeamController
 from solo_mpc.core.planner_grid import LocalGridPlanner, _dijkstra8, _jps8, warmup
 from solo_mpc.core.sensors import project_scan
+from solo_mpc.core.tracking import ExactTargetTracker
 from solo_mpc.settings import load_settings
 
 PKG = Path(__file__).resolve().parents[1] / "ros_ws/src/solo_mpc"
@@ -75,11 +76,15 @@ def test_fresh_cache_workers_finish_first_solve_with_default_deadline(cfg, tmp_p
 
 
 @pytest.mark.parametrize('count', [3, 5])
-def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp_path, count):
+@pytest.mark.parametrize('target_mode', ['camera', 'ground_truth'])
+def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp_path, count, target_mode):
     names = ["alpha", "bravo", "charlie", "delta", "echo"][:count]
     serial = TeamController(names, cfg)
     captured = dict(cfg, DIAGNOSTIC_DIR=str(tmp_path), DIAGNOSTIC_CAPTURE_CYCLES=4)
     with ParallelTeamController(names, captured, timeout=3.0) as parallel:
+        if target_mode == 'ground_truth':
+            serial.track = ExactTargetTracker()
+            parallel.track = ExactTargetTracker()
         pids = {w.pid for w in parallel.workers.values()}
         assert len(pids) == count and os.getpid() not in pids
         # The coordinator owns no native solvers or local occupancy integrators.

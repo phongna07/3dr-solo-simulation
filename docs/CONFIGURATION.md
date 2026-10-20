@@ -30,7 +30,7 @@ For persistent selection, edit `.env`:
 | `FLEET_CONFIG` | `/workspace/config/fleet.yaml` |
 | `MPC_SCENARIO` | `/workspace/ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml` |
 | `MPC_SETTINGS` | `/workspace/ros_ws/src/solo_mpc/config/controller.yaml` |
-| `MPC_TARGET_MODE` | Empty uses controller settings; override with `camera` or `ground_truth` |
+| `MPC_TARGET_MODE` | Empty uses controller settings; override with `camera` or `ground_truth`; `--ground-truth-target` selects `ground_truth` |
 | `READINESS_TIMEOUT` | 600 wall seconds for initial simulation readiness |
 | `SIM_IMAGE`, `COMPANION_IMAGE` | Development tags or registry digests |
 | `BUILD_JOBS` | 4 compiler jobs by default |
@@ -254,9 +254,32 @@ alignment, route-completion checks, and evaluation. To use truth as controller
 input instead, start a fresh run:
 
 ```bash
-MPC_TARGET_MODE=ground_truth ./scripts/dev mpc
+./scripts/dev mpc --ground-truth-target
 ./scripts/dev mission run --seconds 20
 ```
+
+The target process evaluates the configured route and per-leg speed schedule
+at Gazebo simulation timestamps, including mission pause, resume, and reset.
+It publishes the same position used to move the pink marker on
+`/target/ground_truth`, stamped at the route evaluation time. The controller
+uses those positions directly without the camera Kalman filter, deriving
+velocity from successive timestamps. Future MPC references still use bounded
+constant-velocity prediction; the controller does not read the future route.
+
+This flag overrides `MPC_TARGET_MODE` and the controller's `target_mode` setting.
+The environment variable and `target_mode:=ground_truth` ROS launch argument
+remain supported. The resolved source is saved in the run's `controller.yaml`
+and reported in `/mpc/status`, `mpc.jsonl`, and evaluation results.
+
+In `ground_truth` mode, marker detector processes are omitted from launch and
+startup readiness. UAV camera sensors and bridges are omitted unless
+`--record-cameras` is requested. Both recording flags and `--gui` can be combined
+with `--ground-truth-target`. LiDAR, measured UAV state, frame alignment,
+formation distance gates, and independent setpoint expiry still apply.
+Completion uses the scenario's `viewing_radius` as the nearest-UAV distance
+threshold. Camera occlusion does not pause the target in this mode; an external
+sample older than `target_timeout_sim` suppresses controller output and fails
+the mission with normal landing cleanup.
 
 LiDAR always uses Gazebo returns. Missing rays stay unknown; observed no-return
 rays clear space; strongly tilted rays are discarded. Default `UNKNOWN_POLICY`

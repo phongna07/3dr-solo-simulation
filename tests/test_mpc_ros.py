@@ -323,11 +323,13 @@ def test_callbacks_continue_with_frozen_cycle_and_obsolete_results_are_rejected(
         rclpy.shutdown()
 
 
-def test_invalid_target_messages_do_not_renew_visibility(tmp_path):
+@pytest.mark.parametrize('mode', ['camera', 'ground_truth'])
+def test_invalid_target_messages_do_not_renew_visibility(tmp_path, mode):
     import numpy as np
     from rclpy.time import Time
     from solo_mpc.ros_utils import pose_message
     args = node_args(tmp_path)
+    args.settings_data['target_mode'] = mode
     args.settings_data['controller_execution'] = 'sequential'
     rclpy.init()
     node = Controller(args)
@@ -337,8 +339,153 @@ def test_invalid_target_messages_do_not_renew_visibility(tmp_path):
                                       ([np.nan,2,0], 'world', now.to_msg()),
                                       ([1,2,0], 'world', Time(nanoseconds=now.nanoseconds-2_000_000_000).to_msg()),
                                       ([1,2,0], 'world', Time(nanoseconds=now.nanoseconds+1_000_000_000).to_msg())]:
-            node.observation(args.names[0], pose_message(position, stamp, frame=frame))
+            node.observation('ground_truth' if mode == 'ground_truth' else args.names[0],
+                             pose_message(position, stamp, frame=frame))
         assert not node.observed and node.team.track.observed_at is None
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+@pytest.mark.parametrize('mode', ['camera', 'ground_truth'])
+def test_controller_accepts_only_the_selected_target_source(tmp_path, monkeypatch, mode):
+    import numpy as np
+    from rclpy.time import Time
+    from solo_mpc.ros_utils import pose_message
+
+    args = node_args(tmp_path)
+    args.settings_data['target_mode'] = mode
+    rclpy.init()
+    node = Controller(args)
+    try:
+        topics = {s.topic_name for s in node.subscriptions_keep}
+        assert ('/target/ground_truth' in topics) == (mode == 'ground_truth')
+        assert ('/test_uav/target/observation' in topics) == (mode == 'camera')
+        current = Time(nanoseconds=10_000_000_000)
+        monkeypatch.setattr(node, 'get_clock', lambda: SimpleNamespace(now=lambda: current))
+        source = 'ground_truth' if mode == 'ground_truth' else args.names[0]
+        other = args.names[0] if mode == 'ground_truth' else 'ground_truth'
+        node.observation(other, pose_message([99, 99, 0], current.to_msg()))
+        assert node.team.track.x is None
+        for at, point in [(9.7, [1, 1, 0]), (9.8, [2, 1, 0]), (9.9, [2, 2, 0])]:
+            stamp = Time(nanoseconds=int(at * 1e9)).to_msg()
+            node.observation(source, pose_message(point, stamp))
+            if mode == 'ground_truth':
+                np.testing.assert_array_equal(node.team.track.x[:2], point[:2])
+        np.testing.assert_array_equal(node.team.track.observation, [2, 2])
+        assert node.team.track.observed_at == pytest.approx(9.9)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_external_target_drives_cycles_outside_camera_view_and_expires(tmp_path, monkeypatch):
+    import json
+    import numpy as np
+    from geometry_msgs.msg import TwistStamped
+    from mavros_msgs.msg import State
+    from rclpy.time import Time
+    from sensor_msgs.msg import LaserScan
+    from solo_mpc.ros_utils import pose_message
+
+    args = node_args(tmp_path)
+    args.settings_data['target_mode'] = 'ground_truth'
+    rclpy.init()
+    node = Controller(args)
+    try:
+        current = [10_000_000_000]
+        monkeypatch.setattr(node, 'get_clock', lambda: SimpleNamespace(
+            now=lambda: Time(nanoseconds=current[0])))
+        stamp = Time(nanoseconds=current[0]).to_msg()
+        name = args.names[0]
+        node.pose(name, pose_message([8, 4, 3], stamp))
+        velocity = TwistStamped()
+        velocity.header.stamp, velocity.header.frame_id = stamp, 'world'
+        node.velocity(name, velocity)
+        node.state(name, State(connected=True, armed=True, mode='GUIDED'))
+        scan = LaserScan(angle_min=-np.pi, angle_increment=2*np.pi/360,
+                         range_min=.1, range_max=3., ranges=[float('inf')] * 360)
+        scan.header.stamp = stamp
+        node.scan(name, scan)
+        node.observation('ground_truth', pose_message([20, 4, 0], stamp))
+        statuses, calls = [], []
+        node.status_pub = SimpleNamespace(publish=lambda msg: statuses.append(json.loads(msg.data)))
+
+        def step(states, scans, at, seers, tracker):
+            calls.append(at)
+            assert seers == set()
+            np.testing.assert_array_equal(tracker.position(at), [20, 4])
+            return {}
+
+        monkeypatch.setattr(node.team, 'step', step)
+        node.tick()
+        node.cycles.future.result(timeout=2)
+        node.tick()
+        assert calls == [10.]
+        assert statuses[-1]['reason'] == 'ready'
+        # A feed outage cannot use the camera mode's longer SEARCH/coast budget.
+        current[0] += int((args.settings_data['target_timeout_sim'] + .1) * 1e9)
+        node.tick()
+        assert statuses[-1]['reason'] == 'target_unavailable'
+        assert node.cycles.future is None
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_target_timestamps_match_route_and_pause_resume_reset(tmp_path, monkeypatch):
+    import numpy as np
+    from rclpy.time import Time
+    from std_srvs.srv import SetBool, Trigger
+    from solo_mpc.ros_utils import pose_arrays, seconds
+
+    args = node_args(tmp_path)
+    args.scenario_data = {'tar_max_speed': 2, 'target': {
+        'waypoints': [[0, 0], [10, 0], [10, 5]], 'speeds': [2, 5],
+    }}
+    args.cfg['TAR_SMOOTH_ENABLE'] = False
+    rclpy.init()
+    node = MovingTarget(args)
+    try:
+        current = [10_000_000_000]
+        monkeypatch.setattr(node, 'get_clock', lambda: SimpleNamespace(
+            now=lambda: Time(nanoseconds=current[0])))
+        published = []
+        node.publisher = SimpleNamespace(publish=published.append)
+        node.gz = SimpleNamespace(request=lambda *a: (True, SimpleNamespace(data=True)))
+        node.tick()
+        node.set_running(SetBool.Request(data=True), SetBool.Response())
+        current[0] = 12_500_000_000
+        node.tick()
+        np.testing.assert_array_equal(pose_arrays(published[-1])[0][:2], [5, 0])
+        node.set_running(SetBool.Request(data=False), SetBool.Response())
+        current[0] = 20_000_000_000
+        node.tick()
+        np.testing.assert_array_equal(pose_arrays(published[-1])[0][:2], [5, 0])
+        node.set_running(SetBool.Request(data=True), SetBool.Response())
+        current[0] = 23_000_000_000
+        node.tick()
+        np.testing.assert_array_equal(pose_arrays(published[-1])[0][:2], [10, 2.5])
+        current[0] = 30_000_000_000
+        node.tick()
+        np.testing.assert_array_equal(pose_arrays(published[-1])[0][:2], [10, 5])
+        assert not node.running
+        node.reset(Trigger.Request(), Trigger.Response())
+
+        def delayed_request(*a):
+            current[0] += 250_000_000
+            return True, SimpleNamespace(data=True)
+
+        node.gz.request = delayed_request
+        node.tick()
+        np.testing.assert_array_equal(pose_arrays(published[-1])[0][:2], [0, 0])
+        assert seconds(published[-1].header.stamp) == 30.
+        assert published[-1].header.frame_id == 'world'
+        # An unsuccessful Gazebo pose update must not masquerade as fresh truth.
+        node.gz.request = lambda *a: (False, None)
+        count = len(published)
+        node.tick()
+        assert len(published) == count
     finally:
         node.destroy_node()
         rclpy.shutdown()

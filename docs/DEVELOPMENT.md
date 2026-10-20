@@ -83,7 +83,7 @@ which can exceed the one-second worker deadline and permanently disable it.
 The deadline remains active after initialization. A fresh-cache regression
 exercises the first solve with that default deadline.
 
-Camera detection runs in a separate ROS process per UAV. This is local
+In camera mode, detection runs in a separate ROS process per UAV. This is local
 multiprocessing; distribution across Pis still needs transport, common frames,
 and synchronized timestamps. Detection currently uses a magenta marker.
 Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
@@ -92,6 +92,14 @@ an algorithm comparison with ordered dispatch to the same persistent UAV workers
 and the same shared phase deadline. Sensor callbacks continue while a single
 background fleet cycle runs. See [the parity audit](MPC_PARITY.md) for offline
 upstream comparisons and bounded optimizer replay capture.
+
+With `./scripts/dev mpc --ground-truth-target`, the external target process
+publishes timestamped route positions directly to the controller. An
+`ExactTargetTracker` preserves each position and estimates velocity using the
+sample interval; camera mode retains `TargetTracker` and its Kalman filter.
+The controller subscribes only to the selected source. World generation, sensor
+bridging, and the startup inventory omit unused cameras and detectors. Recording
+can independently enable camera streams without enabling detection.
 
 ## Edit and rebuild
 
@@ -136,7 +144,7 @@ when replaced. Release mode uses installed code; see [Reproducibility](REPRODUCI
 | `/mpc/enable`, `/target/run`, `/target/reset` | `SetBool`, `SetBool`, `Trigger`: publisher ownership and target control |
 | `/mission/start` | `solo_mpc_interfaces/StartMission`: tracking duration and run directory |
 | `/mission/stop`, `/mission/reset`, `/mission/status` | `Trigger`: cleanup, idle reset, JSON status |
-| `/target/ground_truth`, `/uavN/ground_truth/pose` | `PoseStamped`: alignment, supervision, evaluation |
+| `/target/ground_truth`, `/uavN/ground_truth/pose` | `PoseStamped`: alignment, supervision, evaluation; target also drives control with `--ground-truth-target` |
 | `/solo/readiness`, `/clock` | JSON `String` health, `rosgraph_msgs/Clock` simulation time |
 
 ## Frames and clocks

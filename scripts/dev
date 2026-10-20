@@ -29,6 +29,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   build [sim|companion]           Build an image (sim by default)
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
+      [--ground-truth-target]     Track exact timestamped target positions without camera detection
       [--record-cameras]          Save each UAV's FOV video to runs/<run-id>/cameras/
       [--record-overhead]         Save a 1920x1080 elevated view to runs/<run-id>/overhead/
   mission run|start|stop|status|reset [--seconds WALL_SECONDS]
@@ -72,6 +73,7 @@ case "$command" in
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
         --no-wait) wait_ready=false; shift ;;
+        --ground-truth-target) export MPC_TARGET_MODE=ground_truth; shift ;;
         --record-cameras) export MPC_RECORD_CAMERAS=true; shift ;;
         --record-overhead) export MPC_RECORD_OVERHEAD=true; shift ;;
         *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
