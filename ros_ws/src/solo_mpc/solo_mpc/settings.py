@@ -46,9 +46,9 @@ DEFAULTS = dict(
     BACKUP_POSITION_TOLERANCE=0.15,
     BACKUP_VELOCITY_TOLERANCE=0.3,
     BACKUP_ACCEL_TOLERANCE=0.5,
-    COLLISION_AVOID_DISTANCE=1.5,
     W_collision_avoid=5.0,
-    UAV_SAFE_DISTANCE=1.0,
+    UAV_SAFE_RATIO=0.12,
+    COLLISION_AVOID_RATIO=3.0,
     W_uav_slack=1e4,
     W_bounds_slack=1e4,
     W_leader_slack=1e3,
@@ -62,15 +62,35 @@ DEFAULTS = dict(
     W_search_track=1.0,
     W_sat_slot=1.0,
     SLOT_SPACING_RATIO=1.75,
-    SLOT_MIN_RATIO=0.45,
-    SLOT_EXPAND_SPEED=0.5,
+    SLOT_CONTRACT=True,
+    SLOT_MIN_RATIO=0.3,
+    SLOT_EXPAND_SPEED=5.0,
+    SLOT_LOOKAHEAD_TIME=5.0,
+    K_IN_THRESHOLD=3,
+    K_OUT_THRESHOLD=10,
+    VISIBILITY_MARGIN_RATIO=0.1,
+    FORMATION_GAP_RATIO=1.0,
+    TRACK_EXIT_HYSTERESIS_RATIO=0.5,
+    SWITCH_MARGIN_RATIO=0.5,
+    PATH_DEVIATION_THRESHOLD=5.0,
+    MAX_FAIL_BEFORE_STOP=3,
+    KF_PROCESS_NOISE_STD=2.0,
+    KF_OBS_NOISE_STD=0.3,
+    USE_LEAD_PURSUIT=True,
+    LEAD_GAIN_MIN=0.4,
+    LEAD_GAIN_MAX=1.0,
+    VELOCITY_TRUSTED_THRESHOLD=1.5,
+    STANDOFF_TIME=1.0,
+    OPEN_ALL_SLOTS=False,
+    EXTRA_CELLS=[[1, 1], [-1, 1], [-1, -1], [1, -1], [2, 0], [0, 2], [-2, 0], [0, -2]],
     GRID_CELLS=[[0, 1], [0, -1]],
-    SWITCH_MARGIN=0.75,
     IPOPT_OPTIONS={
         "ipopt.max_iter": 500,
         "ipopt.max_cpu_time": 0.2,
         "ipopt.print_level": 0,
         "ipopt.tol": 1e-4,
+        "ipopt.acceptable_tol": 1e-2,
+        "ipopt.acceptable_iter": 15,
         "print_time": 0,
     },
 )
@@ -80,6 +100,7 @@ def load_settings(scenario_path, settings_path):
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
     cfg = {**DEFAULTS, **scenario.get("params", {}), **settings.get("params", {})}
+    overrides = {**scenario.get("params", {}), **settings.get("params", {})}
     cfg["TIMESTEP"] = float(settings["control_period"])
     cfg["VIEWING_RADIUS"] = float(scenario["viewing_radius"])
     cfg["WORLD_BOUNDS"] = tuple(
@@ -93,14 +114,23 @@ def load_settings(scenario_path, settings_path):
             ],
         )
     )
-    cfg["INFLATE_RADIUS"] = cfg["ROBOT_RADIUS"] + cfg["INFLATE_MARGIN"]
+    derived = dict(
+        INFLATE_RADIUS=cfg["ROBOT_RADIUS"] + cfg["INFLATE_MARGIN"],
+        UAV_SAFE_DISTANCE=max(2 * cfg["ROBOT_RADIUS"], cfg["UAV_SAFE_RATIO"] * cfg["VIEWING_RADIUS"]),
+        FORMATION_GAP=cfg["FORMATION_GAP_RATIO"] * cfg["VIEWING_RADIUS"],
+        TRACK_EXIT_HYSTERESIS=cfg["TRACK_EXIT_HYSTERESIS_RATIO"] * cfg["VIEWING_RADIUS"],
+        SWITCH_MARGIN=cfg["SWITCH_MARGIN_RATIO"] * cfg["VIEWING_RADIUS"],
+        STANDOFF_DISTANCE=cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"] * cfg["STANDOFF_TIME"],
+    )
+    for key, value in derived.items():
+        if key not in overrides:
+            cfg[key] = value
+    cfg.setdefault("COLLISION_AVOID_DISTANCE", max(cfg["COLLISION_AVOID_RATIO"] * cfg["ROBOT_RADIUS"],
+                                                 2.5 * cfg["UAV_SAFE_DISTANCE"]))
     target_route(scenario, cfg)  # Reject malformed routes before any process starts.
     cfg["TARGET_MAX_SPEED"] = max(
         [float(cfg["VMAX"]), float(scenario["tar_max_speed"]),
          *scenario["target"].get("speeds", [])]
-    )
-    cfg["STANDOFF_DISTANCE"] = max(
-        0.2, cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"]
     )
     samples = settings["lidar_samples"]
     if isinstance(samples, bool) or not isinstance(samples, int) or samples < 4:
@@ -153,6 +183,25 @@ def validate(scenario, settings, cfg):
     for key in ("HORIZON_LENGTH", "BACKUP_HORIZON", "CORRIDOR_MAX_FACES"):
         if isinstance(cfg[key], bool) or not isinstance(cfg[key], int) or cfg[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
+    for key in ("K_IN_THRESHOLD", "K_OUT_THRESHOLD", "MAX_FAIL_BEFORE_STOP"):
+        if isinstance(cfg[key], bool) or not isinstance(cfg[key], int) or cfg[key] < 1:
+            raise ValueError(f"{key} must be a positive integer")
+    for key in ("PATH_DEVIATION_THRESHOLD", "KF_PROCESS_NOISE_STD", "KF_OBS_NOISE_STD",
+                "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME"):
+        if not math.isfinite(cfg[key]) or cfg[key] <= 0:
+            raise ValueError(f"{key} must be finite and positive")
+    if not 0 < cfg["SLOT_MIN_RATIO"] <= 1:
+        raise ValueError("SLOT_MIN_RATIO must be in (0, 1]")
+    if not 0 <= cfg["VISIBILITY_MARGIN_RATIO"] < 1:
+        raise ValueError("VISIBILITY_MARGIN_RATIO must be in [0, 1)")
+    if not 0 <= cfg["LEAD_GAIN_MIN"] <= cfg["LEAD_GAIN_MAX"] <= 1:
+        raise ValueError("LEAD_GAIN_MIN/MAX must be ordered in [0, 1]")
+    capture_cycles = settings.get('diagnostic_capture_cycles', 128)
+    if isinstance(capture_cycles, bool) or not isinstance(capture_cycles, int) or capture_cycles < 0:
+        raise ValueError('diagnostic_capture_cycles must be a nonnegative integer')
+    cpu_limit = cfg["IPOPT_OPTIONS"].get("ipopt.max_cpu_time")
+    if cpu_limit is not None and (not math.isfinite(cpu_limit) or cpu_limit <= 0):
+        raise ValueError("ipopt.max_cpu_time must be finite and positive when provided")
     for key in ("TERMINAL_STOP", "CONTINGENCY"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"{key} must be a boolean")

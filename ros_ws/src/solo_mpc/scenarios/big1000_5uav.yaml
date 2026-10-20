@@ -172,12 +172,12 @@ params:
   VMAX: 10
   UMAX: 5
   ROBOT_RADIUS: 0.5
-  UAV_SAFE_DISTANCE: 2.0   # >= 2 * VMAX * dt; sampled constraints remain soft
+  UAV_SAFE_DISTANCE: 3.0   # upstream max(2R, 0.12 * VIEWING_RADIUS)
   CORRIDOR_BOX: 25
   CORRIDOR_BARRIER_EPS: 1.0
   COST_LENGTH_SCALE: 10
   W_sat_slot: 10
-  GRID_CELLS: [[-1, 0], [1, 0], [0, -1], [0, 1]]
+  GRID_CELLS: [[0, 1], [-1, 0], [0, -1], [1, 0]]
   SENSING_RADIUS: 50
   SENSING_NEIGHBOR: 55     # includes both 25 m backup reaches plus separation
   LIDAR_RANGE_MIN: 0.5
@@ -190,6 +190,7 @@ params:
   LOCAL_PLAN_RADIUS: 150
   UNKNOWN_POLICY: optimistic
   UNKNOWN_COST: 1.5        # used by Dijkstra fallback; JPS has uniform costs
+  PATH_DEVIATION_THRESHOLD: 20
   TARGET_REPLAN_THRESHOLD: 15
   MAX_COMMIT_AGE: 20
   KF_OBS_NOISE_STD: 1.0

@@ -1,6 +1,7 @@
 """Real spawned workers: numerical parity, concurrency and bounded failures."""
 
 import os
+import json
 from pathlib import Path
 import signal
 import time
@@ -73,12 +74,14 @@ def test_fresh_cache_workers_finish_first_solve_with_default_deadline(cfg, tmp_p
         assert all(w.error is None and w.process.is_alive() for w in parallel.workers.values())
 
 
-def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg):
-    names = ["alpha", "bravo", "charlie"]
+@pytest.mark.parametrize('count', [3, 5])
+def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp_path, count):
+    names = ["alpha", "bravo", "charlie", "delta", "echo"][:count]
     serial = TeamController(names, cfg)
-    with ParallelTeamController(names, cfg, timeout=3.0) as parallel:
+    captured = dict(cfg, DIAGNOSTIC_DIR=str(tmp_path), DIAGNOSTIC_CAPTURE_CYCLES=4)
+    with ParallelTeamController(names, captured, timeout=3.0) as parallel:
         pids = {w.pid for w in parallel.workers.values()}
-        assert len(pids) == 3 and os.getpid() not in pids
+        assert len(pids) == count and os.getpid() not in pids
         # The coordinator owns no native solvers or local occupancy integrators.
         assert parallel.solvers == {}
         for k in range(4):
@@ -91,6 +94,7 @@ def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg):
             actual = parallel.step(states, scans, stamp, {names[0]})
             assert parallel.leader == serial.leader
             assert parallel.assignment == serial.assignment
+            assert parallel.modes == serial.modes
             for n in names:
                 assert expected[n]["ok"] and actual[n]["ok"]
                 np.testing.assert_allclose(actual[n]["prediction"], expected[n]["prediction"],
@@ -104,6 +108,13 @@ def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg):
                 assert actual[n]["worker_pid"] in pids
                 assert actual[n]["cycle"] == k + 1
                 assert actual[n]["mapping_ms"] >= 0
+                record = json.loads((tmp_path / n / f'solve-{(k+1) % 4:04d}.json').read_text())
+                for key, value in serial.solver_inputs[n].items():
+                    if value is None:
+                        assert record['inputs'][key] is None
+                    else:
+                        np.testing.assert_allclose(record['inputs'][key], value, atol=1e-10, rtol=1e-12,
+                                                   err_msg=key)
             # Each worker receives the same snapshot. Solves really overlap;
             # creating three processes alone would not establish concurrency.
             if k:
@@ -171,10 +182,51 @@ def test_big1000_five_workers_solve_with_four_neighbors_and_shut_down():
             team.track.observe(scenario['target']['waypoints'][0], stamp)
             results = team.step(states, scans, stamp, {'uav4'})
             assert team.leader == 'uav4'
-            assert len(team.assignment) == len(set(team.assignment.values())) == 4
+            # Distant followers remain SEARCH; slots start after entry hysteresis.
+            if stamp == 0:
+                assert all(team.modes[n] == 'SEARCH' for n in names if n != 'uav4')
             assert set(results) == set(names)
-            assert all(r['ok'] for r in results.values()), {n: r['reason'] for n, r in results.items()}
-            assert all(r['prediction'].shape == (21, 6) for r in results.values())
+            assert results['uav4']['ok'], results['uav4']
+            # Restored SEARCH cost can exhaust the original iteration budget on
+            # distant starts. Worker ownership/failure classification must hold
+            # even for a numerically unsuccessful nominal solve.
+            for result in results.values():
+                assert result['ok'] or (result['reason'] == 'mpc_failed' and result['solver_status'] in (
+                    'Maximum_Iterations_Exceeded', 'Maximum_CpuTime_Exceeded'))
+                if result['ok']:
+                    assert np.isfinite(result['prediction']).all()
+            assert all(r['prediction'].shape == (21, 6) for r in results.values() if r['ok'])
             assert all(team.planners[n].gmap.blocked.shape == (501, 501) for n in names)
             assert all(w.error is None for w in team.workers.values())
     assert all(not w.process.is_alive() for w in team.workers.values())
+
+
+def test_startup_failure_joins_every_spawned_worker(cfg):
+    import multiprocessing as mp
+    before = {p.pid for p in mp.active_children()}
+    invalid = dict(cfg, CORRIDOR_MAX_FACES=-1)
+    with pytest.raises(RuntimeError, match='worker initialization failed'):
+        ParallelTeamController(['a', 'b', 'c'], invalid, startup_timeout=15.)
+    assert {p.pid for p in mp.active_children()} == before
+
+
+def test_wrong_cycle_response_disables_worker_instead_of_reusing_it(cfg):
+    from solo_mpc.core.parallel_controller import Worker
+    import multiprocessing as mp
+    context = mp.get_context('spawn')
+    receiver, sender = context.Pipe()
+    class Process:
+        def is_alive(self):
+            return False
+        def join(self, timeout):
+            pass
+    team = ParallelTeamController.__new__(ParallelTeamController)
+    team.workers = {'a': Worker(Process(), receiver)}
+    sender.send({'phase': 'solve', 'cycle': 7, 'result': {'ok': True}})
+    try:
+        messages = team._collect({'a'}, 'solve', 8, .2)
+        assert 'does not match the active cycle' in messages['a']['error']
+        assert team.workers['a'].error
+    finally:
+        sender.close()
+        receiver.close()

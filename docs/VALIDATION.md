@@ -7,6 +7,15 @@ machine or code revision. Evidence under `runs/` and `artifacts/` is Git-ignored
 and may be absent from a fresh clone. Test counts describe the suite at each
 recorded checkpoint.
 
+## Controller parity restoration — 20 October 2026
+
+Offline regression: **276 passed, 4 skipped, 3 deselected**. Direct upstream
+comparison: **20 passed**, covering three/five-UAV coordination, assembled solver
+inputs, nominal/backup outputs, planning and fallback. Runtime CPU caps and mission
+watchdogs remain unchanged. No Gazebo, SITL or mission was launched. Detailed
+findings, physical differences, evidence limitations, reference-cache correction,
+and later validation commands are in [MPC_PARITY.md](MPC_PARITY.md).
+
 ## Five-UAV large-map profile — 19 October 2026
 
 The `big1000_5uav.yaml` profile was prepared with offline checks only. No Gazebo

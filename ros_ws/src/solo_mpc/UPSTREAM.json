@@ -15,7 +15,10 @@
     "Upstream robot_jps.py corridor seeding, corridor selection and stop-plan fallback adapted to measured ROS states and persistent parallel workers.",
     "Fixed-altitude 3D flight, Iris physical limits, ROS perception, mapping, formation and supervision retained.",
     "Corridor margin includes occupied-cell quantization and three standard deviations of the configured Gaussian LiDAR noise.",
-    "Stop-plan replay follows simulation time and requires measured position, velocity and acceleration agreement; failures remain visible to mission supervision."
+    "Stop-plan replay follows simulation time and requires measured position, velocity and acceleration agreement; failures remain visible to mission supervision.",
+    "2026-10-20: Restored upstream distance-gated per-UAV modes, leader/assignment hysteresis, predictive contraction, path carrots, moving slots, travel-time pursuit and target filter covariance; see docs/MPC_PARITY.md.",
+    "Coherent elapsed-time/reanchored six-state neighbor snapshots, responsive asynchronous ROS cycles, source-stamped expiry and measured-state fallback validation are intentional physical adaptations.",
+    "Runtime CPU/worker caps retained; direct read-only upstream parity uses iteration-only reference settings. Bounded complete optimizer input and backup-warm-start capture added for future replay."
   ],
-  "inspected_on": "2026-10-19"
+  "inspected_on": "2026-10-20"
 }

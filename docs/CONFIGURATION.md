@@ -271,7 +271,7 @@ when simulation runs below real time. See [frames and clocks](DEVELOPMENT.md#fra
 
 | Setting | Default | Purpose |
 |---|---:|---|
-| `controller_execution` | `parallel` | Persistent worker per UAV; `sequential` for comparison |
+| `controller_execution` | `parallel` | Persistent worker per UAV; `sequential` orders worker solves against the same phase deadline |
 | `controller_worker_timeout_wall` / `controller_worker_startup_timeout_wall` | 1 / 30 s | Shared phase / initialization deadlines |
 | `state_timeout_sim` / `sensor_timeout_sim` | 0.5 / 0.5 s | Input freshness |
 | `target_timeout_sim` / `target_search_timeout_sim` | 1.5 / 8 s | Target loss / reacquisition deadline |
@@ -286,3 +286,7 @@ native solves may take longer than warm solves. Increasing timeouts does not
 restore sensor/control rates.
 Initialization compiles both contiguous and noncontiguous planner kernels before
 workers report ready, using the separate startup timeout rather than a flight job.
+
+Controller semantics, intentional production differences, solver-budget policy,
+and bounded `diagnostic_capture_cycles` optimizer snapshots are documented in
+[the parity audit](MPC_PARITY.md).

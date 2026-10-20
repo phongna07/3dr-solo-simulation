@@ -77,6 +77,7 @@ def test_stop_plan_reference_keeps_nominal_failure_visible(tmp_path, monkeypatch
         node.pose(name, pose_message([8., 4., 3.], stamp))
         velocity = TwistStamped()
         velocity.header.stamp = stamp
+        velocity.header.frame_id = "world"
         node.velocity(name, velocity)
         node.state(name, State(connected=True, armed=True, mode="GUIDED"))
         scan = LaserScan(angle_min=-np.pi, angle_increment=2*np.pi/360,
@@ -91,7 +92,9 @@ def test_stop_plan_reference_keeps_nominal_failure_visible(tmp_path, monkeypatch
         result = dict(ok=accepted, nominal_ok=False, reason="stop_plan: mpc_failed",
                       position=np.array([8.1, 4.]), velocity=np.zeros(2),
                       acceleration=np.zeros(2), prediction=np.tile([8., 4., 0., 0., 0., 0.], (11, 1)))
-        monkeypatch.setattr(node.team, "step", lambda *args: {name: result})
+        monkeypatch.setattr(node.team, "step", lambda *args, **kwargs: {name: result})
+        node.tick()
+        node.cycles.future.result(timeout=2)
         node.tick()
         assert len(references) == int(accepted)
         if accepted:
@@ -249,6 +252,93 @@ def test_raw_setpoints_transform_enu_and_expire_to_zero_velocity(tmp_path):
         node.poses[name] = (pose, time.monotonic() - 5.0)
         node.tick()
         assert sent[-1].velocity.z == 0.0
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_callbacks_continue_with_frozen_cycle_and_obsolete_results_are_rejected(tmp_path, monkeypatch):
+    import json
+    import threading
+    import numpy as np
+    from geometry_msgs.msg import TwistStamped
+    from mavros_msgs.msg import State
+    from sensor_msgs.msg import LaserScan
+    from rclpy.time import Time
+    from solo_mpc.ros_utils import pose_message, seconds
+
+    args = node_args(tmp_path)
+    args.settings_data['controller_execution'] = 'sequential'
+    rclpy.init()
+    node = Controller(args)
+    entered, release = threading.Event(), threading.Event()
+    try:
+        n = args.names[0]
+        epoch = node.get_clock().now().nanoseconds
+        current = [epoch]
+        monkeypatch.setattr(node, 'get_clock', lambda: SimpleNamespace(now=lambda: Time(nanoseconds=current[0])))
+        stamp = Time(nanoseconds=epoch).to_msg()
+        node.pose(n, pose_message([8., 4., 3.], stamp))
+        velocity = TwistStamped()
+        velocity.header.stamp, velocity.header.frame_id = stamp, 'world'
+        node.velocity(n, velocity)
+        node.state(n, State(connected=True, armed=True, mode='GUIDED'))
+        scan = LaserScan(angle_min=-np.pi, angle_increment=2*np.pi/360,
+                         range_min=.1, range_max=3., ranges=[float('inf')] * 360)
+        scan.header.stamp = stamp
+        node.scan(n, scan)
+        node.observation(n, pose_message([9., 4., 0.], stamp))
+        references, statuses, calls = [], [], []
+        node.outputs[n] = (SimpleNamespace(publish=references.append), SimpleNamespace(publish=lambda _: None))
+        node.status_pub = SimpleNamespace(publish=lambda msg: statuses.append(json.loads(msg.data)))
+        def optimize(states, scans, at, seers, tracker):
+            calls.append(1)
+            entered.set()
+            assert release.wait(2)
+            np.testing.assert_array_equal(states[n].position, [8.,4.,3.])
+            np.testing.assert_array_equal(tracker.observation, [9.,4.])
+            return {n: dict(ok=True, nominal_ok=True, position=np.array([8.,4.]),
+                           velocity=np.zeros(2), acceleration=np.zeros(2),
+                           prediction=np.tile([8.,4.,0.,0.,0.,0.], (11,1)), reason='track')}
+        monkeypatch.setattr(node.team, 'step', optimize)
+        node.tick()
+        assert entered.wait(1)
+        current[0] += 100_000_000
+        later = Time(nanoseconds=current[0]).to_msg()
+        node.pose(n, pose_message([8.2, 4., 3.], later))
+        node.observation(n, pose_message([9.1, 4., 0.], later))
+        node.tick()
+        assert len(calls) == 1
+        assert node.poses[n][0][0] == 8.2
+        assert node.team.track.observed_at == seconds(later)
+        release.set()
+        node.cycles.future.result(timeout=2)
+        current[0] += 500_000_000
+        node.tick()
+        assert not references
+        assert statuses[-1]['reason'] == 'obsolete_cycle'
+    finally:
+        release.set()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_invalid_target_messages_do_not_renew_visibility(tmp_path):
+    import numpy as np
+    from rclpy.time import Time
+    from solo_mpc.ros_utils import pose_message
+    args = node_args(tmp_path)
+    args.settings_data['controller_execution'] = 'sequential'
+    rclpy.init()
+    node = Controller(args)
+    try:
+        now = node.get_clock().now()
+        for position, frame, stamp in [([1,2,0], 'local', now.to_msg()),
+                                      ([np.nan,2,0], 'world', now.to_msg()),
+                                      ([1,2,0], 'world', Time(nanoseconds=now.nanoseconds-2_000_000_000).to_msg()),
+                                      ([1,2,0], 'world', Time(nanoseconds=now.nanoseconds+1_000_000_000).to_msg())]:
+            node.observation(args.names[0], pose_message(position, stamp, frame=frame))
+        assert not node.observed and node.team.track.observed_at is None
     finally:
         node.destroy_node()
         rclpy.shutdown()

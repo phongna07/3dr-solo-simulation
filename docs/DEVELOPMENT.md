@@ -88,7 +88,10 @@ multiprocessing; distribution across Pis still needs transport, common frames,
 and synchronized timestamps. Detection currently uses a magenta marker.
 Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
 in `mpc.jsonl` and `/mpc/status`. Select `controller_execution: sequential` for
-an algorithm comparison.
+an algorithm comparison with ordered dispatch to the same persistent UAV workers
+and the same shared phase deadline. Sensor callbacks continue while a single
+background fleet cycle runs. See [the parity audit](MPC_PARITY.md) for offline
+upstream comparisons and bounded optimizer replay capture.
 
 ## Edit and rebuild
 

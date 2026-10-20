@@ -10,7 +10,7 @@ import time
 
 import _pydecomp as pdc
 import numpy as np
-from scipy.optimize import linear_sum_assignment
+from .coordination import FleetGuidance, path_carrot
 
 from .mapping import SensorGrid, warmup_scan_integration
 from .mpc_problem import MPCProblem
@@ -38,19 +38,20 @@ class StopPlan:
     stamp: float
 
 
-class TeamController:
+class TeamController(FleetGuidance):
     def __init__(self, names, cfg, local_names=None):
-        self.names, self.cfg = list(names), dict(cfg)
+        super().__init__(names, dict(cfg))
         self.local_names = self.names if local_names is None else list(local_names)
         if not set(self.local_names) <= set(self.names):
             raise ValueError("Local vehicles must belong to the fleet")
-        self.track = TargetTracker()
-        self.leader = None
-        self.assignment = {}
-        self.slot_scales = {n: 1.0 for n in names}
+        self.track = TargetTracker(cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
+        self.guidance = {}
+        self.plan_failures = dict.fromkeys(names, 0)
+        self.solver_inputs = {}
         self.planners, self.solvers, self.warm, self.paths = {}, {}, {}, {}
         self.path_goals, self.path_age = {}, {}
         self.stop_plans, self.active_corridors = {}, {}
+        self.corridor_cost = {}
         self.last_scans = {n: -np.inf for n in names}
         for n in self.local_names:
             planner = LocalGridPlanner(
@@ -80,69 +81,19 @@ class TeamController:
             warmup()
             warmup_scan_integration()
 
-    def _slots(self, states, seers):
-        seers = [n for n in self.names if n in seers]
-        if self.leader not in seers:
-            self.leader = (
-                min(
-                    seers,
-                    key=lambda n: np.linalg.norm(
-                        states[n].position[:2] - self.track.x[:2]
-                    ),
-                )
-                if seers
-                else None
-            )
-        if self.leader is None:
-            return {}
-        sats = [n for n in self.names if n != self.leader]
-        if not sats:
-            return {}
-        cells = np.asarray(self.cfg["GRID_CELLS"], float)[: len(sats)]
-        if len(cells) < len(sats):
-            raise ValueError("Not enough formation slots for fleet")
-        lead = states[self.leader].position[:2]
-        offsets = cells * self.cfg["SLOT_SPACING_RATIO"] * self.cfg["VIEWING_RADIUS"]
-        costs = np.array(
-            [
-                [np.linalg.norm(states[n].position[:2] - lead - o) for o in offsets]
-                for n in sats
-            ]
-        )
-        rows, cols = linear_sum_assignment(costs)
-        assign = {sats[r]: int(c) for r, c in zip(rows, cols)}
-        if set(self.assignment) == set(sats):
-            old = sum(costs[sats.index(n), i] for n, i in self.assignment.items())
-            new = sum(costs[sats.index(n), i] for n, i in assign.items())
-            if new > old - self.cfg["SWITCH_MARGIN"]:
-                assign = self.assignment
-        self.assignment = assign
-        slots = {}
-        for n, idx in assign.items():
-            offset = offsets[idx]
-            length = np.linalg.norm(offset)
-            scale = 1.0
-            for ratio in np.linspace(
-                0.0, 1.0, max(2, int(length / self.cfg["GRID_RESOLUTION"]))
-            ):
-                point = lead + ratio * offset
-                blocked = any(
-                    p.gmap.is_blocked(*p.gmap.world_to_grid(*point))
-                    for p in self.planners.values()
-                )
-                if blocked:
-                    scale = max(self.cfg["SLOT_MIN_RATIO"], ratio - 0.1)
-                    break
-            scale = min(
-                scale,
-                self.slot_scales[n]
-                + self.cfg["SLOT_EXPAND_SPEED"]
-                * self.cfg["TIMESTEP"]
-                / max(length, 0.1),
-            )
-            self.slot_scales[n] = scale
-            slots[n] = lead + offset * scale
-        return slots
+    def prepare_guidance(self, states, predictions, stamp, seers, tracker=None):
+        track = self.track if tracker is None else tracker
+        slots = self.coordinate(states, predictions, track.position(stamp), seers,
+                                [p.gmap for p in self.planners.values()])
+        target = track.trajectory(stamp, self.cfg['HORIZON_LENGTH'],
+                                  self.cfg['TIMESTEP'], 2 * self.cfg['VMAX'])
+        self.guidance = {
+            n: dict(mode=self.modes[n], leader=n == self.leader, target=target,
+                    goal=track.pursuit(states[n].position, stamp, self.cfg),
+                    slot=slots.get(n), moving_slot=self.moving_slot(n, predictions) if n in slots else None)
+            for n in self.names
+        }
+        return self.guidance
 
     def _path(self, name, position, goal):
         planner = self.planners[name]
@@ -164,7 +115,11 @@ class TeamController:
             trimmed = np.vstack(
                 [position[:2], points[min(nearest + 1, len(points) - 1) :]]
             )
-            refresh = not all(
+            delta = points[nearest + 1] - points[nearest]
+            along = np.clip(np.dot(position[:2] - points[nearest], delta)
+                            / max(np.dot(delta, delta), 1e-12), 0, 1)
+            deviation = np.linalg.norm(position[:2] - points[nearest] - along * delta)
+            refresh = deviation > self.cfg['PATH_DEVIATION_THRESHOLD'] or not all(
                 planner.gmap.segment_clear(a, b)
                 for a, b in zip(trimmed[:-1], trimmed[1:])
             )
@@ -175,10 +130,23 @@ class TeamController:
         ok, path, *_ = planner.plan(
             np.empty((0, 2)), self.cfg["ROBOT_RADIUS"], observe=False
         )
-        if ok:
+        if ok and len(path) >= 2:
+            self.plan_failures[name] = 0
             self.path_goals[name] = np.asarray(goal).copy()
             self.path_age[name] = 0
-        return ok, path
+            self.paths[name] = path
+            return True, path
+        self.plan_failures[name] += 1
+        if previous is not None and len(previous) >= 2:
+            points = np.asarray(previous, float)
+            k = self._path_segment(points, position[:2])
+            trimmed = np.vstack([position[:2], points[k + 1:]])
+            if all(planner.gmap.segment_clear(a, b) for a, b in zip(trimmed[:-1], trimmed[1:])):
+                self.path_age[name] = self.path_age.get(name, 0) + 1
+                return True, trimmed.tolist()
+        if self.plan_failures[name] < self.cfg['MAX_FAIL_BEFORE_STOP']:
+            return True, [position[:2].copy(), position[:2].copy()]
+        return False, []
 
     @staticmethod
     def _path_segment(points, position):
@@ -259,8 +227,9 @@ class TeamController:
         box = cfg["CORRIDOR_BOX"]
         if not len(points):
             A = np.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
-            return self._select_corridor(name, state, stamp, [
-                (A, A @ position[:2] + cfg["SENSING_RADIUS"] / np.sqrt(2))])
+            candidate = (A, A @ position[:2] + cfg['SENSING_RADIUS'] / np.sqrt(2))
+            self.corridor_cost[name] = candidate
+            return self._select_corridor(name, state, stamp, [candidate])
         segment = self._corridor_seed(position, path)
         try:
             As, bs = pdc.convex_decomposition_2D(points, segment, np.array([[box, box]]))
@@ -273,6 +242,7 @@ class TeamController:
             for A, b in zip(As, bs)
             if len(b) and np.isfinite(A).all() and np.isfinite(b).all()
         ]
+        self.corridor_cost[name] = valid[0] if valid else (None, None)
         return self._select_corridor(name, state, stamp, valid)
 
     def _fallback(self, name, state, stamp, reason, **metrics):
@@ -285,7 +255,7 @@ class TeamController:
         rows = plan.states[index:index + H + 1]
         rows = np.vstack([rows, np.repeat(rows[-1:], max(0, H + 1 - len(rows)), axis=0)])
         control = plan.controls[index] if index < len(plan.controls) else np.zeros(2)
-        self.predictions[name] = rows[:, :2].copy()
+        self.predictions[name] = rows.copy()
         self.prediction_stamps[name] = stamp
         return {"ok": True, "nominal_ok": False, "position": rows[1, :2].copy(),
                 "velocity": rows[1, 2:4].copy(), "acceleration": control.copy(),
@@ -299,53 +269,48 @@ class TeamController:
                 self.last_scans[n] = scans[n].stamp
 
     def neighbor_predictions(self, states, stamp):
-        """Freeze neighbor predictions before any vehicle solve updates them."""
-        H, dt = self.cfg["HORIZON_LENGTH"], self.cfg["TIMESTEP"]
+        """Age-align cached plans to measured state, frozen before any solve."""
+        H, dt = self.cfg['HORIZON_LENGTH'], self.cfg['TIMESTEP']
         predictions = {}
-        for n, s in states.items():
+        for n, state in states.items():
             old = self.predictions[n]
-            if old is None or stamp - self.prediction_stamps[n] > 3 * dt:
-                predictions[n] = (
-                    s.position[:2] + np.arange(H + 1)[:, None] * dt * s.velocity[:2]
-                )
+            age = stamp - self.prediction_stamps[n]
+            if old is None or age < 0 or age > 3 * dt:
+                rows = np.tile(np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]], (H + 1, 1))
+                rows[:, :2] += np.arange(H + 1)[:, None] * dt * state.velocity[:2]
             else:
-                shifted = np.vstack([old[1:], old[-1:]])
-                # Predictions describe current measured states, even when the
-                # FCU response differs from the nominal acceleration-lag model.
-                predictions[n] = shifted + (s.position[:2] - shifted[0])
+                steps = min(H, max(0, int(np.floor(age / dt + 1e-6))))
+                rows = np.vstack([old[steps:], np.repeat(old[-1:], steps, axis=0)])
+                rows = rows.copy()
+                rows[:, :2] += state.position[:2] - rows[0, :2]
+                rows[0] = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
+            predictions[n] = rows
         return predictions
 
-    def step(self, states, scans, stamp, seers):
-        cfg = self.cfg
-        target = self.track.trajectory(
-            stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"],
-            cfg.get("TARGET_MAX_SPEED", cfg["VMAX"]),
-        )
+    def step(self, states, scans, stamp, seers, tracker=None):
         self.integrate_scans(scans)
-        slots = self._slots(states, seers)
         predictions = self.neighbor_predictions(states, stamp)
-        return {
-            n: self.solve_vehicle(n, states, predictions, target, slots, stamp)
-            for n in self.local_names
-        }
+        guidance = self.prepare_guidance(states, predictions, stamp, seers, tracker)
+        return {n: self.solve_vehicle(n, states, predictions, guidance[n], stamp)
+                for n in self.local_names}
 
-    def solve_vehicle(self, n, states, predictions, target, slots, stamp):
+    def solve_vehicle(self, n, states, predictions, guidance, stamp):
         """Local planning and solve against an immutable fleet-cycle snapshot."""
         cfg = self.cfg
         H = cfg["HORIZON_LENGTH"]
         state = states[n]
-        goal = slots.get(n, target[-1])
+        goal = guidance['goal'] if guidance['slot'] is None else guidance['slot']
         started = time.perf_counter()
         ok, path = self._path(n, state.position, goal)
         metrics = {"path_ms": (time.perf_counter() - started) * 1000}
-        self.paths[n] = path
         if not ok or len(path) < 2:
             return self._fallback(n, state, stamp, "planner_failed", **metrics)
         started = time.perf_counter()
         try:
             A, b = self._corridor(n, state, path, stamp)
-            if len(b) > self.solvers[n].n_faces:
-                self.solvers[n] = MPCProblem(len(self.names) - 1, len(b) + 4, cfg)
+            faces = max(len(b), 0 if self.corridor_cost[n][1] is None else len(self.corridor_cost[n][1]))
+            if faces > self.solvers[n].n_faces:
+                self.solvers[n] = MPCProblem(len(self.names) - 1, max(cfg["CORRIDOR_MAX_FACES"], 16 * int(np.ceil(faces / 16))), cfg)
                 self.warm.pop(n, None)
         except Exception as exc:
             return self._fallback(n, state, stamp, f"corridor_failed: {exc}", **metrics)
@@ -353,36 +318,29 @@ class TeamController:
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
         X, U = self.warm.get(n, (np.tile(x0, (H + 1, 1)), np.zeros((H, 2))))
         others = [k for k in self.names if k != n]
-        # Guide satellites along the path; switch to the moving slot nearby.
+        slot = np.zeros(2)
+        if guidance['slot'] is not None:
+            carrot = path_carrot(state.position, path, cfg['VMAX'] * H * cfg['TIMESTEP'])
+            slot = carrot if carrot is not None else guidance['moving_slot']
         guide = len(path) > 2
-        slot = np.asarray(path[1]) if guide else slots.get(n, np.zeros(2))
-        ok, X, U = self.solvers[n].solve(
-            x0=x0,
-            A_hard=A,
-            b_hard=b,
-            A_cost=A,
-            b_cost=b,
-            use_corr_cost=True,
-            others=[predictions[k] for k in others],
-            nb_flags=[
-                float(
-                    np.linalg.norm(states[k].position - state.position)
-                    < cfg["SENSING_NEIGHBOR"]
-                )
-                for k in others
-            ],
-            tgt=target,
-            w_search=cfg["W_search_track"] if self.leader is None else 0.0,
-            slot=slot,
-            w_slot=cfg["W_sat_slot"] if n in slots else 0.0,
-            leader=n == self.leader,
-            ref=path[1],
-            trk_goal=target[-1],
-            s_ref=float(guide),
-            X_init=X,
-            U_init=U,
-            w_tra=0.0 if n in slots else cfg["W_tra"],
+        inputs = dict(
+            x0=x0, A_hard=A, b_hard=b,
+            A_cost=self.corridor_cost[n][0], b_cost=self.corridor_cost[n][1],
+            use_corr_cost=self.corridor_cost[n][0] is not None,
+            others=[predictions[k][:, :2] for k in others],
+            nb_flags=[float(np.linalg.norm(states[k].position - state.position)
+                            < cfg['SENSING_NEIGHBOR']) for k in others],
+            tgt=guidance['target'], w_search=cfg['W_search_track'] if guidance['mode'] == 'SEARCH' else 0.0,
+            slot=slot, w_slot=cfg['W_sat_slot'] if guidance['slot'] is not None else 0.0,
+            leader=guidance['leader'], ref=path[1] if guide else np.zeros(2),
+            trk_goal=guidance['goal'], s_ref=float(guide), X_init=X, U_init=U,
+            w_tra=0.0 if guidance['slot'] is not None else cfg['W_tra'],
         )
+        self.solver_inputs[n] = inputs
+        from .diagnostics import SolverCapture
+        capture = SolverCapture(cfg, n, self.solvers[n], stamp, inputs)
+        ok, X, U = self.solvers[n].solve(**inputs)
+        capture.finish(ok, X, U, self.solvers[n])
         try:
             stats = self.solvers[n].opti.stats()
             solver_status = stats.get("return_status", "unknown")
@@ -401,7 +359,7 @@ class TeamController:
             self.stop_plans[n] = StopPlan(X.copy(), U.copy(), stamp)
         else:
             self.stop_plans.pop(n, None)
-        self.predictions[n] = X[:, :2].copy()
+        self.predictions[n] = X.copy()
         self.prediction_stamps[n] = stamp
         self.warm[n] = (np.vstack([X[1:], X[-1:]]), np.vstack([U[1:], U[-1:]]))
         return {
@@ -411,7 +369,8 @@ class TeamController:
             "velocity": X[1, 2:4],
             "acceleration": U[0],
             "prediction": X,
-            "reason": "tracking" if self.leader else "search",
+            "reason": "tracking" if guidance["mode"] == "TRACK" else "search",
+            "controller_mode": guidance["mode"],
             "solver_status": solver_status,
             "solver_ms": solver_ms,
             **metrics,

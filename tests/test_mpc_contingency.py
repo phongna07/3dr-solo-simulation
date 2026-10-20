@@ -88,7 +88,7 @@ def test_failure_executes_remaining_stop_plan_until_rest(monkeypatch, failure, t
         assert result["reason"].startswith("stop_plan: " + failure)
         index = min(k, len(plan.states) - 1)
         np.testing.assert_allclose(result["prediction"][0], plan.states[index], atol=1e-6)
-        np.testing.assert_array_equal(team.predictions["solo"], result["prediction"][:, :2])
+        np.testing.assert_array_equal(team.predictions["solo"], result["prediction"])
         assert "solo" not in team.warm
         x = Ad @ x + Bd @ result["acceleration"]
     np.testing.assert_allclose(x[2:], 0., atol=1e-5)

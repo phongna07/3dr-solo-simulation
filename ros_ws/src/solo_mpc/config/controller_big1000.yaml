@@ -11,6 +11,7 @@ lidar_rate: 10.0
 lidar_samples: 360
 lidar_noise_stddev: 0.016666667  # 3 sigma ~ LIDAR_NOISE = 0.05 m
 control_period: 0.1
+diagnostic_capture_cycles: 128  # bounded optimizer replay records per UAV in run directory
 controller_execution: parallel
 controller_worker_timeout_wall: 2.0
 controller_worker_startup_timeout_wall: 120.0
@@ -45,13 +46,14 @@ params:
   W_backup: 0.1
   TERMINAL_STOP: false
   CORRIDOR_MAX_FACES: 16
-  SLOT_MIN_RATIO: 0.45
+  SLOT_MIN_RATIO: 0.3
   SLOT_EXPAND_SPEED: 5.0
   IPOPT_OPTIONS:
     ipopt.max_iter: 500
+    # Runtime CPU cap; offline parity uses the reference iteration-only options.
     ipopt.max_cpu_time: 0.5
     ipopt.print_level: 0
     ipopt.tol: 0.0001
     ipopt.acceptable_tol: 0.01
-    ipopt.acceptable_iter: 10
+    ipopt.acceptable_iter: 15
     print_time: 0

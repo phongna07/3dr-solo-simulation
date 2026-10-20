@@ -6,10 +6,12 @@ CasADi objects cross a process boundary. Spawn avoids inheriting DDS/native stat
 """
 
 from dataclasses import dataclass
+import math
 import multiprocessing as mp
 from multiprocessing.connection import wait
 import os
 import time
+import threading
 from types import SimpleNamespace
 
 from .controller import TeamController
@@ -22,9 +24,11 @@ class MapSnapshot:
         self.ox, self.oy = cfg["WORLD_BOUNDS"][:2]
         self.resolution = cfg["GRID_RESOLUTION"]
         self.blocked = None
+        self.occupied = None
+        self.unknown = None
 
     def world_to_grid(self, wx, wy):
-        return int((wx - self.ox) / self.resolution), int((wy - self.oy) / self.resolution)
+        return int(math.floor((wx - self.ox) / self.resolution)), int(math.floor((wy - self.oy) / self.resolution))
 
     def is_blocked(self, ix, iy):
         if self.blocked is None:
@@ -50,12 +54,11 @@ def vehicle_worker(connection, name, names, cfg):
                     controller.integrate_scans({name: job["scan"]})
                     # Inflation belongs to the worker as well as ray integration.
                     grid._ensure()
-                    payload = {"blocked": grid.blocked}
+                    payload = {"blocked": grid.blocked, "occupied": grid.L >= grid.occ_logit,
+                               "unknown": grid.unknown}
                 elif phase == "solve":
-                    controller.leader = job["leader"]
                     payload = {"result": controller.solve_vehicle(
-                        name, job["states"], job["predictions"], job["target"],
-                        job["slots"], job["stamp"],
+                        name, job["states"], job["predictions"], job["guidance"], job["stamp"],
                     ), "n_faces": controller.solvers[name].n_faces}
                 else:
                     raise ValueError(f"Unknown worker phase: {phase}")
@@ -87,13 +90,15 @@ class Worker:
 class ParallelTeamController(TeamController):
     """Same measured-state interface as TeamController; local work is concurrent."""
 
-    def __init__(self, names, cfg, timeout=1.0, startup_timeout=30.0):
+    def __init__(self, names, cfg, timeout=1.0, startup_timeout=30.0, sequential=False):
         super().__init__(names, cfg, local_names=[])
         self.timeout = timeout
+        self.sequential = sequential
         self.workers = {}
         self.vehicle_metrics = {}
         self.cycle = 0
         self.closed = False
+        self._cycle_lock = threading.Lock()
         self.planners = {n: SimpleNamespace(gmap=MapSnapshot(cfg)) for n in names}
         context = mp.get_context("spawn")
         try:
@@ -155,6 +160,19 @@ class ParallelTeamController(TeamController):
         return messages
 
     def _dispatch(self, phase, jobs):
+        if self.sequential and phase == 'solve':
+            deadline = time.perf_counter() + self.timeout
+            messages = {}
+            for name, job in jobs.items():
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    messages[name] = {'error': 'fleet_solve_deadline'}
+                else:
+                    messages.update(self._dispatch_batch(phase, {name: job}, remaining))
+            return messages
+        return self._dispatch_batch(phase, jobs, self.timeout)
+
+    def _dispatch_batch(self, phase, jobs, timeout):
         pending, messages = set(), {}
         for n, job in jobs.items():
             worker = self.workers[n]
@@ -168,17 +186,22 @@ class ParallelTeamController(TeamController):
                 reason = f"worker_disconnected: {exc}"
                 self._disable(n, reason)
                 messages[n] = {"error": reason}
-        messages.update(self._collect(pending, phase, self.cycle, self.timeout))
+        messages.update(self._collect(pending, phase, self.cycle, timeout))
         return messages
 
-    def step(self, states, scans, stamp, seers):
+    def step(self, states, scans, stamp, seers, tracker=None):
+        if not self._cycle_lock.acquire(blocking=False):
+            raise RuntimeError('A fleet cycle is already in progress')
+        try:
+            return self._step(states, scans, stamp, seers, tracker)
+        finally:
+            self._cycle_lock.release()
+
+    def _step(self, states, scans, stamp, seers, tracker=None):
         if self.closed:
             raise RuntimeError("Parallel controller is closed")
         self.cycle += 1
         self.vehicle_metrics = {}
-        cfg = self.cfg
-        target = self.track.trajectory(stamp, cfg["HORIZON_LENGTH"], cfg["TIMESTEP"],
-                                       cfg.get("TARGET_MAX_SPEED", cfg["VMAX"]))
         # Capture predictions before dispatch; no within-cycle solve feeds another.
         predictions = self.neighbor_predictions(states, stamp)
         mapped = self._dispatch("map", {n: {"scan": scans[n]} for n in self.names})
@@ -187,11 +210,11 @@ class ParallelTeamController(TeamController):
             return {n: {"ok": False, "reason": mapped[n].get("error", "fleet_mapping_failed")}
                     for n in self.names}
         for n, message in mapped.items():
-            self.planners[n].gmap.blocked = message["blocked"]
-        slots = self._slots(states, seers)
+            for key in ('blocked', 'occupied', 'unknown'):
+                setattr(self.planners[n].gmap, key, message[key])
+        guidance = self.prepare_guidance(states, predictions, stamp, seers, tracker)
         solved = self._dispatch("solve", {n: dict(states=states, predictions=predictions,
-                                                 target=target, slots=slots, stamp=stamp,
-                                                 leader=self.leader) for n in self.names})
+                                                 guidance=guidance[n], stamp=stamp) for n in self.names})
         results = {}
         for n, message in solved.items():
             if "error" in message:
@@ -211,11 +234,16 @@ class ParallelTeamController(TeamController):
             result.update(self.vehicle_metrics[n])
             results[n] = result
             if result["ok"]:
-                self.predictions[n] = result["prediction"][:, :2].copy()
+                self.predictions[n] = result["prediction"].copy()
                 self.prediction_stamps[n] = stamp
         return {n: results[n] for n in self.names}
 
     def close(self):
+        """Wait for the bounded active cycle before closing its pipes."""
+        with self._cycle_lock:
+            self._close()
+
+    def _close(self):
         """Bounded shutdown, including workers stalled inside a native solve."""
         if self.closed:
             return

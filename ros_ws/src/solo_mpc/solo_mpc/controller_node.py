@@ -13,7 +13,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
-from .core.controller import TeamController, VehicleState
+from .core.controller import VehicleState
+from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
 from .core.parallel_controller import ParallelTeamController
 from .core.sensors import PoseHistory, project_scan
 from .ros_utils import (
@@ -90,17 +91,22 @@ class Controller(Node):
                     10,
                 )
             )
-        if self.execution == "parallel":
-            self.team = ParallelTeamController(
-                args.names, args.cfg,
-                timeout=args.settings_data.get("controller_worker_timeout_wall", 1.0),
-                startup_timeout=args.settings_data.get("controller_worker_startup_timeout_wall", 30.0),
-            )
-        else:
-            self.team = TeamController(args.names, args.cfg)
+        cfg = dict(args.cfg)
+        if args.run_dir:
+            cfg['DIAGNOSTIC_DIR'] = str(Path(args.run_dir, 'optimizer-inputs'))
+            cfg['DIAGNOSTIC_CAPTURE_CYCLES'] = args.settings_data.get('diagnostic_capture_cycles', 128)
+        self.team = ParallelTeamController(
+            args.names, cfg,
+            timeout=args.settings_data.get("controller_worker_timeout_wall", 1.0),
+            startup_timeout=args.settings_data.get("controller_worker_startup_timeout_wall", 30.0),
+            sequential=self.execution == 'sequential',
+        )
+        self.cycles = CycleRunner()
+        self.cycle_context = None
         try:
             self.create_timer(args.settings_data["control_period"], self.tick)
         except BaseException:
+            self.cycles.close()
             if isinstance(self.team, ParallelTeamController):
                 self.team.close()
             raise
@@ -116,6 +122,8 @@ class Controller(Node):
             or np.linalg.norm(q) < 0.9
         ):
             return
+        if n in self.poses and stamp <= self.poses[n][2]:
+            return
         self.poses[n] = (p, q, stamp)
         self.histories[n].add(stamp, p, q)
 
@@ -123,10 +131,12 @@ class Controller(Node):
         stamp = seconds(msg.header.stamp)
         v = msg.twist.linear
         v = np.array([v.x, v.y, v.z])
-        if not np.isfinite(v).all():
+        if msg.header.frame_id != 'world' or not np.isfinite(v).all():
             return
         old = self.velocities.get(n)
-        if old and stamp > old[1]:
+        if old and stamp <= old[1]:
+            return
+        if old:
             estimate = (v - old[0]) / (stamp - old[1])
             prev = self.accelerations.get(n, np.zeros(3))
             self.accelerations[n] = (
@@ -143,15 +153,44 @@ class Controller(Node):
 
     def observation(self, n, msg):
         stamp = seconds(msg.header.stamp)
-        self.observed[n] = stamp
-        if stamp > self.last_observation:
-            self.team.track.observe(
-                pose_arrays(msg)[0], stamp,
-                variance=self.args.cfg.get("KF_OBS_NOISE_STD", np.sqrt(0.03)) ** 2,
-            )
+        now = self.get_clock().now().nanoseconds * 1e-9
+        position = pose_arrays(msg)[0]
+        if (msg.header.frame_id != 'world' or not np.isfinite(position).all()
+                or not 0 <= now - stamp <= self.args.settings_data['target_timeout_sim']):
+            return
+        if stamp > self.observed.get(n, -np.inf):
+            self.observed[n] = stamp
+        if self.team.track.observe(position, stamp):
             self.last_observation = stamp
 
     def tick(self):
+        if self.cycles.future is not None:
+            if not self.cycles.future.done():
+                return
+            start, now, stamp = self.cycle_context
+            try:
+                results = self.cycles.take()
+                reason = ('partial_solver_failure' if any(
+                    not out.get('nominal_ok', out['ok']) for out in results.values()) else 'ready')
+            except Exception as exc:
+                results, reason = {}, f'controller_error: {exc}'
+                self.get_logger().error(reason)
+            current = self.get_clock().now().nanoseconds * 1e-9
+            if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
+                results, reason = {}, 'obsolete_cycle'
+            elif not all(n in self.fcu and self.fcu[n].connected and self.fcu[n].armed
+                         and self.fcu[n].mode == 'GUIDED' for n in self.args.names):
+                results, reason = {}, 'flight_state_changed'
+            for n, out in results.items():
+                if out['ok'] and not out.get('nominal_ok', True):
+                    p, q, at = self.poses[n]
+                    v, vt = self.velocities[n]
+                    measured = VehicleState(p, v, self.accelerations.get(n, np.zeros(3)), q, at)
+                    if not stopping_result_matches(measured, out, stamp, self.args.cfg, velocity_stamp=vt):
+                        results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
+                        reason = 'partial_solver_failure'
+            self._publish_cycle(start, now, stamp, reason, results)
+            return
         start = time.perf_counter()
         now = self.get_clock().now()
         stamp = now.nanoseconds * 1e-9
@@ -176,8 +215,7 @@ class Controller(Node):
             reason = "waiting_for_armed_guided_fleet"
         elif (
             self.team.track.observed_at is None
-            or stamp - self.team.track.observed_at
-            > settings["target_search_timeout_sim"]
+            or not 0 <= stamp - self.team.track.observed_at <= settings["target_search_timeout_sim"]
         ):
             reason = "target_unavailable"
         else:
@@ -185,10 +223,10 @@ class Controller(Node):
                 p, q, at = self.poses[n]
                 v, vt = self.velocities[n]
                 scan = self.scans[n]
-                if stamp - min(at, vt) > settings["state_timeout_sim"]:
+                if not all(0 <= stamp - value <= settings['state_timeout_sim'] for value in (at, vt)):
                     reason = "stale_state"
                     break
-                if stamp - seconds(scan.header.stamp) > settings["sensor_timeout_sim"]:
+                if not 0 <= stamp - seconds(scan.header.stamp) <= settings['sensor_timeout_sim']:
                     reason = "stale_scan"
                     break
                 states[n] = VehicleState(
@@ -208,7 +246,8 @@ class Controller(Node):
                         sp,
                         sq,
                         seconds(scan.header.stamp),
-                        neighbors=[self.poses[k][0] for k in names if k != n],
+                        neighbors=[self.histories[k].at(seconds(scan.header.stamp))[0]
+                                   for k in names if k != n],
                         neighbor_radius=cfg["ROBOT_RADIUS"] + 0.15,
                         height_tolerance=settings["scan_height_tolerance"],
                     )
@@ -222,7 +261,7 @@ class Controller(Node):
                 seers = {
                     n
                     for n, at in self.observed.items()
-                    if stamp - at < settings["sensor_timeout_sim"]
+                    if 0 <= stamp - at < settings["sensor_timeout_sim"]
                 }
                 if settings["target_mode"] == "ground_truth":
                     target = self.team.track.x[:2]
@@ -232,13 +271,13 @@ class Controller(Node):
                         if max(abs(self.poses[n][0][:2] - target))
                         < cfg["VIEWING_RADIUS"]
                     }
-                try:
-                    results = self.team.step(states, scans, stamp, seers)
-                    if any(not result.get("nominal_ok", result["ok"]) for result in results.values()):
-                        reason = "partial_solver_failure"
-                except Exception as exc:
-                    reason = f"controller_error: {exc}"
-                    self.get_logger().error(reason)
+                self.cycle_context = start, now, stamp
+                self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
+                return
+        self._publish_cycle(start, now, stamp, reason, results)
+
+    def _publish_cycle(self, start, now, stamp, reason, results):
+        settings = self.args.settings_data
         # A completed solve may already be obsolete. Publisher checks age too.
         for n, out in results.items():
             if not out["ok"]:
@@ -269,6 +308,9 @@ class Controller(Node):
             "execution": self.execution,
             "reason": reason,
             "leader": self.team.leader,
+            "controller_modes": self.team.modes,
+            "assignment": self.team.assignment,
+            "slot_scales": self.team.slot_scales,
             "target_mode": settings["target_mode"],
             "target_observation_age": None
             if self.team.track.observed_at is None
@@ -305,6 +347,7 @@ class Controller(Node):
             self.log.write(text + "\n")
 
     def destroy_node(self):
+        self.cycles.close()
         if isinstance(self.team, ParallelTeamController):
             self.team.close()
         if self.log:
