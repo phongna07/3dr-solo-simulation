@@ -303,4 +303,12 @@ def test_five_vehicle_launch_builds_shared_and_per_vehicle_processes_without_sta
         assert (f'/uav{i}/camera/camera_info' in topics) == cameras_enabled
         assert f'/uav{i}/scan' in topics
         assert f'/uav{i}/ground_truth/pose' in topics
+        # Frame alignment and evaluation need live UAV poses even without FPV.
+        publishers = model.findall("plugin[@name='gz::sim::systems::PosePublisher']")
+        assert len(publishers) == 1
+        publisher = publishers[0]
+        assert publisher.findtext('topic') == f'/uav{i}/ground_truth/pose'
+        assert publisher.findtext('publish_model_pose') == 'true'
+        assert publisher.findtext('use_pose_vector_msg') == 'false'
+        assert float(publisher.findtext('update_frequency')) > 0
     assert len(world.findall("model[@name='tracking_target']//sensor")) == int(record_overhead)

@@ -85,6 +85,22 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     noise = element(ray, "noise", type="gaussian")
     element(noise, "mean", 0)
     element(noise, "stddev", settings.get("lidar_noise_stddev", 0.01))
+    # UAV truth feeds frame alignment and evaluation independently of FPV.
+    publisher = element(
+        model,
+        "plugin",
+        filename="gz-sim-pose-publisher-system",
+        name="gz::sim::systems::PosePublisher",
+    )
+    for tag, value in [
+        ("publish_model_pose", "true"),
+        ("publish_link_pose", "false"),
+        ("publish_nested_model_pose", "false"),
+        ("use_pose_vector_msg", "false"),
+        ("update_frequency", "20"),
+        ("topic", f"/{name}/ground_truth/pose"),
+    ]:
+        element(publisher, tag, value)
     if not camera_enabled:
         return
     camera = element(link, "sensor", name="camera", type="camera")
@@ -103,21 +119,6 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     clip = element(optics, "clip")
     element(clip, "near", 0.05)
     element(clip, "far", 100)
-    publisher = element(
-        model,
-        "plugin",
-        filename="gz-sim-pose-publisher-system",
-        name="gz::sim::systems::PosePublisher",
-    )
-    for tag, value in [
-        ("publish_model_pose", "true"),
-        ("publish_link_pose", "false"),
-        ("publish_nested_model_pose", "false"),
-        ("use_pose_vector_msg", "false"),
-        ("update_frequency", "20"),
-        ("topic", f"/{name}/ground_truth/pose"),
-    ]:
-        element(publisher, tag, value)
 
 
 def overhead_camera(target, settings):
