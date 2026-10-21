@@ -65,132 +65,21 @@ MPC launch takes the UAV positions from the scenario, so no fleet file
 changes are needed. The row defines the initial formation; the controller can
 adjust UAV positions while following the target and avoiding obstacles.
 
-## Change fleet size
+## Three-UAV fleet
 
-For N UAVs, provide:
-
-1. N fleet entries with unique `name`, `instance`, and `sysid` values.
-2. N finite XYZ rows in `scenario.starts`, in fleet order, with XY spacing at
-   least `UAV_SAFE_DISTANCE`.
-3. At least N − 1 unique, nonzero XY offsets in `params.GRID_CELLS` for followers.
+The supplied simulation uses three fleet entries and three finite XYZ rows in
+`scenario.starts`, in fleet order. Start altitudes must match the controller's
+`flight_altitude`, and XY spacing must be at least `UAV_SAFE_DISTANCE`.
+`params.GRID_CELLS` supplies the two unique, nonzero follower offsets.
 
 Fleet schema version is `1`. Names match `[a-z][a-z0-9_]*`, system IDs are 1–255,
 and SITL instances are 0–200. The fleet needs a valid `world_name`. Each `spawn`
 contains `[x, y, z, roll, pitch, yaw]`, with finite values and angles in degrees.
 MPC launch uses scenario XY starts, ground height 0.195 m, and orientation
 `[0, 0, 90]`; `flight_altitude` controls flight height.
-
-For a fourth UAV, append this entry to the fleet's `uavs` list:
-
-```yaml
-- name: uav4
-  instance: 3
-  sysid: 4
-  spawn: [0.6, 1.8, 0.195, 0, 0, 90]
-```
-
-Append `[0.6, 1.8, 3]` to the default scenario's `starts`, and set
-`params.GRID_CELLS` to `[[0, 1], [0, -1], [-1, 0]]`. Check controller overrides.
-Count/slot mismatches fail before launch; validate each new fleet size in flight.
-Instance `i` uses MAVLink TCP `5760 + 10*i` and JSON UDP `9002 + 10*i` internally.
-
-## 1000 m field with five UAVs
-
-The supplied large-map experiment is available as
-[big1000_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml), paired with
-[fleet_5uav.yaml](../config/fleet_5uav.yaml) and
-[controller_big1000.yaml](../ros_ws/src/solo_mpc/config/controller_big1000.yaml).
-Select all three files together: the default controller overrides speeds,
-sensor range, inflation, and altitude for the small field.
-Scenario start altitudes must match the controller's fixed `flight_altitude`;
-mixing the large scenario with the small-field controller fails validation.
-
-On the simulation machine, build the updated image, then launch when ready:
-
-```bash
-./scripts/dev build sim
-./scripts/dev mpc \
-  --fleet /workspace/config/fleet_5uav.yaml \
-  --scenario /workspace/ros_ws/src/solo_mpc/scenarios/big1000_5uav.yaml \
-  --settings /workspace/ros_ws/src/solo_mpc/config/controller_big1000.yaml
-```
-
-The launch remains disarmed. Start a mission separately with
-`./scripts/dev mission run --seconds 20` for a short first check, or
-`./scripts/dev mission run` for the full route. Mission duration is wall time;
-the unpaused route takes approximately 706 simulation seconds.
-The five-UAV profile caps `simulation_real_time_factor` at **0.3** (about
-40 minutes for the route, plus takeoff and landing). This leaves wall-time
-headroom for five contingency optimizations while keeping the 0.4 simulation
-second command expiry and existing worker/solver budgets. The default small
-profile uses 1.0. Increasing this factor requires checking delivered commands
-and solver deadlines on the simulation machine; healthy optimizer statuses alone
-do not establish uninterrupted flight control.
-
-The scenario preserves all five starting coordinates, 33 target waypoints,
-32 leg speeds, 60 rectangles, and 48 circles from the frozen seed-7 map.
-Gazebo uses world `mpc_big1000`, a ground surface covering the field, 60 m tall
-obstacles, and a 2 m square target marker. Vehicles spawn on the ground and
-take off to 30 m. Planning remains horizontal; altitude is controlled separately.
-The 79.61° square camera sees approximately 50 × 50 m at flight height,
-and UAV 4 can initially observe the target. LiDAR uses 360 rays over 50 m.
-The 25 m scan-height tolerance accommodates the approximately 27° lean needed
-for 5 m/s² horizontal acceleration; the tall extrusions cover these rays.
-The larger marker remains visible at the existing 160 × 160 camera resolution.
-The optional GUI follow view and overhead recorder use a near-vertical local
-view at `(-10, -10, 100)` m relative to the target. This keeps nearby aircraft
-visible without fitting the entire 1000 m field into one image. Distant SEARCH
-vehicles can remain outside the frame until they approach the target.
-
-Four cardinal follower slots support the five-vehicle formation. Nominal speed
-and acceleration limits are 10 m/s and 5 m/s². `sitl_params` applies matching
-ArduCopter `WPNAV_SPEED: 1000` and `WPNAV_ACCEL: 500` limits through a shared
-`sitl-overrides.parm` defaults file; values use centimetres. Every FCU retains
-its own working directory, EEPROM, instance, system ID, and ports. The five
-TCP/JSON port pairs are 5760/9002 through 5800/9042, in increments of ten.
-
-The supplied 2D settings are adapted to this port as follows:
-
-- `target.speeds` controls each sampled spline leg, including the 13 m/s sprints;
-  the estimator's prediction speed limit includes those sprints. The base
-  `tar_max_speed: 5` still supplies the default for routes without a schedule.
-- `GRID_CELLS` adds four unique follower offsets. `UAV_SAFE_DISTANCE` is 3 m and
-  `SENSING_NEIGHBOR` is 55 m, covering both 25 m backup reaches plus separation.
-- `INFLATE_MARGIN: 1` plus `ROBOT_RADIUS: 0.5` gives 1.5 m inflation. The actual
-  corridor margin also accounts for LiDAR sampling and grid quantization.
-- `SPEED_RECOVERY: true` handles measured overspeed and acceleration lag with a
-  bounded braking envelope on both nominal and stopping trajectories. Once
-  braking can reach 10 m/s, the ordinary speed limit applies. Measurements,
-  corridor constraints, acceleration limits and terminal stopping remain intact.
-- The publisher samples the solved position/velocity/control trajectory at
-  elapsed simulation time, including computation and delivery delay. Plans retain
-  their source timestamp; interpolation does not renew command validity.
-- Local JPS is selected with `LOCAL_SEARCH`; this port always uses local
-  planning. The 2D-only `PLANNER`, `GOAL_SNAP_RADIUS`, `LIDAR_MARCH_STEP`,
-  `PATH_DEVIATION_THRESHOLD`, `SAFETY_MARGIN`, and `TARGET_ARRIVAL_TOL` keys are
-  omitted. Local goal selection, measured scan integration, path-clearance/
-  age checks, hard corridor margins, and mission arrival settings supply the
-  corresponding behavior in this project. There is no runtime random generation.
-
-Process ownership scales with the configured fleet:
-
-| Ownership | Processes for this profile |
-|---|---|
-| Shared simulation | One Gazebo server, one sensor/clock bridge, one readiness monitor |
-| Per UAV | Five SITL FCUs, five MAVROS nodes, five camera detector nodes |
-| Shared coordination | One frame adapter, one moving target, one MPC coordinator, one independent setpoint publisher, one mission supervisor |
-| Per UAV computation | Five persistent spawned workers, each owning its map, local planner, corridor, solver, and warm start |
-
-The coordinator exchanges frozen predictions and assigns formation slots for
-all five vehicles. Worker startup, failure deadlines, and shutdown remain
-bounded; the setpoint publisher can expire commands independently, and the
-supervisor can land the fleet. Optional camera and overhead recorders each add
-one shared recorder process. This is multiprocessing on one simulation machine.
-
-Configuration, generated world/launch actions, target timing, and five-worker
-numerical checks can run offline. Flight behavior and 10 Hz performance still
-need validation on the destination machine; no simulation was run to prepare
-this profile.
+Count/slot mismatches fail before launch. Instance `i` uses MAVLink TCP
+`5760 + 10*i` and JSON UDP `9002 + 10*i` internally, giving port pairs
+5760/9002, 5770/9012, and 5780/9022 for the supplied fleet.
 
 ## Scenario and controller parameters
 
@@ -278,8 +167,8 @@ The target process evaluates the configured route and per-leg speed schedule
 at Gazebo simulation timestamps, including mission pause, resume, and reset.
 It publishes the same position used to move the pink marker on
 `/target/ground_truth`, stamped at the route evaluation time. The controller
-preserves those exact position measurements. As in upstream `scen4`, its
-constant-velocity Kalman estimator supplies velocity, velocity confidence, and
+preserves those exact position measurements. Its constant-velocity Kalman
+estimator supplies velocity, velocity confidence, and
 lead pursuit. An external position does not imply perfect knowledge of velocity
 or future motion. Future MPC references still use bounded constant-velocity
 prediction; the controller does not read the future route.
@@ -339,4 +228,4 @@ workers report ready, using the separate startup timeout rather than a flight jo
 
 Controller semantics, intentional production differences, solver-budget policy,
 and bounded `diagnostic_capture_cycles` optimizer snapshots are documented in
-[the parity audit](MPC_PARITY.md).
+[the parity verification guide](MPC_PARITY.md).

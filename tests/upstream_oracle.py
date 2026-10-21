@@ -11,8 +11,8 @@ import numpy as np
 import _pydecomp as pdc
 from scipy.optimize import linear_sum_assignment
 
-REFERENCE = Path(os.environ.get('MPC_REFERENCE', '/home/phong/motion_planning_MPC'))
-REFERENCE_RUN = Path(os.environ.get('MPC_REFERENCE_RUN', str(REFERENCE / 'runs/scen4_n5_s0_20261019-150106')))
+REFERENCE = Path(os.environ['MPC_REFERENCE']) if os.environ.get('MPC_REFERENCE') else None
+REFERENCE_RUN = Path(os.environ['MPC_REFERENCE_RUN']) if os.environ.get('MPC_REFERENCE_RUN') else None
 
 
 def disable_disk_caches(tree):

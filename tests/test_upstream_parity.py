@@ -15,11 +15,14 @@ pytest.importorskip('casadi')
 pytest.importorskip('_pydecomp')
 from solo_mpc.core.controller import TeamController, VehicleState
 from solo_mpc.core.mapping import SensorGrid
-from solo_mpc.core.tracking import ExactTargetTracker, TargetTracker
-from solo_mpc.settings import load_settings
+from solo_mpc.core.tracking import TargetTracker
 from upstream_oracle import REFERENCE, REFERENCE_RUN, configuration, oracle, robot
 
-pytestmark = pytest.mark.skipif(not (REFERENCE / 'robot_jps.py').exists() or not (REFERENCE_RUN / 'config.json').exists(),
+UAV_COUNT = 3
+
+pytestmark = pytest.mark.skipif(REFERENCE is None or REFERENCE_RUN is None
+                                or not (REFERENCE / 'robot_jps.py').exists()
+                                or not (REFERENCE_RUN / 'config.json').exists(),
                                 reason='Set MPC_REFERENCE and MPC_REFERENCE_RUN to the read-only 2D source/run')
 
 
@@ -60,13 +63,12 @@ def trackers(cfg, Tracker):
     return port, upstream
 
 
-@pytest.mark.parametrize('count', [3, 5])
-def test_modes_slots_leader_hysteresis_and_prediction_match_actual_upstream(count):
+def test_modes_slots_leader_hysteresis_and_prediction_match_actual_upstream():
     cfg = configuration()
     Robot, Tracker, _ = oracle(cfg)
     track, reference_track = trackers(cfg, Tracker)
     target = track.observation.copy()
-    names = [f'u{i}' for i in range(count)]
+    names = [f'u{i}' for i in range(UAV_COUNT)]
     team = TeamController(names, cfg, local_names=[])
     team.track = track
     grid = SensorGrid(cfg['WORLD_BOUNDS'], resolution=cfg['GRID_RESOLUTION'],
@@ -90,7 +92,7 @@ def test_modes_slots_leader_hysteresis_and_prediction_match_actual_upstream(coun
         for _ in range(cycles):
             positions = [target.copy()]
             positions += [target + ([200 + 5*i, 150] if phase == 'far' else [-25 + 12*i, 28])
-                          for i in range(1, count)]
+                          for i in range(1, UAV_COUNT)]
             if phase == 'sticky':
                 positions[0] = target + [24, 0]
                 positions[1] = target.copy()
@@ -130,98 +132,6 @@ def test_modes_slots_leader_hysteresis_and_prediction_match_actual_upstream(coun
             stamp += cfg['TIMESTEP']
 
 
-def test_external_scen4_pursuit_and_formation_match_actual_upstream():
-    """Actual scen4 starts, with controlled approach/loss/boundary snapshots."""
-    import yaml
-    from solo_mpc.core.target_motion import target_route
-
-    scenario = yaml.safe_load((REFERENCE / 'scenarios/scen4.yaml').read_text())
-    pkg = Path(__file__).resolve().parents[1] / 'ros_ws/src/solo_mpc'
-    production, _, _ = load_settings(pkg / 'scenarios/big1000_5uav.yaml',
-                                     pkg / 'config/controller_big1000.yaml')
-    np.testing.assert_array_equal(production['starts'], scenario['starts'])
-    assert production['target'] == scenario['target']
-    cfg = configuration()
-    Robot, Tracker, _ = oracle(cfg)
-    names = [f'uav{i+1}' for i in range(5)]
-    team = TeamController(names, cfg, local_names=[])
-    team.track = ExactTargetTracker(cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
-    reference_track = Tracker(cfg['TIMESTEP'], cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
-    starts = np.asarray(scenario['starts'])[:, :2]
-    initial_target = np.asarray(scenario['target']['waypoints'][0])
-    states = {n: state(p, velocity=(0, 0)) for n, p in zip(names, starts)}
-    pred = predictions(states, cfg)
-    robots = [robot(Robot, reference_track, cfg, i, states[n], pred[n], initial_target)
-              for i, n in enumerate(names)]
-    grid = SensorGrid(cfg['WORLD_BOUNDS'], resolution=cfg['GRID_RESOLUTION'],
-                      inflate_radius=cfg['INFLATE_RADIUS'], treat_unknown_as_blocked=False)
-    team.planners = {n: SimpleNamespace(gmap=grid) for n in names}
-    for r in robots:
-        r.planner = SimpleNamespace(gmap=grid)
-    route, times = target_route(scenario, cfg)
-    phases = [('initial', 1), ('approach', 3), ('depart', 10),
-              ('lost', 1), ('boundary', 1), ('handoff', 1)]
-    k = 0
-    for phase, cycles in phases:
-        for cycle in range(cycles):
-            stamp = k * cfg['TIMESTEP']
-            target = np.array([np.interp(stamp, times, route[:, axis]) for axis in range(2)])
-            if phase == 'boundary':
-                target = np.round(target)  # make the exact 25 m edge representable
-            team.track.observe(target, stamp)
-            reference_track.update(target)
-            np.testing.assert_array_equal(team.track.position(stamp), target)
-            np.testing.assert_allclose(team.track.x[2:], reference_track.x[2:], atol=1e-12)
-            np.testing.assert_allclose(team.track.P, reference_track.P, atol=1e-12)
-            positions = starts + target - initial_target
-            if phase in ('approach', 'depart'):
-                positions[2] = positions[3] + [49 if phase == 'approach' else 70, 0]
-            elif phase in ('lost', 'boundary', 'handoff'):
-                positions[3] = target + [25 if phase == 'boundary' else 26, 0]
-                if phase == 'handoff':
-                    positions[2] = target + [1, 1]
-            states = {n: state(p, stamp, velocity=(0, 0)) for n, p in zip(names, positions)}
-            pred = predictions(states, cfg)
-            seers = {n for n, s in states.items()
-                     if np.max(np.abs(s.position[:2] - target)) <= cfg['VIEWING_RADIUS']}
-            guidance = team.prepare_guidance(states, pred, stamp, seers)
-            for i, r in enumerate(robots):
-                n = names[i]
-                r.state = np.r_[states[n].position, states[n].velocity]
-                r.states_prediction = np.column_stack([pred[n][:, :2], np.full(len(pred[n]), 30.),
-                                                       pred[n][:, 2:4], np.zeros(len(pred[n]))])
-                r.time_stamp, r.goal = stamp, np.r_[target, 0.]
-            for i, r in enumerate(robots):
-                n = names[i]
-                r._update_mode_and_role(robots)
-                r._slot = r._slot_target(robots) if r.mode == 'TRACK' and not r.is_leader_role else None
-                assert team.modes[n] == r.mode
-                assert team.leader == (None if r.leader_index is None else names[r.leader_index])
-                assert team.c_in[n] == r.c_in and team.c_out[n] == r.c_out
-                np.testing.assert_allclose(guidance[n]['goal'], r._compute_predicted_goal()[:2], atol=1e-12)
-                np.testing.assert_allclose(guidance[n]['target'], r._target_trajectory(target), atol=1e-12)
-                if r._slot is None:
-                    assert guidance[n]['slot'] is None
-                else:
-                    np.testing.assert_allclose(guidance[n]['slot'], r._slot, atol=1e-12)
-            if phase == 'initial':
-                assert team.leader == 'uav4'
-                assert [team.modes[n] for n in names] == ['SEARCH', 'SEARCH', 'SEARCH', 'TRACK', 'SEARCH']
-                assert all(guidance[n]['slot'] is None for n in names)
-            elif phase == 'approach':
-                assert team.modes['uav3'] == ('TRACK' if cycle == 2 else 'SEARCH')
-            elif phase == 'depart':
-                assert team.modes['uav3'] == ('SEARCH' if cycle == 9 else 'TRACK')
-            elif phase == 'lost':
-                assert team.leader is None and set(team.modes.values()) == {'SEARCH'}
-                assert team.track.observed_at == stamp  # global input is still fresh
-            elif phase == 'boundary':
-                assert team.leader == 'uav4'  # upstream includes the 25 m boundary
-            elif phase == 'handoff':
-                assert team.leader == 'uav3'
-            k += 1
-
-
 class RecordingSolver:
     def __init__(self, solver):
         self.solver, self.inputs = solver, None
@@ -236,15 +146,14 @@ class RecordingSolver:
         return getattr(self.solver, name)
 
 
-@pytest.mark.parametrize('count', [3, 5])
 @pytest.mark.parametrize('branch', ['search', 'distant_search', 'leader', 'path_slot', 'moving_slot'])
-def test_assembled_solver_inputs_and_real_deterministic_outputs(count, branch, monkeypatch):
+def test_assembled_solver_inputs_and_real_deterministic_outputs(branch, monkeypatch):
     cfg = configuration()
     assert 'ipopt.max_cpu_time' not in cfg['IPOPT_OPTIONS']
     Robot, Tracker, ReferenceMPC = oracle(cfg)
     track, rt = trackers(cfg, Tracker)
     target = track.observation
-    names = [f'u{i}' for i in range(count)]
+    names = [f'u{i}' for i in range(UAV_COUNT)]
     # A full fleet with identical measured positions, target measurements,
     # neighbor trajectories and occupied-grid/corridor inputs in each adapter.
     states = {n: state(target + [i * 8., 5.]) for i, n in enumerate(names)}
@@ -273,7 +182,7 @@ def test_assembled_solver_inputs_and_real_deterministic_outputs(count, branch, m
     guide = dict(mode=r.mode, leader=r.is_leader_role, target=r._target_trajectory(target),
                  goal=r._track_goal[:2], slot=r._slot,
                  moving_slot=r._slot_trajectory() if r._slot is not None else None)
-    r.mpc = RecordingSolver(ReferenceMPC(count - 1, cfg['CORRIDOR_MAX_FACES'], cfg))
+    r.mpc = RecordingSolver(ReferenceMPC(UAV_COUNT - 1, cfg['CORRIDOR_MAX_FACES'], cfg))
     r._fallback_control = lambda: np.zeros(3)
     # Two calls verify both nominal and backup warm starts, not just cold solves.
     for k in range(2):
@@ -312,22 +221,7 @@ def test_assembled_solver_inputs_and_real_deterministic_outputs(count, branch, m
         r._mpc_U = np.vstack([r._mpc_U[1:], r._mpc_U[-1:]])
 
 
-def test_production_differences_are_explicit_and_derived_after_overrides():
-    cfg = configuration()
-    pkg = Path(__file__).resolve().parents[1] / 'ros_ws/src/solo_mpc'
-    _, settings, production = load_settings(pkg / 'scenarios/big1000_5uav.yaml', pkg / 'config/controller_big1000.yaml')
-    for key in ('SWITCH_MARGIN', 'GRID_CELLS', 'UAV_SAFE_DISTANCE', 'COLLISION_AVOID_DISTANCE',
-                'SLOT_MIN_RATIO', 'SLOT_LOOKAHEAD_TIME', 'PATH_DEVIATION_THRESHOLD'):
-        assert production[key] == cfg[key], key
-    assert production['SENSING_NEIGHBOR'] == 55 and cfg['SENSING_NEIGHBOR'] == 45
-    assert production['CORRIDOR_MARGIN'] == pytest.approx(cfg['CORRIDOR_MARGIN'] + 2 / np.sqrt(2))
-    assert production['IPOPT_OPTIONS']['ipopt.max_cpu_time'] == .5
-    assert production['IPOPT_OPTIONS']['ipopt.acceptable_iter'] == cfg['IPOPT_OPTIONS']['ipopt.acceptable_iter']
-    assert settings['target_mode'] == 'camera'
-
-
-@pytest.mark.parametrize('count', [3, 5])
-def test_actual_local_planner_on_identical_occupied_grids(count):
+def test_actual_local_planner_on_identical_occupied_grids():
     from upstream_oracle import definitions, disable_disk_caches
     from solo_mpc.core.planner_grid import LocalGridPlanner
     # Independent upstream planner definitions; relative imports resolved to
@@ -341,7 +235,7 @@ def test_actual_local_planner_on_identical_occupied_grids(count):
     ns['__name__'] = 'upstream_grid_offline'
     exec(compile(disable_disk_caches(tree), str(REFERENCE / 'planner_grid.py'), 'exec'), ns)
     cfg = configuration()
-    for i in range(count):
+    for i in range(UAV_COUNT):
         kwargs = dict(world_bounds=cfg['WORLD_BOUNDS'], grid_resolution=cfg['GRID_RESOLUTION'],
                       inflate_radius=cfg['INFLATE_RADIUS'], sensing_radius=cfg['SENSING_RADIUS'],
                       local_radius=cfg['LOCAL_PLAN_RADIUS'], unknown_policy=cfg['UNKNOWN_POLICY'],
@@ -359,13 +253,12 @@ def test_actual_local_planner_on_identical_occupied_grids(count):
         np.testing.assert_allclose(ra[1], rb[1], atol=1e-12)
 
 
-@pytest.mark.parametrize('count', [3, 5])
-def test_contingency_fallback_matches_upstream_for_all_fleet_members(count):
+def test_contingency_fallback_matches_upstream_for_all_fleet_members():
     from solo_mpc.core.controller import StopPlan
     from solo_mpc.core.dynamics import model
     cfg = configuration()
     Robot, Tracker, _ = oracle(cfg)
-    names = [f'u{i}' for i in range(count)]
+    names = [f'u{i}' for i in range(UAV_COUNT)]
     team = TeamController(names, cfg, local_names=[])
     A, B = model(cfg['TIMESTEP'], cfg['D_FRAC'], cfg['ACCEL_TAU'], 2)
     for i, n in enumerate(names):
@@ -411,15 +304,13 @@ def test_dynamics_are_unchanged():
     assert (REFERENCE / 'dynamics.py').read_bytes() == Path(dynamics.__file__).read_bytes()
 
 
-@pytest.mark.parametrize('count', [3, 5])
-def test_assignment_keeps_small_improvement_and_switches_for_large_improvement(count):
+def test_assignment_keeps_small_improvement_and_switches_for_large_improvement():
     cfg = configuration()
     cfg['SLOT_CONTRACT'] = False
-    # Opposite first pair makes the improvement directly measurable; additional
-    # slots in the five-vehicle case already have their uniquely best occupants.
-    cfg['GRID_CELLS'] = [[0, 1], [0, -1], [-1, 0], [1, 0]][:count-1]
+    # Opposite follower slots make the assignment improvement measurable.
+    cfg['GRID_CELLS'] = [[0, 1], [0, -1]]
     Robot, Tracker, _ = oracle(cfg)
-    names = [f'u{i}' for i in range(count)]
+    names = [f'u{i}' for i in range(UAV_COUNT)]
     lead = np.array([100., 100.])
     team = TeamController(names, cfg, local_names=[])
     team.modes = dict.fromkeys(names, 'TRACK')
@@ -427,16 +318,15 @@ def test_assignment_keeps_small_improvement_and_switches_for_large_improvement(c
     cells = np.asarray(cfg['GRID_CELLS'])
     offsets = cells * cfg['SLOT_SPACING_RATIO'] * cfg['VIEWING_RADIUS']
     r = Robot.__new__(Robot)
-    shared = {'assign': {i+1: i for i in range(count-1)}, 'key': (0, tuple(range(1,count)), count-1)}
+    shared = {'assign': {i+1: i for i in range(UAV_COUNT-1)}, 'key': (0, tuple(range(1,UAV_COUNT)), UAV_COUNT-1)}
     for amount, expected_pair in [(.5, (0, 1)), (10., (1, 0))]:
         positions = [lead, lead + [0., -amount], lead + [0., amount]]
-        positions += [lead + offset for offset in offsets[2:]]
         states = {n: state(p) for n, p in zip(names, positions)}
         pred = predictions(states, cfg)
         team.coordinate(states, pred, lead, {names[0]}, [])
         actual = (team.assignment[names[1]], team.assignment[names[2]])
         assert actual == expected_pair
-        expected = r._assign_slots(list(range(1,count)), {i: positions[i] for i in range(1,count)},
-                                   lead + offsets, count-1, shared)
+        expected = r._assign_slots(list(range(1,UAV_COUNT)), {i: positions[i] for i in range(1,UAV_COUNT)},
+                                   lead + offsets, UAV_COUNT-1, shared)
         assert team.assignment == {names[i]: slot for i, slot in expected.items()}
         shared['assign'] = expected

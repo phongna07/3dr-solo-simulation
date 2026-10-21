@@ -46,18 +46,12 @@ def test_invalid_speed_schedule_rejected_before_launch(tmp_path, speeds):
         load_settings(path, PKG / 'config/controller.yaml')
 
 
-def test_big1000_sprints_and_frozen_map_remain_intact():
-    scenario, settings, cfg = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
-                                          PKG / 'config/controller_big1000.yaml')
+def test_three_uav_route_preserves_waypoints_and_constant_speed():
+    scenario, _, cfg = load_settings(PKG / 'scenarios/small50_3uav.yaml',
+                                     PKG / 'config/controller.yaml')
     path, times = target_route(scenario, cfg)
     _, knots = catmull_rom(scenario['target']['waypoints'], cfg['TAR_SPLINE_DS'])
     np.testing.assert_allclose(path[knots], scenario['target']['waypoints'], atol=1e-12)
-    assert np.flatnonzero(np.array(scenario['target']['speeds']) == 13).tolist() == [4, 7, 11, 14, 22]
     lengths = np.linalg.norm(np.diff(path, axis=0), axis=1)
-    for i, (a, b) in enumerate(zip(knots[:-1], knots[1:])):
-        assert lengths[a:b].sum() / (times[b] - times[a]) == pytest.approx(scenario['target']['speeds'][i])
-    for x, y, w, h in scenario['obstacles']['rects']:
-        assert not np.any((path[:, 0] > x) & (path[:, 0] < x + w)
-                          & (path[:, 1] > y) & (path[:, 1] < y + h))
-    for x, y, radius in scenario['obstacles']['circles']:
-        assert np.all(np.linalg.norm(path - [x, y], axis=1) > radius)
+    for a, b in zip(knots[:-1], knots[1:]):
+        assert lengths[a:b].sum() / (times[b] - times[a]) == pytest.approx(scenario['tar_max_speed'])

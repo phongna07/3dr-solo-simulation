@@ -196,10 +196,9 @@ def test_gazebo_cli_remains_available_after_ros_vendor_setup():
     assert any(line.strip().startswith("8.") for line in result.stdout.splitlines())
 
 
-@pytest.mark.parametrize("cells", [[[0, 1], [0, -1]], [[0, 1], [0, -1], [0, 0]]])
-def test_larger_fleet_requires_valid_follower_slots(tmp_path, cells):
+@pytest.mark.parametrize("cells", [[[-1, 0]], [[-1, 0], [0, 0]], [[-1, 0], [-1, 0]]])
+def test_three_uav_fleet_requires_valid_follower_slots(tmp_path, cells):
     scenario = yaml.safe_load((PKG / "scenarios/small50_3uav.yaml").read_text())
-    scenario["starts"].append([0.6, 1.8, 3])
     scenario["params"]["GRID_CELLS"] = cells
     path = tmp_path / "scenario.yaml"
     path.write_text(yaml.safe_dump(scenario))

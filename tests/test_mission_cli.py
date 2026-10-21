@@ -104,14 +104,14 @@ def test_external_target_progress_explains_search_as_target_pursuit(cli, capsys)
     cli.snapshots.extend([
         cli.snapshot('tracking', controller={
             'reason': 'ready', 'target_mode': 'ground_truth', 'target_input_fresh': True,
-            'vehicles': {'uav1': {'result': 'search'}, 'uav4': {'result': 'tracking'}},
+            'vehicles': {'uav1': {'result': 'search'}, 'uav3': {'result': 'tracking'}},
         }),
         cli.snapshot('completed'),
     ])
     cli.main()
     progress = capsys.readouterr().err
     assert 'uav1: search (target pursuit)' in progress
-    assert 'uav4: tracking' in progress
+    assert 'uav3: tracking' in progress
     assert 'external target: fresh' in progress
 
 

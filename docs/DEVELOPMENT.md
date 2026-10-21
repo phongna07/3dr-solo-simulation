@@ -90,8 +90,8 @@ Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
 in `mpc.jsonl` and `/mpc/status`. Select `controller_execution: sequential` for
 an algorithm comparison with ordered dispatch to the same persistent UAV workers
 and the same shared phase deadline. Sensor callbacks continue while a single
-background fleet cycle runs. See [the parity audit](MPC_PARITY.md) for offline
-upstream comparisons and bounded optimizer replay capture.
+background fleet cycle runs. See [the parity verification guide](MPC_PARITY.md)
+for offline upstream comparisons and bounded optimizer replay capture.
 
 With `./scripts/dev mpc --ground-truth-target`, the external target process
 publishes timestamped route positions directly to the controller. An

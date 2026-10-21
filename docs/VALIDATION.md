@@ -10,32 +10,11 @@ recorded checkpoint.
 ## Controller parity restoration — 20 October 2026
 
 Offline regression: **276 passed, 4 skipped, 3 deselected**. Direct upstream
-comparison: **20 passed**, covering three/five-UAV coordination, assembled solver
+comparison: **20 passed**, covering fleet coordination, assembled solver
 inputs, nominal/backup outputs, planning and fallback. Runtime CPU caps and mission
-watchdogs remain unchanged. No Gazebo, SITL or mission was launched. Detailed
-findings, physical differences, evidence limitations, reference-cache correction,
-and later validation commands are in [MPC_PARITY.md](MPC_PARITY.md).
-
-## Five-UAV large-map profile — 19 October 2026
-
-The `big1000_5uav.yaml` profile was prepared with offline checks only. No Gazebo
-server, SITL FCU, or flight mission was started for this change. Tests construct
-the five-vehicle world and launch actions, check isolated ports and sensor
-topics, exercise target leg timing and tilted LiDAR geometry, and run five real
-MPC worker processes against dispersed and compact measured-state snapshots.
-The compact snapshot activates all four neighbors per solver; shutdown joins
-every worker. Numerical tests are not flight or timing benchmarks.
-
-The host regression run passed 247 tests, with four Gazebo/model-dependent tests
-skipped. Three existing cross-process mission service tests timed out on this
-host during service discovery/replies and were excluded from that passing run:
-`test_start_cli_exit_keeps_supervision_and_automatic_landing` (two cases) and
-`test_cli_cancellation_interrupts_remote_takeoff_with_paused_sim_clock`.
-The ROS mission interface was built in a temporary overlay for these checks;
-native numerical libraries used the image's single-thread settings.
-Full simulation, tracking quality, and 10 Hz performance of this five-UAV
-profile remain to be checked on the destination machine. See the
-[configuration and launch instructions](CONFIGURATION.md#1000-m-field-with-five-uavs).
+watchdogs remain unchanged. No Gazebo, SITL or mission was launched. Current
+comparison coverage, physical adaptations, and replay commands are in
+[the parity verification guide](MPC_PARITY.md).
 
 ## Scope and remaining work
 

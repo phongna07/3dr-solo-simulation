@@ -193,13 +193,9 @@ zero-based frame indices and original simulation timestamps (`stamp_ns`). No
 video is created without images. Recorder errors appear in logs without stopping
 the flight stack.
 
-Overhead recording is independent of GUI navigation and window size. The default
-small-field camera sits 24 m above the target, offset -10 m on each horizontal
-axis. The five-UAV profile uses (-10, -10, 100) m relative to the target,
-above its 60 m obstacles. A 0.6 m aircraft near the target spans roughly
-14 pixels horizontally at flight altitude in Full HD, compared with about
-three pixels in the previous 288 m view. This is a local target view;
-distant SEARCH vehicles and some outer formation slots can be outside its frame.
+Overhead recording is independent of GUI navigation and window size. The camera
+sits 24 m above the target, offset -10 m on each horizontal axis. This is a local target view; distant SEARCH vehicles and some outer
+formation slots can be outside its frame.
 Absence from this video alone does not establish a missing Gazebo
 model or a failure to take off. Check `truth.jsonl` or use the GUI to inspect
 distant vehicles. A lazy bridge

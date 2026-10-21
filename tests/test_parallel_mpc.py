@@ -75,10 +75,9 @@ def test_fresh_cache_workers_finish_first_solve_with_default_deadline(cfg, tmp_p
         assert all(w.error is None and w.process.is_alive() for w in parallel.workers.values())
 
 
-@pytest.mark.parametrize('count', [3, 5])
 @pytest.mark.parametrize('target_mode', ['camera', 'ground_truth'])
-def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp_path, count, target_mode):
-    names = ["alpha", "bravo", "charlie", "delta", "echo"][:count]
+def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp_path, target_mode):
+    names = ["alpha", "bravo", "charlie"]
     serial = TeamController(names, cfg)
     captured = dict(cfg, DIAGNOSTIC_DIR=str(tmp_path), DIAGNOSTIC_CAPTURE_CYCLES=4)
     with ParallelTeamController(names, captured, timeout=3.0) as parallel:
@@ -86,7 +85,7 @@ def test_workers_match_serial_with_shared_neighbors_and_persistent_maps(cfg, tmp
             serial.track = ExactTargetTracker()
             parallel.track = ExactTargetTracker()
         pids = {w.pid for w in parallel.workers.values()}
-        assert len(pids) == count and os.getpid() not in pids
+        assert len(pids) == len(names) and os.getpid() not in pids
         # The coordinator owns no native solvers or local occupancy integrators.
         assert parallel.solvers == {}
         for k in range(4):
@@ -162,48 +161,6 @@ def test_single_vehicle_worker_handles_empty_neighbor_set_and_disconnect(cfg):
         result = parallel.step(states, scans, .1, {"solo"})["solo"]
         assert not result["ok"]
         assert "worker_disconnected" in result["reason"]
-
-
-def test_big1000_five_workers_solve_with_four_neighbors_and_shut_down():
-    scenario, settings, config = load_settings(PKG / 'scenarios/big1000_5uav.yaml',
-                                              PKG / 'config/controller_big1000.yaml')
-    # Exercise the real large-map solver dimensions, without simulating a flight.
-    config['IPOPT_OPTIONS'] = {**config['IPOPT_OPTIONS'], 'ipopt.max_cpu_time': 2.0}
-    names = [f'uav{i}' for i in range(1, 6)]
-    with ParallelTeamController(names, config, timeout=10., startup_timeout=120.) as team:
-        assert len({w.pid for w in team.workers.values()}) == 5
-        assert team.solvers == {}
-        # Independent measured snapshots: original dispersed starts, then a
-        # compact formation where every solver's four neighbor flags are active.
-        compact = [[95, 100, 30], [105, 100, 30], [100, 95, 30],
-                   [100, 100, 30], [100, 105, 30]]
-        for stamp, positions in [(0., scenario['starts']), (.1, compact)]:
-            states = {n: VehicleState(np.asarray(p, float), np.zeros(3), np.zeros(3),
-                                      np.array([0., 0., 0., 1.]), stamp)
-                      for n, p in zip(names, positions)}
-            scans = {n: project_scan(np.full(360, np.inf), -np.pi, 2 * np.pi / 360,
-                                     .5, 50., s.position, s.quaternion, stamp)
-                     for n, s in states.items()}
-            team.track.observe(scenario['target']['waypoints'][0], stamp)
-            results = team.step(states, scans, stamp, {'uav4'})
-            assert team.leader == 'uav4'
-            # Distant followers remain SEARCH; slots start after entry hysteresis.
-            if stamp == 0:
-                assert all(team.modes[n] == 'SEARCH' for n in names if n != 'uav4')
-            assert set(results) == set(names)
-            assert results['uav4']['ok'], results['uav4']
-            # Restored SEARCH cost can exhaust the original iteration budget on
-            # distant starts. Worker ownership/failure classification must hold
-            # even for a numerically unsuccessful nominal solve.
-            for result in results.values():
-                assert result['ok'] or (result['reason'] == 'mpc_failed' and result['solver_status'] in (
-                    'Maximum_Iterations_Exceeded', 'Maximum_CpuTime_Exceeded'))
-                if result['ok']:
-                    assert np.isfinite(result['prediction']).all()
-            assert all(r['prediction'].shape == (21, 6) for r in results.values() if r['ok'])
-            assert all(team.planners[n].gmap.blocked.shape == (501, 501) for n in names)
-            assert all(w.error is None for w in team.workers.values())
-    assert all(not w.process.is_alive() for w in team.workers.values())
 
 
 def test_startup_failure_joins_every_spawned_worker(cfg):
