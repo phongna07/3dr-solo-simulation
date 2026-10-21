@@ -160,6 +160,16 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
     output = generate_world(fleet, source, destination, "control")
     tree = ET.parse(output)
     world = tree.getroot().find("world")
+    # The 2D experiment advances only after solving; the physical simulator
+    # otherwise advances at wall rate even when a fleet solve takes longer.
+    physics = world.find('physics')
+    if physics is None:
+        physics = element(world, 'physics', name='1ms', type='ignore')
+        element(physics, 'max_step_size', 0.001)
+    factor = physics.find('real_time_factor')
+    if factor is None:
+        factor = element(physics, 'real_time_factor')
+    factor.text = str(settings.get('simulation_real_time_factor', 1.0))
     for include in list(world.findall("include")):
         world.remove(include)
     render = element(

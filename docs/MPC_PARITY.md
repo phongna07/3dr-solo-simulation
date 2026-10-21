@@ -1,5 +1,14 @@
 # Controller parity audit and offline verification — 20 October 2026
 
+**Subsequent physical-flight fixes (21 October):** the large profile now enables
+bounded measured-speed recovery, and inactive neighbor inequalities have an
+equivalent constant form for better conditioning. The original speed constraint
+remains available with `SPEED_RECOVERY: false`; upstream comparisons continue to
+test numerical behavior with recovery disabled. Source AST identity is no longer
+claimed. ROS output now includes a timestamped trajectory sampled by the
+independent publisher, and the five-UAV simulator uses a 0.3 real-time factor.
+The audit below records the earlier implementation and its validation limits.
+
 The ROS port now restores the upstream coordination and MPC input assembly while
 keeping measured-state control, physical sensing, process isolation, and command
 expiry. Neither `core/mpc_problem.py` nor `core/dynamics.py` changed. Passing

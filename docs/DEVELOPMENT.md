@@ -140,6 +140,7 @@ when replaced. Release mode uses installed code; see [Reproducibility](REPRODUCI
 | `/uavN/camera/image_raw`, `/uavN/camera/camera_info` | `Image`, `CameraInfo` |
 | `/uavN/target/observation` | `PoseStamped`: world-frame camera observation |
 | `/uavN/mpc/reference`, `/uavN/mpc/prediction` | `PositionTarget`, `nav_msgs/Path`: world ENU reference/prediction |
+| `/uavN/mpc/trajectory` | `trajectory_msgs/JointTrajectory`: world ENU XY positions, velocities and interval acceleration commands; original cycle epoch |
 | `/uavN/mavros/setpoint_raw/local` | `PositionTarget`: local ENU, converted to NED by MAVROS |
 | `/mpc/status`, `/mpc/setpoint_status` | `std_msgs/String`: JSON diagnostics |
 | `/mpc/enable`, `/target/run`, `/target/reset` | `SetBool`, `SetBool`, `Trigger`: publisher ownership and target control |

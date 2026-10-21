@@ -325,6 +325,50 @@ def test_callbacks_continue_with_frozen_cycle_and_obsolete_results_are_rejected(
         rclpy.shutdown()
 
 
+def test_publisher_samples_delayed_trajectory_without_extending_expiry(tmp_path, monkeypatch):
+    import numpy as np
+    from mavros_msgs.msg import PositionTarget, State
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    from builtin_interfaces.msg import Duration
+    from rclpy.time import Time
+    from solo_mpc.ros_utils import pose_message
+    rclpy.init()
+    node = Setpoints(node_args(tmp_path))
+    try:
+        current = [10_150_000_000]
+        monkeypatch.setattr(node, 'get_clock', lambda: SimpleNamespace(now=lambda: Time(nanoseconds=current[0])))
+        n = 'test_uav'
+        sent = []
+        node.publishers_keep[n] = SimpleNamespace(publish=sent.append)
+        node.align[n] = dict(yaw=0., translation=[0., 0., 0.])
+        node.enabled = True
+        node.state(n, State(connected=True, armed=True, mode='GUIDED'))
+        node.pose(n, pose_message([8., 4., 3.], Time(nanoseconds=current[0]).to_msg()))
+        ref = PositionTarget()
+        ref.header.frame_id = 'world'
+        ref.header.stamp = Time(nanoseconds=10_000_000_000).to_msg()
+        ref.position.z = 3.
+        node.reference(n, ref)
+        trajectory = JointTrajectory(header=ref.header, joint_names=['x', 'y'])
+        trajectory.points = [JointTrajectoryPoint(
+            positions=[8. + k * .1, 4.], velocities=[1., 0.], accelerations=[0., 0.],
+            time_from_start=Duration(nanosec=k * 100_000_000)) for k in range(6)]
+        node.trajectory(n, trajectory)
+        node.tick()
+        assert sent[-1].position.x == pytest.approx(8.15)
+        assert sent[-1].velocity.x == 1.
+        current[0] = 10_450_000_000
+        node.tick()
+        assert sent[-1].type_mask & PositionTarget.IGNORE_PX
+        assert sent[-1].velocity.x == 0.
+        current[0] = 9_990_000_000
+        node.tick()
+        assert sent[-1].type_mask & PositionTarget.IGNORE_PX
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 @pytest.mark.parametrize('mode', ['camera', 'ground_truth'])
 def test_invalid_target_messages_do_not_renew_visibility(tmp_path, mode):
     import numpy as np

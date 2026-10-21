@@ -39,6 +39,28 @@ from . import dynamics
 BIG = 1e6
 
 
+def speed_recovery_limits(x0, cfg, steps):
+    """Allow only the initial overspeed a maximum-effort brake cannot remove.
+
+    Physical state can exceed VMAX, or still accelerate past it during attitude
+    lag. Requiring VMAX at the first sample then has no feasible control. Once
+    a braking rollout enters the normal envelope, all later limits are VMAX.
+    This does not clip telemetry or relax corridor/control/terminal constraints.
+    """
+    state = np.asarray(x0, float).reshape(6).copy()
+    A, B = dynamics.model(cfg['TIMESTEP'], cfg['D_FRAC'], cfg['ACCEL_TAU'], 2)
+    direction = (A @ state)[2:4]
+    control = -cfg['UMAX'] * direction / max(np.linalg.norm(direction), 1e-12)
+    limits = np.full(steps, float(cfg['VMAX']))
+    for k in range(steps):
+        state = A @ state + B @ control
+        speed = np.linalg.norm(state[2:4])
+        if speed <= cfg['VMAX']:
+            break
+        limits[k] = speed + 1e-6
+    return limits
+
+
 class MPCProblem:
 
     def __init__(self, n_others, n_faces, cfg):
@@ -67,6 +89,9 @@ class MPCProblem:
 
         p = {}
         p["x0"] = opti.parameter(1, 6)
+        recovery = cfg.get('SPEED_RECOVERY', False)
+        if recovery:
+            p['speed_limit'] = opti.parameter(max(H, int(cfg['BACKUP_HORIZON']) if cfg['CONTINGENCY'] else 0), 1)
         p["A_hard"] = opti.parameter(n_faces, 2)
         p["b_hard"] = opti.parameter(n_faces, 1)
         p["corr_relax"] = opti.parameter(n_faces, 1)  # current intrusion into the R margin, per face
@@ -143,7 +168,7 @@ class MPCProblem:
             opti.subject_to(Ub[0, :] == U[0, :])
             for i in range(Hb):
                 opti.subject_to(Xb[i + 1, :] == ca.mtimes(Xb[i, :], Ad.T) + ca.mtimes(Ub[i, :], Bd.T))
-                opti.subject_to(ca.sumsqr(Xb[i + 1, 2:4]) <= cfg["VMAX"] ** 2)
+                opti.subject_to(ca.sumsqr(Xb[i + 1, 2:4]) <= (p['speed_limit'][i] if recovery else cfg["VMAX"]) ** 2)
                 opti.subject_to(ca.sumsqr(Ub[i, :]) <= cfg["UMAX"] ** 2)
             for i in range(1, Hb + 1):
                 s_i = 0.5 * a_rec * max(0.0, i * dt - t_hold) ** 2
@@ -159,7 +184,11 @@ class MPCProblem:
         for i in range(H):
             for j in range(n_others):
                 d2 = ca.sumsqr(X[i + 1, :2] - p["others"][j][i + 1, :])
-                opti.subject_to(d2 >= Dsafe ** 2 * p["nb_flag"][j] - Sc[i, j])
+                # An inactive, distant neighbour must not leave a huge nonlinear
+                # distance in IPOPT's barrier system. Both branches preserve the
+                # same feasible set because Sc is independently nonnegative.
+                active_distance = p['nb_flag'][j] * d2 + (1 - p['nb_flag'][j]) * Dsafe ** 2
+                opti.subject_to(active_distance >= Dsafe ** 2 * p["nb_flag"][j] - Sc[i, j])
         opti.subject_to(ca.vec(Sc) >= 0)
 
         # ── map bounds (soft-hard, as above) ──
@@ -191,7 +220,7 @@ class MPCProblem:
 
         # ── bounds ──
         for i in range(H):
-            opti.subject_to(ca.sumsqr(X[i + 1, 2:4]) <= cfg["VMAX"] ** 2)
+            opti.subject_to(ca.sumsqr(X[i + 1, 2:4]) <= (p['speed_limit'][i] if recovery else cfg["VMAX"]) ** 2)
             opti.subject_to(ca.sumsqr(U[i, :]) <= cfg["UMAX"] ** 2)
 
         # ── cost ──
@@ -283,6 +312,8 @@ class MPCProblem:
                X_init, U_init, w_tra=None):
         o, p, cfg = self.opti, self.p, self.cfg
         o.set_value(p["x0"], np.asarray(x0, float).reshape(1, 6))   # [px, py, vx, vy, ax, ay]
+        if 'speed_limit' in p:
+            o.set_value(p['speed_limit'], speed_recovery_limits(x0, cfg, max(cfg['HORIZON_LENGTH'], self.Hb)))
         Ah, bh = self._pad(A_hard, b_hard)
         Ac, bc = self._pad(A_cost, b_cost)
         o.set_value(p["A_hard"], Ah)

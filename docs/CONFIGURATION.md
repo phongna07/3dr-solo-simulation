@@ -119,6 +119,13 @@ The launch remains disarmed. Start a mission separately with
 `./scripts/dev mission run --seconds 20` for a short first check, or
 `./scripts/dev mission run` for the full route. Mission duration is wall time;
 the unpaused route takes approximately 706 simulation seconds.
+The five-UAV profile caps `simulation_real_time_factor` at **0.3** (about
+40 minutes for the route, plus takeoff and landing). This leaves wall-time
+headroom for five contingency optimizations while keeping the 0.4 simulation
+second command expiry and existing worker/solver budgets. The default small
+profile uses 1.0. Increasing this factor requires checking delivered commands
+and solver deadlines on the simulation machine; healthy optimizer statuses alone
+do not establish uninterrupted flight control.
 
 The scenario preserves all five starting coordinates, 33 target waypoints,
 32 leg speeds, 60 rectangles, and 48 circles from the frozen seed-7 map.
@@ -130,8 +137,10 @@ and UAV 4 can initially observe the target. LiDAR uses 360 rays over 50 m.
 The 25 m scan-height tolerance accommodates the approximately 27° lean needed
 for 5 m/s² horizontal acceleration; the tall extrusions cover these rays.
 The larger marker remains visible at the existing 160 × 160 camera resolution.
-The optional GUI follow view and overhead recorder scale their camera height
-with the flight altitude, so the elevated view stays above vehicles and obstacles.
+The optional GUI follow view and overhead recorder use a near-vertical local
+view at `(-10, -10, 100)` m relative to the target. This keeps nearby aircraft
+visible without fitting the entire 1000 m field into one image. Distant SEARCH
+vehicles can remain outside the frame until they approach the target.
 
 Four cardinal follower slots support the five-vehicle formation. Nominal speed
 and acceleration limits are 10 m/s and 5 m/s². `sitl_params` applies matching
@@ -145,10 +154,17 @@ The supplied 2D settings are adapted to this port as follows:
 - `target.speeds` controls each sampled spline leg, including the 13 m/s sprints;
   the estimator's prediction speed limit includes those sprints. The base
   `tar_max_speed: 5` still supplies the default for routes without a schedule.
-- `GRID_CELLS` adds four unique follower offsets. `UAV_SAFE_DISTANCE` is 2 m and
+- `GRID_CELLS` adds four unique follower offsets. `UAV_SAFE_DISTANCE` is 3 m and
   `SENSING_NEIGHBOR` is 55 m, covering both 25 m backup reaches plus separation.
 - `INFLATE_MARGIN: 1` plus `ROBOT_RADIUS: 0.5` gives 1.5 m inflation. The actual
   corridor margin also accounts for LiDAR sampling and grid quantization.
+- `SPEED_RECOVERY: true` handles measured overspeed and acceleration lag with a
+  bounded braking envelope on both nominal and stopping trajectories. Once
+  braking can reach 10 m/s, the ordinary speed limit applies. Measurements,
+  corridor constraints, acceleration limits and terminal stopping remain intact.
+- The publisher samples the solved position/velocity/control trajectory at
+  elapsed simulation time, including computation and delivery delay. Plans retain
+  their source timestamp; interpolation does not renew command validity.
 - Local JPS is selected with `LOCAL_SEARCH`; this port always uses local
   planning. The 2D-only `PLANNER`, `GOAL_SNAP_RADIUS`, `LIDAR_MARCH_STEP`,
   `PATH_DEVIATION_THRESHOLD`, `SAFETY_MARGIN`, and `TARGET_ARRIVAL_TOL` keys are

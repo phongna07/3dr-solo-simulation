@@ -255,11 +255,14 @@ class TeamController(FleetGuidance):
         rows = plan.states[index:index + H + 1]
         rows = np.vstack([rows, np.repeat(rows[-1:], max(0, H + 1 - len(rows)), axis=0)])
         control = plan.controls[index] if index < len(plan.controls) else np.zeros(2)
+        controls = plan.controls[index:index + H]
+        controls = np.vstack([controls, np.zeros((H - len(controls), 2))])
         self.predictions[name] = rows.copy()
         self.prediction_stamps[name] = stamp
         return {"ok": True, "nominal_ok": False, "position": rows[1, :2].copy(),
                 "velocity": rows[1, 2:4].copy(), "acceleration": control.copy(),
-                "prediction": rows.copy(), "reason": f"stop_plan: {reason}", **metrics}
+                "prediction": rows.copy(), "controls": controls,
+                "reason": f"stop_plan: {reason}", **metrics}
 
     def integrate_scans(self, scans):
         """Update only maps owned by this instance."""
@@ -369,6 +372,7 @@ class TeamController(FleetGuidance):
             "velocity": X[1, 2:4],
             "acceleration": U[0],
             "prediction": X,
+            "controls": U,
             "reason": "tracking" if guidance["mode"] == "TRACK" else "search",
             "controller_mode": guidance["mode"],
             "solver_status": solver_status,

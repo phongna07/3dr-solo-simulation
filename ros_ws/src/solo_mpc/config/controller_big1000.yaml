@@ -11,6 +11,7 @@ lidar_rate: 10.0
 lidar_samples: 360
 lidar_noise_stddev: 0.016666667  # 3 sigma ~ LIDAR_NOISE = 0.05 m
 control_period: 0.1
+simulation_real_time_factor: 0.3  # leave compute headroom for five contingency solves
 diagnostic_capture_cycles: 128  # bounded optimizer replay records per UAV in run directory
 controller_execution: parallel
 controller_worker_timeout_wall: 2.0
@@ -40,6 +41,7 @@ sitl_params:             # ArduCopter 4.5.3 GUIDED limits, in cm/s and cm/s²
   WPNAV_SPEED: 1000
   WPNAV_ACCEL: 500
 params:
+  SPEED_RECOVERY: true    # bounded recovery from measured FCU overspeed/attitude lag
   ACCEL_TAU: 0.2
   CONTINGENCY: true
   BACKUP_HORIZON: 25
@@ -56,4 +58,5 @@ params:
     ipopt.tol: 0.0001
     ipopt.acceptable_tol: 0.01
     ipopt.acceptable_iter: 15
+    ipopt.nlp_scaling_method: none  # avoid tiny objective scale on distant SEARCH goals
     print_time: 0

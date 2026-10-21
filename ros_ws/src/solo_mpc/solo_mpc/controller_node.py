@@ -12,6 +12,8 @@ from nav_msgs.msg import Path as RosPath
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
 
 from .core.controller import VehicleState
 from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
@@ -45,6 +47,7 @@ class Controller(Node):
         self.last_observation = -np.inf
         self.subscriptions_keep = []
         self.outputs = {}
+        self.trajectories = {}
         self.status_pub = self.create_publisher(String, "/mpc/status", 10)
         self.log = None
         if args.run_dir:
@@ -64,6 +67,7 @@ class Controller(Node):
                     + "\n"
                 )
         for n in args.names:
+            self.trajectories[n] = self.create_publisher(JointTrajectory, f"/{n}/mpc/trajectory", 10)
             self.outputs[n] = (
                 self.create_publisher(PositionTarget, f"/{n}/mpc/reference", 10),
                 self.create_publisher(RosPath, f"/{n}/mpc/prediction", 10),
@@ -109,8 +113,11 @@ class Controller(Node):
                 cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
         self.cycles = CycleRunner()
         self.cycle_context = None
+        self.last_cycle_stamp = -np.inf
         try:
-            self.create_timer(args.settings_data["control_period"], self.tick)
+            # Poll completed work promptly. A start-only 10 Hz timer plus a separate
+            # completion tick inserted two idle periods into every fleet cycle.
+            self.create_timer(min(0.02, args.settings_data["control_period"]), self.tick)
         except BaseException:
             self.cycles.close()
             if isinstance(self.team, ParallelTeamController):
@@ -199,10 +206,14 @@ class Controller(Node):
                         results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
                         reason = 'partial_solver_failure'
             self._publish_cycle(start, now, stamp, reason, results)
-            return
+            if reason != 'ready':
+                return
         start = time.perf_counter()
         now = self.get_clock().now()
         stamp = now.nanoseconds * 1e-9
+        if 0 <= stamp - self.last_cycle_stamp < self.args.settings_data['control_period'] - 1e-9:
+            return
+        self.last_cycle_stamp = stamp
         cfg = self.args.cfg
         settings = self.args.settings_data
         names = self.args.names
@@ -307,6 +318,19 @@ class Controller(Node):
                 float, out["acceleration"]
             )
             self.outputs[n][0].publish(msg)
+            trajectory = JointTrajectory()
+            trajectory.header = msg.header
+            trajectory.joint_names = ['x', 'y']
+            controls = out.get('controls')
+            if controls is not None:
+                for k, row in enumerate(out['prediction']):
+                    at = int(round(k * self.args.cfg['TIMESTEP'] * 1e9))
+                    trajectory.points.append(JointTrajectoryPoint(
+                        positions=list(map(float, row[:2])),
+                        velocities=list(map(float, row[2:4])),
+                        accelerations=list(map(float, controls[min(k, len(controls) - 1)])),
+                        time_from_start=Duration(sec=at // 10**9, nanosec=at % 10**9)))
+                self.trajectories[n].publish(trajectory)
             path = RosPath()
             path.header = msg.header
             path.poses = [

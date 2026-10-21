@@ -9,7 +9,14 @@ OVERHEAD_FPS = 20.0
 
 
 def follow_offset(settings):
-    """Keep the elevated view above the flight envelope at either map scale."""
-    scale = max(1.0, settings.get('flight_altitude', 3.0) / 3.0,
-                settings.get('obstacle_height', 5.0) / 5.0)
-    return tuple(value * scale for value in FOLLOW_OFFSET)
+    """A close target view above the obstacles, independent of map dimensions.
+
+    Scaling every offset by obstacle height put the large-map view at 288 m;
+    one-metre aircraft became only a few pixels even in Full HD. Keep the camera
+    near vertical and frame the local action. Dispersed SEARCH UAVs can be
+    outside this view until they approach the target.
+    """
+    altitude = settings.get('flight_altitude', 3.0)
+    height = max(FOLLOW_OFFSET[2], settings.get('obstacle_height', 5.0) + 10,
+                 altitude + 70 if altitude > 3 else FOLLOW_OFFSET[2])
+    return FOLLOW_OFFSET[:2] + (height,)

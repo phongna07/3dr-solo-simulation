@@ -15,7 +15,9 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
+from trajectory_msgs.msg import JointTrajectory
 
+from .core.references import sample_trajectory
 from .ros_utils import pose_arrays, qos_profile_sensor_data, run_node, seconds
 
 
@@ -24,6 +26,7 @@ class Setpoints(Node):
         super().__init__("mpc_setpoints")
         self.args = args
         self.references = {}
+        self.trajectories = {}
         self.poses = {}
         self.states = {}
         self.state_stamps = {}
@@ -40,6 +43,7 @@ class Setpoints(Node):
             )
             for typ, suffix, cb in [
                 (PositionTarget, "mpc/reference", self.reference),
+                (JointTrajectory, "mpc/trajectory", self.trajectory),
                 (PoseStamped, "mpc/pose", self.pose),
                 (State, "mavros/state", self.state),
             ]:
@@ -57,6 +61,10 @@ class Setpoints(Node):
         if msg.header.frame_id == "world":
             self.references[n] = (msg, time.monotonic())
 
+    def trajectory(self, n, msg):
+        if msg.header.frame_id == 'world' and msg.joint_names == ['x', 'y']:
+            self.trajectories[n] = msg
+
     def pose(self, n, msg):
         self.poses[n] = (msg, time.monotonic())
 
@@ -68,6 +76,7 @@ class Setpoints(Node):
         self.enabled = req.data
         if not self.enabled:
             self.references.clear()
+            self.trajectories.clear()
         res.success = True
         res.message = "enabled" if self.enabled else "disabled"
         return res
@@ -112,6 +121,7 @@ class Setpoints(Node):
                 reason = "stale_pose_or_fcu"
             elif (
                 not reference
+                or sim < seconds(reference[0].header.stamp)
                 or sim - seconds(reference[0].header.stamp)
                 > settings["command_timeout_sim"]
                 or wall - reference[1] > settings["command_timeout_wall"]
@@ -133,6 +143,14 @@ class Setpoints(Node):
                         source.acceleration_or_force.z,
                     ]
                 )
+                trajectory = self.trajectories.get(n)
+                if trajectory is not None and trajectory.header.stamp == source.header.stamp:
+                    try:
+                        xy, vxy, axy = sample_trajectory(
+                            trajectory.points, sim - seconds(source.header.stamp))
+                        position[:2], velocity[:2], acceleration[:2] = xy, vxy, axy
+                    except ValueError:
+                        reason = 'invalid_command'
                 if not np.isfinite(np.r_[position, velocity, acceleration]).all():
                     reason = "invalid_command"
                 elif (

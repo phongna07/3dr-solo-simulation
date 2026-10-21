@@ -59,6 +59,7 @@ DEFAULTS = dict(
     COST_LENGTH_SCALE=1.0,
     COST_ACCEL_SCALE=1.0,
     MPC_SOLVER="ipopt",
+    SPEED_RECOVERY=False,
     W_search_track=1.0,
     W_sat_slot=1.0,
     SLOT_SPACING_RATIO=1.75,
@@ -197,12 +198,15 @@ def validate(scenario, settings, cfg):
     if not 0 <= cfg["LEAD_GAIN_MIN"] <= cfg["LEAD_GAIN_MAX"] <= 1:
         raise ValueError("LEAD_GAIN_MIN/MAX must be ordered in [0, 1]")
     capture_cycles = settings.get('diagnostic_capture_cycles', 128)
+    factor = settings.get('simulation_real_time_factor', 1.0)
+    if isinstance(factor, bool) or not math.isfinite(factor) or factor <= 0:
+        raise ValueError('simulation_real_time_factor must be finite and positive')
     if isinstance(capture_cycles, bool) or not isinstance(capture_cycles, int) or capture_cycles < 0:
         raise ValueError('diagnostic_capture_cycles must be a nonnegative integer')
     cpu_limit = cfg["IPOPT_OPTIONS"].get("ipopt.max_cpu_time")
     if cpu_limit is not None and (not math.isfinite(cpu_limit) or cpu_limit <= 0):
         raise ValueError("ipopt.max_cpu_time must be finite and positive when provided")
-    for key in ("TERMINAL_STOP", "CONTINGENCY"):
+    for key in ("TERMINAL_STOP", "CONTINGENCY", "SPEED_RECOVERY"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"{key} must be a boolean")
     for key in ("W_backup", "LIDAR_NOISE"):
