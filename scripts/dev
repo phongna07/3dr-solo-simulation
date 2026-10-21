@@ -6,15 +6,28 @@ LOCAL_UID="$(id -u)"
 LOCAL_GID="$(id -g)"
 export LOCAL_UID LOCAL_GID
 dc=(docker compose)
+# Let Compose parse .env (including quoting/interpolation) rather than sourcing
+# it as shell code. Explicit -f options below would otherwise hide its selection.
+if [[ ! -v COMPOSE_FILE && -f .env ]]; then
+  TASK_COMPOSE_ENV="$(docker compose config --environment)"
+  while IFS= read -r TASK_ENV_LINE; do
+    case "$TASK_ENV_LINE" in
+      COMPOSE_FILE=*) export COMPOSE_FILE="${TASK_ENV_LINE#COMPOSE_FILE=}" ;;
+      COMPOSE_PATH_SEPARATOR=*) export COMPOSE_PATH_SEPARATOR="${TASK_ENV_LINE#COMPOSE_PATH_SEPARATOR=}" ;;
+    esac
+  done <<< "$TASK_COMPOSE_ENV"
+  unset TASK_COMPOSE_ENV TASK_ENV_LINE
+fi
+TASK_COMPOSE_SEPARATOR="${COMPOSE_PATH_SEPARATOR:-:}"
 if [[ -d /mnt/wslg && -d /tmp/.X11-unix ]]; then
   if [[ -n "${COMPOSE_FILE:-}" ]]; then
-    [[ ":$COMPOSE_FILE:" == *":compose.wslg.yaml:"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}:compose.wslg.yaml"
+    [[ "$TASK_COMPOSE_SEPARATOR$COMPOSE_FILE$TASK_COMPOSE_SEPARATOR" == *"${TASK_COMPOSE_SEPARATOR}compose.wslg.yaml${TASK_COMPOSE_SEPARATOR}"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}${TASK_COMPOSE_SEPARATOR}compose.wslg.yaml"
   else
     dc+=(-f compose.yaml -f compose.wslg.yaml)
   fi
 elif [[ -n "${DISPLAY:-}" && -d /tmp/.X11-unix ]]; then
   if [[ -n "${COMPOSE_FILE:-}" ]]; then
-    [[ ":$COMPOSE_FILE:" == *":compose.x11.yaml:"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}:compose.x11.yaml"
+    [[ "$TASK_COMPOSE_SEPARATOR$COMPOSE_FILE$TASK_COMPOSE_SEPARATOR" == *"${TASK_COMPOSE_SEPARATOR}compose.x11.yaml${TASK_COMPOSE_SEPARATOR}"* ]] || export COMPOSE_FILE="${COMPOSE_FILE}${TASK_COMPOSE_SEPARATOR}compose.x11.yaml"
   else
     dc+=(-f compose.yaml -f compose.x11.yaml)
   fi

@@ -8,3 +8,4 @@ __pycache__/
 ros_ws/build/
 ros_ws/install/
 ros_ws/log/
+motion_planning_MPC/

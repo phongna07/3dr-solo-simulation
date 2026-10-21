@@ -20,7 +20,10 @@ args = sys.argv[1:]
 with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in (
         "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_TARGET_MODE", "MPC_RECORD_CAMERAS",
-        "MPC_RECORD_OVERHEAD", "RUN_ID")}}) + "\\n")
+        "MPC_RECORD_OVERHEAD", "RUN_ID", "COMPOSE_FILE", "COMPOSE_PATH_SEPARATOR",
+        "LIBGL_ALWAYS_SOFTWARE")}}) + "\\n")
+if args == ["compose", "config", "--environment"]:
+    print(os.environ.get("TEST_COMPOSE_ENV", ""))
 if args[0] == "inspect":
     print('"sha256:test"')
 elif "ps" in args and "-q" in args and "--status" not in args:
@@ -40,7 +43,8 @@ if sys.argv[1:2] == ["scripts/wait_ready.py"]:
 os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 ''')
     python.chmod(0o755)
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "DOCKER_TEST_LOG": str(log)}
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "DOCKER_TEST_LOG": str(log),
+           "COMPOSE_FILE": "compose.yaml"}
     return log, env
 
 
@@ -51,6 +55,46 @@ def invoke(args, env):
 
 def calls(log):
     return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def test_dotenv_gpu_selection_reaches_compose(fake_docker, tmp_path):
+    log, env = fake_docker
+    env.pop("COMPOSE_FILE")
+    env.pop("COMPOSE_PATH_SEPARATOR", None)
+    # Use an isolated checkout so the test does not depend on the user's .env.
+    project = tmp_path / "project"
+    (project / "scripts").mkdir(parents=True)
+    launcher = project / "scripts/dev"
+    launcher.write_bytes((ROOT / "scripts/dev").read_bytes())
+    launcher.chmod(0o755)
+    (project / ".env").write_text('COMPOSE_FILE="compose.yaml;compose.nvidia.yaml"\n')
+    env["TEST_COMPOSE_ENV"] = (
+        "COMPOSE_FILE=compose.yaml;compose.nvidia.yaml\nCOMPOSE_PATH_SEPARATOR=;"
+    )
+    result = subprocess.run([str(launcher), "pull"], env=env, capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    entries = calls(log)
+    assert entries[0]["args"] == ["compose", "config", "--environment"]
+    selected = entries[-1]
+    assert "-f" not in selected["args"]
+    assert selected["env"]["COMPOSE_FILE"].split(";")[:2] == [
+        "compose.yaml", "compose.nvidia.yaml"
+    ]
+    assert selected["env"]["COMPOSE_PATH_SEPARATOR"] == ";"
+
+
+def test_explicit_shell_gpu_and_rendering_overrides_are_preserved(fake_docker):
+    log, env = fake_docker
+    env["COMPOSE_FILE"] = "compose.yaml:compose.nvidia.yaml"
+    env["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    result = invoke(["pull"], env)
+    assert result.returncode == 0, result.stderr
+    entries = calls(log)
+    assert len(entries) == 1
+    assert "-f" not in entries[0]["args"]
+    assert entries[0]["env"]["COMPOSE_FILE"].startswith("compose.yaml:compose.nvidia.yaml")
+    assert entries[0]["env"]["LIBGL_ALWAYS_SOFTWARE"] == "1"
 
 
 @pytest.mark.parametrize("args", [["sim"], ["flight", "takeoff"], ["flight", "position"],
