@@ -23,6 +23,11 @@ hardware MPC flight require further integration and validation. The
 [hardware migration guide](docs/HARDWARE.md) preserves that deployment path.
 The Iris model has not been calibrated to a physical Solo.
 
+For a self-contained MPC node workspace to share or integrate on a Raspberry Pi,
+see [hardware_mpc](hardware_mpc/README.md). It includes the controller, numerical
+dependencies and hardware integration instructions under the separate ROS package
+name `solo_mpc_hardware`.
+
 ## Documentation
 
 Read the first two guides in order, then use the references for your task.
@@ -44,6 +49,7 @@ Read the first two guides in order, then use the references for your task.
 config/                        Fleet definitions and hardware link template
 docker/                        Image build and runtime entrypoint
 locks/                         Source pins and dependency locks
+hardware_mpc/                  Standalone MPC node workspace for hardware integration
 ros_ws/src/solo_bringup/        Launch, readiness, and flight helpers
 ros_ws/src/solo_mpc/            Planning, MPC, perception, missions, evaluation
 ros_ws/src/solo_mpc_interfaces/ Mission service definition
