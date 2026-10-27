@@ -156,7 +156,9 @@ and horizontal LiDAR with 360 samples at 10 Hz, with 0.01 m Gaussian range-noise
 standard deviation. At 3 m the camera sees roughly
 a 3 m square of ground. Rates follow simulation time. The mission model has no
 gimbal; `--record-video` encodes the overhead view and all UAV FOVs into one
-synchronized video.
+synchronized video, with occupancy and drone state overlays. The state panel
+shows world XYZ values and heading/motion arrows; see
+[recordings](OPERATIONS.md#record-video) for units and interpretation.
 
 `camera` mode uses marker detections for target tracking; the controller does
 not subscribe to target truth. Ground truth still supports disarmed frame

@@ -110,6 +110,12 @@ the workers' uninflated occupied/free/unknown classifications for visualization;
 the workers retain their independent maps for planning. The combined recorder
 renders the map on the left, uses `/<uav>/mpc/pose` for world-aligned markers,
 and samples map panels on the same simulation-time timeline as camera feeds.
+The bottom-left state instruments also subscribe to world-aligned
+`/<uav>/mpc/velocity` and `/<uav>/mpc/reference`. The recorder buffers each
+stream separately and samples at or before each output tick, expiring values
+after one simulation second. Measured pose quaternions supply heading; a
+low-pass velocity derivative supplies visualization-only acceleration. This
+does not change controller state or flight setpoints.
 
 ## Edit and rebuild
 

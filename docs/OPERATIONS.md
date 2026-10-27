@@ -180,8 +180,8 @@ input; camera detectors remain disabled in that mode.
 
 The output is `runs/<run-id>/combined.avi`: a 1920 × 1080 MJPEG video at 20 FPS
 with the elevated target-following view as its background, a LiDAR occupancy map
-on the left, and labelled UAV FOVs stacked on the right. UAV cameras default to
-160 × 160 at 8 FPS.
+at top left, drone state instruments at bottom left, and labelled UAV FOVs
+stacked on the right. UAV cameras default to 160 × 160 at 8 FPS.
 
 The map combines the controller's persistent LiDAR maps for the fleet: coral
 cells mark detected obstacles, pale green cells mark scanned free space, and
@@ -192,8 +192,28 @@ the planner's inflated safety margins are not added. An obstacle report takes
 precedence when UAV maps disagree. UAV positions use aligned measured world
 poses at or before the map timestamp, never MAVROS's separate local origins.
 
-There is one panel per configured UAV in fleet order. Panels shrink to fit larger
-fleets and preserve the camera aspect ratio.
+The state panel has one row per configured UAV, with the same fleet colors as
+the map. Each row shows world XYZ position (m), velocity (m/s), estimated
+acceleration, and MPC commanded acceleration (m/s²). Its top-down instrument uses
++Y up and +X right, matching the map. The quadrotor's white nose shows measured
+yaw, independently of its movement; yaw is measured counterclockwise from +X.
+Blue arrows show velocity, green arrows estimated acceleration, and orange
+arrows MPC commanded acceleration. Arrow lengths use a fixed scale: the rim is
+2 m/s for velocity and 2 m/s² for acceleration; larger vectors stop at the rim
+while their numeric values remain visible. Z components are shown numerically.
+
+Acceleration is a smoothed derivative of measured world velocity, excluding
+gravity, rather than raw IMU acceleration or the controller's clipped state
+estimate. The orange command comes from `/<uav>/mpc/reference`, before the
+independent setpoint publisher applies its safety guards. It describes the MPC
+request, not necessarily the acceleration ultimately sent to the flight
+controller. Each telemetry stream uses its latest sample at or before the
+video timestamp. Missing data or samples older than one simulation second show
+`--`; unavailable poses show `WAITING` or `STALE`. Missing telemetry never
+delays recording. Both left panels shrink as needed to stay separate.
+
+There is one FOV panel per configured UAV in fleet order. FOV panels shrink to
+fit larger fleets and preserve the camera aspect ratio.
 All feeds share a recording gate at the first UAV's takeoff and align using their
 original Gazebo timestamps. Output runs at 20 FPS in simulation time, starting
 with the first overhead image. A short buffer waits up to 0.5 simulation seconds

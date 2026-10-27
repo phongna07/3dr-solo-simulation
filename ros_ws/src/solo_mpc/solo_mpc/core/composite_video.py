@@ -7,6 +7,7 @@ import cv2
 
 from .video import FrameVideo
 from .occupancy_video import overlay_occupancy
+from .state_video import FlightStateHistory, overlay_states, render_states
 
 
 def overlay_views(background, views):
@@ -49,13 +50,14 @@ class CompositeVideo:
     No camera can block recording indefinitely, including during shutdown.
     """
 
-    def __init__(self, path, fps, vehicles, *, occupancy=False):
+    def __init__(self, path, fps, vehicles, *, occupancy=False, telemetry=False):
         self.vehicles = tuple(vehicles)
         if not self.vehicles or len(set(self.vehicles)) != len(self.vehicles):
             raise ValueError("A composite video needs unique vehicle names")
         if {'overhead', 'occupancy'} & set(self.vehicles):
             raise ValueError("The vehicle names 'overhead' and 'occupancy' are reserved for combined recording")
         self.occupancy = occupancy
+        self.telemetry = {name: FlightStateHistory() for name in self.vehicles} if telemetry else {}
         self.video = FrameVideo(path, fps)
         # FOV queues are also bounded if the overhead feed never arrives/stalls.
         self.pending = {name: deque(maxlen=256) for name in ('overhead', *self.vehicles)}
@@ -67,6 +69,11 @@ class CompositeVideo:
         self.start_ns = None
         self.buffer_ns = 500_000_000
         self.max_wait = 2.0
+
+    def write_state(self, name, field, values, stamp_ns):
+        if self.video.closed:
+            raise RuntimeError("Video is closed")
+        self.telemetry[name].write(field, values, stamp_ns)
 
     def write(self, name, frame, stamp_ns):
         if self.video.closed:
@@ -103,7 +110,11 @@ class CompositeVideo:
             views = {name: self.current[name] for name in self.vehicles}
             frame = overlay_views(self.current['overhead'], views)
             if self.occupancy:
-                frame = overlay_occupancy(frame, self.current['occupancy'])
+                frame = overlay_occupancy(frame, self.current['occupancy'],
+                                          max_height=0.50 if self.telemetry else 1.0)
+            if self.telemetry:
+                states = {name: history.sample(stamp) for name, history in self.telemetry.items()}
+                frame = overlay_states(frame, render_states(states, stamp))
             self.video.write(frame, stamp)
 
     def close(self):

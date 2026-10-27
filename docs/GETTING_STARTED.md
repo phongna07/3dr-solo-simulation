@@ -58,7 +58,7 @@ Optionally replace the launch command with one of these:
 
 ```bash
 ./scripts/dev mpc --gui                  # Viewer after readiness
-./scripts/dev mpc --record-video         # Overhead video with LiDAR map and all UAV FOVs
+./scripts/dev mpc --record-video         # Overhead, LiDAR map, drone states, and all UAV FOVs
 ./scripts/dev mpc --ground-truth-target  # Exact target input without FPV detection
 ```
 

@@ -1,6 +1,9 @@
 """Send camera images over ROS and verify each UAV's finalized video."""
 
 import json
+import subprocess
+import sys
+import textwrap
 import time
 
 import cv2
@@ -271,3 +274,112 @@ def test_map_overlay_uses_only_aligned_past_poses_and_ignores_old_maps(tmp_path,
     finally:
         recorder.destroy_node()
         rclpy.shutdown()
+
+
+def test_state_overlay_reads_world_telemetry_and_valid_mpc_acceleration_only(tmp_path):
+    from geometry_msgs.msg import TwistStamped
+    from mavros_msgs.msg import PositionTarget
+
+    rclpy.init()
+    recorder = CameraRecorder(['alpha'], tmp_path, 20, combined=True)
+    try:
+        topics = {s.topic_name for s in recorder.subscriptions_keep}
+        assert {'/alpha/mpc/pose', '/alpha/mpc/velocity', '/alpha/mpc/reference'} <= topics
+        pose = PoseStamped()
+        pose.header.frame_id = 'world'
+        pose.header.stamp.sec = 10
+        pose.pose.position.x = -2.0
+        pose.pose.orientation.w = 1.0
+        recorder.map_pose('alpha', pose)
+        velocity = TwistStamped()
+        velocity.header = pose.header
+        velocity.twist.linear.y = 1.0
+        recorder.velocity('alpha', velocity)
+        command = PositionTarget()
+        command.header = pose.header
+        command.acceleration_or_force.x = 0.5
+        recorder.reference('alpha', command)
+        sample = recorder.composite.telemetry['alpha'].sample(10_000_000_000)
+        np.testing.assert_array_equal(sample['position'], [-2, 0, 0])
+        np.testing.assert_array_equal(sample['velocity'], [0, 1, 0])
+        np.testing.assert_array_equal(sample['command'], [0.5, 0, 0])
+        for mask in (PositionTarget.FORCE, PositionTarget.IGNORE_AFX):
+            command.header.stamp.sec += 1
+            command.type_mask = mask
+            recorder.reference('alpha', command)
+        command.type_mask = 0
+        command.header.frame_id = 'alpha/map'
+        recorder.reference('alpha', command)
+        velocity.header.frame_id = 'alpha/map'
+        recorder.velocity('alpha', velocity)
+        assert len(recorder.composite.telemetry['alpha'].samples['command']) == 1
+        assert len(recorder.composite.telemetry['alpha'].samples['velocity']) == 1
+        assert not list(tmp_path.iterdir())  # Telemetry cannot start recording.
+    finally:
+        recorder.destroy_node()
+        rclpy.shutdown()
+
+
+@pytest.mark.parametrize('shutdown_signal', ['SIGINT', 'SIGTERM'])
+def test_shutdown_during_encoding_keeps_video_and_timestamps_in_step(tmp_path, shutdown_signal):
+    # A real process signal arrives after the AVI write, before timestamp/count
+    # bookkeeping. Shutdown must finish that callback rather than encode it twice.
+    script = textwrap.dedent('''
+        import os
+        import signal
+        import sys
+        from unittest.mock import patch
+        import cv2
+        import numpy as np
+        from solo_mpc import camera_recorder
+
+        real_writer = cv2.VideoWriter
+        shutdown_signal = sys.argv[1]
+
+        class SignallingWriter:
+            def __init__(self, *args):
+                self.writer = real_writer(*args)
+                self.sent = False
+
+            def __getattr__(self, name):
+                return getattr(self.writer, name)
+
+            def write(self, frame):
+                self.writer.write(frame)
+                if not self.sent:
+                    self.sent = True
+                    os.kill(os.getpid(), getattr(signal, shutdown_signal))
+
+        class Recorder(camera_recorder.CameraRecorder):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.timer = self.create_timer(0.01, self.record)
+
+            def record(self):
+                self.timer.cancel()
+                frame = np.full((360, 640, 3), 90, np.uint8)
+                self.composite.write('alpha', frame, 1_000_000_000)
+                self.composite.write('overhead', frame, 1_000_000_000)
+
+        argv = ['recorder', '--fleet', 'unused', '--combined', '--output-dir',
+                sys.argv[2], '--fps', '20']
+        with (
+            patch.object(camera_recorder, 'CameraRecorder', Recorder),
+            patch.object(camera_recorder, 'load_config', return_value={'uavs': [{'name': 'alpha'}]}),
+            patch.object(cv2, 'VideoWriter', SignallingWriter),
+            patch.object(sys, 'argv', argv),
+        ):
+            camera_recorder.main()
+    ''')
+    result = subprocess.run([sys.executable, '-c', script, shutdown_signal, str(tmp_path)],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    timestamps = [json.loads(row) for row in (tmp_path / 'combined.timestamps.jsonl').read_text().splitlines()]
+    assert timestamps == [{'frame': 0, 'stamp_ns': 1_000_000_000}]
+    video = cv2.VideoCapture(str(tmp_path / 'combined.avi'))
+    try:
+        assert video.get(cv2.CAP_PROP_FRAME_COUNT) == 1
+        assert video.read()[0]
+        assert not video.read()[0]
+    finally:
+        video.release()
