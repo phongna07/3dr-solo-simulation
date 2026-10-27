@@ -6,6 +6,18 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 
+# Ideal gimbal: centered below the vehicle in world axes, with a fixed heading.
+CAMERA_WORLD_OFFSET = (0.0, 0.0, -0.04)
+# Optical right = world -Y, down = world -X, forward = world -Z.
+CAMERA_OPTICAL_QUATERNION = tuple(Rotation.from_matrix(
+    [[0, -1, 0], [-1, 0, 0], [0, 0, -1]]).as_quat())
+
+
+def stabilized_camera_pose(position):
+    """World optical pose of the ideal gimbal, independent of body attitude."""
+    return np.asarray(position, float) + CAMERA_WORLD_OFFSET, CAMERA_OPTICAL_QUATERNION
+
+
 @dataclass
 class ScanRays:
     origin: np.ndarray
@@ -57,14 +69,14 @@ def project_scan(
 
 
 def pixel_to_ground(pixel, intrinsic, position, quaternion, ground_z=0.05):
-    """Gazebo camera: +X forward, +Y left, +Z up; camera points body -Z.
+    """Intersect an optical-frame pixel ray with a horizontal world plane.
 
-    Optical right = body -Y; optical down = body -X; optical forward = body -Z.
-    Matches sensor pose roll=0, pitch=pi/2, yaw=0 in the generated SDF.
+    Position and quaternion describe the CAMERA OPTICAL frame in world axes
+    (+X right, +Y down, +Z forward), not the airframe. The simulated gimbal's
+    pose is supplied by stabilized_camera_pose at the image timestamp.
     """
     ray = np.linalg.solve(np.asarray(intrinsic).reshape(3, 3), [*pixel, 1.0])
-    body_ray = np.array([-ray[1], -ray[0], -ray[2]])
-    direction = Rotation.from_quat(quaternion).apply(body_ray)
+    direction = Rotation.from_quat(quaternion).apply(ray)
     if direction[2] >= -1e-6:
         raise ValueError("Camera ray does not intersect ground in front of the camera")
     scale = (ground_z - position[2]) / direction[2]

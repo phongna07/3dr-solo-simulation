@@ -18,7 +18,7 @@ if [[ -d /opt/ardupilot_gazebo ]]; then
   # ros_gz vendor hooks replace this path with bridge-only CLI definitions.
   # Retain the native Harmonic commands (including gz sim) alongside them.
   export GZ_CONFIG_PATH="/usr/share/gz:${GZ_CONFIG_PATH:-}"
-  export GZ_SIM_SYSTEM_PLUGIN_PATH="/opt/ardupilot_gazebo/build:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="/opt/solo_gazebo/lib:/opt/ardupilot_gazebo/build:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
   export GZ_SIM_RESOURCE_PATH="/opt/ardupilot_gazebo/models:/opt/ardupilot_gazebo/worlds:${GZ_SIM_RESOURCE_PATH:-}"
   export SDF_PATH="/opt/ardupilot_gazebo/models:${SDF_PATH:-}"
 fi

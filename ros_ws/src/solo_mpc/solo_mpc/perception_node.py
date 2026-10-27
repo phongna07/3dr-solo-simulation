@@ -7,7 +7,7 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image
 
-from .core.sensors import PoseHistory, pixel_to_ground
+from .core.sensors import PoseHistory, pixel_to_ground, stabilized_camera_pose
 from .ros_utils import (
     pose_arrays,
     pose_message,
@@ -74,16 +74,13 @@ class MarkerDetector(Node):
                 < self.args.settings_data["marker_min_pixels"]
             ):
                 return
-            p, q = self.history[n].at(seconds(msg.header.stamp))
-            # Sensor mount is 0.04 m below body origin, pointing down.
-            from scipy.spatial.transform import Rotation
-
-            camera = p + Rotation.from_quat(q).apply([0.0, 0.0, -0.04])
+            p, _ = self.history[n].at(seconds(msg.header.stamp))
+            camera, optical_q = stabilized_camera_pose(p)
             observed = pixel_to_ground(
                 centers[idx],
                 self.intrinsics[n],
                 camera,
-                q,
+                optical_q,
                 self.args.settings_data["target_height"] + 0.02,
             )
             self.publishers_keep[n].publish(pose_message(observed, msg.header.stamp))

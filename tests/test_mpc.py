@@ -9,7 +9,9 @@ import pytest
 import yaml
 from solo_bringup.configuration import load_config
 from solo_mpc.core.mapping import SensorGrid
-from solo_mpc.core.sensors import ScanRays, pixel_to_ground, project_scan
+from solo_mpc.core.sensors import (
+    CAMERA_OPTICAL_QUATERNION, ScanRays, pixel_to_ground, project_scan,
+)
 from solo_mpc.core.tracking import TargetTracker
 from solo_mpc.settings import load_settings
 from solo_mpc.world import bridge_config, generate_mpc_world
@@ -86,8 +88,8 @@ def test_observed_clear_rays_remove_old_occupied_cell():
 
 def test_camera_geometry_center_and_right_pixel():
     K = np.array([[100, 0, 80], [0, 100, 80], [0, 0, 1.0]])
-    center = pixel_to_ground([80, 80], K, [5, 5, 3], [0, 0, 0, 1], 0.0)
-    right = pixel_to_ground([90, 80], K, [5, 5, 3], [0, 0, 0, 1], 0.0)
+    center = pixel_to_ground([80, 80], K, [5, 5, 3], CAMERA_OPTICAL_QUATERNION, 0.0)
+    right = pixel_to_ground([90, 80], K, [5, 5, 3], CAMERA_OPTICAL_QUATERNION, 0.0)
     assert np.allclose(center, [5, 5, 0])
     assert np.allclose(right, [5, 4.7, 0])
 

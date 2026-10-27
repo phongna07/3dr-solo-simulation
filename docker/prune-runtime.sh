@@ -28,6 +28,10 @@ find /usr/lib/python3/dist-packages -maxdepth 1 -name 'colcon*' -print \
 find /usr/lib/python3/dist-packages -maxdepth 1 -name 'colcon*' -exec rm -rf {} +
 # Keep all dependency license / notice files under /usr/share/doc and site-packages.
 dpkg-query -W -f='${binary:Package}=${Version}\n' | sort > /opt/solo/apt-packages.lock
-find /opt/solo_ws/install /workspace/scripts /opt/solo/deploy /usr/local/bin/solo-entrypoint -type f ! -name '*.pyc' -print0 | sort -z | \
+application_paths=(/opt/solo_ws/install /workspace/scripts /opt/solo/deploy /usr/local/bin/solo-entrypoint)
+if [[ -d /opt/solo_gazebo/lib ]]; then
+  application_paths+=(/opt/solo_gazebo/lib)
+fi
+find "${application_paths[@]}" -type f ! -name '*.pyc' -print0 | sort -z | \
   xargs -0 sha256sum > /opt/solo/application.sha256
 rm -f /usr/local/bin/install-runtime /usr/local/bin/prune-runtime

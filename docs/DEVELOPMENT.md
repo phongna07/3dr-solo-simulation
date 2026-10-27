@@ -42,6 +42,7 @@ Its `flight.py` provides internal simulation takeoff/LAND helpers.
 | `frame_node.py` | Disarmed alignment and common-world measured state |
 | `perception_node.py`, `target_node.py` | Marker detection and simulated target motion |
 | `world.py`, `settings.py` | World generation and resolved settings |
+| `gazebo/WorldStabilizedCamera.cc` | Ideal camera gimbal applied on the sensor render thread before exposure |
 | `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, evaluation |
 
 `TeamController.step(states, scans, stamp, seers)` has no ROS imports. It uses
@@ -86,6 +87,13 @@ exercises the first solve with that default deadline.
 In camera mode, detection runs in a separate ROS process per UAV. This is local
 multiprocessing; distribution across Pis still needs transport, common frames,
 and synchronized timestamps. Detection currently uses a magenta marker.
+`WorldStabilizedCamera` cancels roll, pitch, and yaw in Gazebo's `PreRender`
+event, after scene poses are updated. It sets the camera's world orientation
+and keeps its optical center vertically below the body origin, avoiding both
+a delayed ROS gimbal loop and a body-rotated mounting offset. The detector uses
+that same fixed optical orientation and the vehicle position at image time.
+Camera TF is dynamic `world` → `uavN/camera_optical_frame`; LiDAR TF remains
+static relative to the body. This ideal mount has no mechanical dynamics.
 Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
 in `mpc.jsonl` and `/mpc/status`. Select `controller_execution: sequential` for
 an algorithm comparison with ordered dispatch to the same persistent UAV workers
@@ -129,6 +137,11 @@ package metadata, interfaces, or dependencies require rebuilding:
 ./scripts/dev test
 git diff --check
 ```
+
+Changes under `ros_ws/src/solo_mpc/gazebo/` also require this image rebuild.
+The Docker build compiles the Harmonic plugin into `/opt/solo_gazebo/lib`;
+the entrypoint adds that directory to `GZ_SIM_SYSTEM_PLUGIN_PATH`. The companion
+image does not include this simulation plugin.
 
 For an experimental package build inside `./scripts/dev shell`:
 

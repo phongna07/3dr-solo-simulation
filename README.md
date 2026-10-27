@@ -5,8 +5,8 @@ obstacle field using model predictive control (MPC). The simulation has
 three Iris vehicles in a 50 × 30 m field of scattered obstacles, flying at 3 m.
 They launch in a horizontal row, facing north perpendicular to the row, then
 follow a target along a winding route across the field. Each vehicle uses
-MAVROS flight telemetry, horizontal LiDAR, and a downward camera that detects a
-magenta target marker. Planning and control operate in the horizontal plane.
+MAVROS flight telemetry, horizontal LiDAR, and a world-stabilized downward camera
+that detects a magenta target marker. Planning and control operate in the horizontal plane.
 Use `./scripts/dev mpc --ground-truth-target` to track exact timestamped target
 positions from the simulator instead of camera detections.
 

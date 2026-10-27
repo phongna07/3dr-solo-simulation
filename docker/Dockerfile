@@ -120,9 +120,16 @@ RUN python3 -m venv --system-site-packages /opt/venvs/mpc && \
     uv pip install --python /opt/venvs/mpc/bin/python --require-hashes -r /opt/solo/mpc-py312.lock
 ENV PYTHONPATH=/opt/venvs/mpc/lib/python3.12/site-packages \
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1
+FROM simulation_dependencies AS simulation_camera_build
+COPY ros_ws/src/solo_mpc/gazebo /opt/solo_gazebo/src
+RUN cmake -S /opt/solo_gazebo/src -B /opt/solo_gazebo/build \
+      -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/solo_gazebo && \
+    cmake --build /opt/solo_gazebo/build -j2 && \
+    cmake --install /opt/solo_gazebo/build
 # Source, submodules, Python downloads, APT debs/indexes, datasets and build flags
 # are retained here for archival, never copied wholesale into runtime images.
 FROM simulation_mpc_dependencies AS simulation_inputs
+COPY --from=simulation_camera_build /opt/solo_gazebo /opt/solo_gazebo
 COPY --from=application_build /opt/solo/build-inputs/source-revision /opt/solo/build-inputs/source-revision
 COPY --from=application_build /opt/solo_ws /opt/solo_ws
 COPY --from=application_build /workspace /workspace
@@ -186,8 +193,9 @@ COPY --from=simulation_dependencies /opt/ardupilot_gazebo/LICENSE.md /opt/ardupi
 COPY --from=simulation_dependencies /opt/solo/submodules.lock /opt/solo/submodules.lock
 COPY --from=simulation_dependencies /opt/solo/licenses /opt/solo/licenses
 COPY --from=simulation_mpc_dependencies /opt/venvs/mpc /opt/venvs/mpc
+COPY --from=simulation_camera_build /opt/solo_gazebo/lib /opt/solo_gazebo/lib
 RUN strip --strip-unneeded /opt/ardupilot/build/sitl/bin/arducopter \
-      /opt/ardupilot_gazebo/build/*.so && prune-runtime
+      /opt/ardupilot_gazebo/build/*.so /opt/solo_gazebo/lib/*.so && prune-runtime
 
 FROM scratch AS simulation
 COPY --from=simulation_root / /

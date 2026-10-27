@@ -128,6 +128,10 @@ def test_three_uav_world_covers_field_and_configures_sensors(tmp_path, upstream,
         ports.append(int(model.findtext("plugin[@name='ArduPilotPlugin']/fdm_port_in")))
         assert model.findtext('.//ray/range/max') == '3.0'
         assert model.findtext('.//ray/range/min') == '0.15'
+        gimbal = model.find("plugin[@name='solo::WorldStabilizedCamera']")
+        assert gimbal.get('filename') == 'SoloWorldStabilizedCamera'
+        assert gimbal.findtext('camera_name') == f"{uav['name']}::perception_link::camera"
+        assert list(map(float, gimbal.findtext('world_offset').split())) == [0, 0, -.04]
         topics.extend(s.findtext('topic') for s in model.iter('sensor'))
     assert ports == [9002, 9012, 9022]
     assert len(set(topics)) == len(topics) == 6
@@ -174,6 +178,19 @@ def test_three_uav_lidar_stays_usable_at_commanded_acceleration():
     assert len(scan.endpoints) == settings['lidar_samples']
     assert np.min(scan.endpoints[:, 2]) > 0
     assert np.max(scan.endpoints[:, 2]) < settings['obstacle_height']
+
+
+def test_world_rejects_rectangular_camera_for_square_visibility_model(tmp_path, upstream):
+    from solo_mpc.world import generate_mpc_world
+
+    pkg = ROOT / 'ros_ws/src/solo_mpc'
+    settings = yaml.safe_load((pkg / 'config/controller.yaml').read_text())
+    settings['camera_height'] = settings['camera_width'] // 2
+    path = tmp_path / 'controller.yaml'
+    path.write_text(yaml.safe_dump(settings))
+    with pytest.raises(ValueError, match='requires a square camera image'):
+        generate_mpc_world(load_config(ROOT / 'config/fleet.yaml'), upstream,
+                           tmp_path / 'world.sdf', pkg / 'scenarios/small50_3uav.yaml', path)
 
 
 @pytest.mark.parametrize('target_mode', ['', 'ground_truth', 'settings_ground_truth'])
@@ -272,6 +289,7 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
     for i in range(1, 4):
         model = world.find(f"model[@name='uav{i}']")
         assert len(model.findall(".//sensor[@type='camera']")) == int(cameras_enabled)
+        assert (model.find("plugin[@name='solo::WorldStabilizedCamera']") is not None) == cameras_enabled
         assert model.find(".//sensor[@type='gpu_lidar']") is not None
         assert (f'/uav{i}/camera/image_raw' in topics) == cameras_enabled
         assert (f'/uav{i}/camera/camera_info' in topics) == cameras_enabled

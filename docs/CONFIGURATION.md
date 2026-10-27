@@ -153,16 +153,31 @@ workers continue to suppress references.
 
 Defaults are a 160 × 160 camera at 8 Hz, approximately 53.13° horizontal FOV,
 and horizontal LiDAR with 360 samples at 10 Hz, with 0.01 m Gaussian range-noise
-standard deviation. At 3 m the camera sees roughly
-a 3 m square of ground. Rates follow simulation time. The mission model has no
-gimbal; `--record-video` encodes the overhead view and all UAV FOVs into one
+standard deviation. Each UAV camera uses an ideal three-axis gimbal: it looks
+straight down with a fixed world heading, compensating body roll, pitch, and yaw
+at every rendered exposure. Its virtual optical center remains 0.04 m below the
+vehicle origin in world Z, so tilt does not displace the footprint sideways.
+LiDAR remains rigidly mounted to the body. The camera image must be square.
+At 3 m altitude the nominal footprint is a centered, world-aligned square with
+half-width `(3 - 0.04 - target_plane_z) * tan(camera_hfov / 2)`, approximately
+1.445 m on the marker's top plane (`target_height + 0.02` = 0.07 m).
+The default visibility CBF uses a smaller 0.825 m half-width.
+The gimbal removes attitude vibration; translation and altitude changes still
+move and resize the footprint. It models perfect stabilization without actuator
+limits, mechanical dynamics, or image filtering. Fixed-altitude planar prediction,
+occlusion, soft CBF slack, and measured-pose latency remain limitations.
+Rates follow simulation time. `--record-video` encodes the overhead view and all UAV FOVs into one
 synchronized video, with occupancy and drone state overlays. The state panel
 shows world XYZ values and heading/motion arrows; see
 [recordings](OPERATIONS.md#record-video) for units and interpretation.
 
 `camera` mode uses marker detections for target tracking; the controller does
 not subscribe to target truth. Ground truth still supports disarmed frame
-alignment, route-completion checks, and evaluation. To use truth as controller
+alignment, route-completion checks, and evaluation. Camera mode requires a first
+observation before SEARCH can start and suppresses planning after the bounded
+target coast/search budget. This adapts the paper's external-localization problem;
+camera stabilization does not supply an unseen target position. `ground_truth`
+mode is closer to that external position source. To use truth as controller
 input instead, start a fresh run:
 
 ```bash

@@ -2,6 +2,30 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
+## World-stabilized camera — 27 October 2026
+
+The simulated UAV cameras now use an ideal three-axis gimbal. The Harmonic
+plugin compiled successfully, and focused camera, ROS, world/launch, tracking,
+and release checks passed **80 tests**, with two existing world tests excluded:
+they expect `VMAX = 1.8` while the checked-in controller sets `VMAX = 1.2`.
+
+An isolated, software-rendered Gazebo test kept two asymmetric ground markers
+fixed within 0.1 image pixel while commanding 15° pitch, −20° roll, 73° yaw,
+and combined `[25°, −20°, 137°]` attitude. Translation and altitude changes
+still produced the correct ground reconstruction within 0.025 m. The CBF
+box corners fit within the image using the configured 0.04 m mount offset and
+0.07 m marker-top plane. The reported 0.8 m offset projects to normalized
+magnitude approximately **0.277**, inside the 0.5 half extent.
+
+Removing the plugin made the real-render regression fail at the reported
+15° pitch case: the marker left the image. ROS regressions also verify the
+stabilized optical TF and image-time projection under combined body rotations.
+These checks do not include a new SITL flight or full target-tracking route;
+previous flight results below predate the gimbal change.
+The `solo-simulation:gd0` image was rebuilt and the rendered test also passed
+using installed Python modules and the installed plugin, without development
+imports or a mounted plugin. The plugin's recorded application hash matched.
+
 ## Faster three-UAV target — 27 October 2026
 
 The default target speed increased from 0.6 to **0.9 m/s**, with UAV `VMAX`

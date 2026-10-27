@@ -16,6 +16,7 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
+from .core.sensors import stabilized_camera_pose
 from .ros_utils import pose_arrays, pose_message, qos_profile_sensor_data, run_node
 
 
@@ -36,11 +37,6 @@ class Frames(Node):
         for n in args.names:
             for child, offset, rotation in [
                 ("laser", [0.0, 0.0, 0.08], Rotation.identity()),
-                (
-                    "camera_optical_frame",
-                    [0.0, 0.0, -0.04],
-                    Rotation.from_matrix([[0, -1, 0], [-1, 0, 0], [0, 0, -1]]),
-                ),
             ]:
                 tf = TransformStamped()
                 tf.header.frame_id = f"{n}/base_link"
@@ -164,6 +160,18 @@ class Frames(Node):
         tf.transform.translation.z = transformed.pose.position.z
         tf.transform.rotation = transformed.pose.orientation
         self.dynamic.sendTransform(tf)
+        camera_position, camera_quaternion = stabilized_camera_pose(
+            [transformed.pose.position.x, transformed.pose.position.y,
+             transformed.pose.position.z])
+        camera_tf = TransformStamped()
+        camera_tf.header = transformed.header
+        camera_tf.child_frame_id = f"{n}/camera_optical_frame"
+        (camera_tf.transform.translation.x, camera_tf.transform.translation.y,
+         camera_tf.transform.translation.z) = map(float, camera_position)
+        (camera_tf.transform.rotation.x, camera_tf.transform.rotation.y,
+         camera_tf.transform.rotation.z, camera_tf.transform.rotation.w) = map(
+             float, camera_quaternion)
+        self.dynamic.sendTransform(camera_tf)
 
     def velocity(self, n, msg):
         if n not in self.transforms:

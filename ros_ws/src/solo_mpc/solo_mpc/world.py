@@ -9,6 +9,7 @@ import yaml
 from solo_bringup.world import generate_world
 
 from .settings import load_settings
+from .core.sensors import CAMERA_WORLD_OFFSET
 from .scene_view import (
     OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
 )
@@ -103,6 +104,10 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
         element(publisher, tag, value)
     if not camera_enabled:
         return
+    gimbal = element(model, "plugin", filename="SoloWorldStabilizedCamera",
+                     name="solo::WorldStabilizedCamera")
+    element(gimbal, "camera_name", f"{name}::perception_link::camera")
+    element(gimbal, "world_offset", " ".join(map(str, CAMERA_WORLD_OFFSET)))
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -152,6 +157,8 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
     if target_mode not in ("camera", "ground_truth"):
         raise ValueError("Invalid target_mode")
     camera_enabled = target_mode == "camera" or record_cameras
+    if camera_enabled and settings["camera_width"] != settings["camera_height"]:
+        raise ValueError("World-stabilized visibility model requires a square camera image")
     fleet = copy.deepcopy(fleet)
     if len(fleet["uavs"]) != len(scenario["starts"]):
         raise ValueError("Fleet and scenario must contain the same number of UAVs")

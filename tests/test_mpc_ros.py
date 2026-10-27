@@ -153,6 +153,75 @@ def test_per_vehicle_camera_subscribes_only_to_its_own_topics(tmp_path):
         rclpy.shutdown()
 
 
+@pytest.mark.parametrize('angles', [(0, 15, 0), (20, -15, 73), (-10, 25, -137)])
+def test_marker_projection_uses_stabilized_optical_frame_at_exposure(tmp_path, angles):
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+    from sensor_msgs.msg import CameraInfo
+    from solo_mpc.ros_utils import pose_message
+
+    rclpy.init()
+    node = MarkerDetector(node_args(tmp_path))
+    try:
+        stamp = node.get_clock().now().to_msg()
+        p = np.array([5., 2., 3.])
+        node.pose('test_uav', pose_message(p, stamp,
+                  Rotation.from_euler('xyz', angles, degrees=True).as_quat()))
+        # A newer vehicle position must not replace the pose at exposure time.
+        later = node.get_clock().now().to_msg()
+        later.sec += 1
+        node.pose('test_uav', pose_message(p + [10., 10., 0.], later))
+        node.info('test_uav', CameraInfo(k=[100., 0., 80., 0., 100., 80., 0., 0., 1.]))
+        image = np.zeros((160, 160, 3), np.uint8)
+        image[49:52, 79:82] = [255, 0, 255]
+        message = node.bridge.cv2_to_imgmsg(image, 'bgr8')
+        message.header.stamp = stamp
+        observations = []
+        node.publishers_keep['test_uav'] = SimpleNamespace(publish=observations.append)
+        node.image('test_uav', message)
+        observation, = observations
+        # Optical down = world -X. Depth includes the world vertical mount and
+        # the TOP of the marker; neither offset rotates with the airframe.
+        depth = 3. - .04 - (node.args.settings_data['target_height'] + .02)
+        np.testing.assert_allclose([observation.pose.position.x, observation.pose.position.y],
+                                   p[:2] + [.3 * depth, 0.])
+        assert observation.header.stamp == stamp
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_camera_tf_is_world_aligned_while_body_rotates(tmp_path):
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+    from solo_mpc.core.sensors import stabilized_camera_pose
+    from solo_mpc.ros_utils import pose_message
+
+    rclpy.init()
+    node = Frames(node_args(tmp_path))
+    try:
+        node.transforms['test_uav'] = (Rotation.identity(), np.zeros(3))
+        transforms = []
+        node.dynamic = SimpleNamespace(sendTransform=transforms.append)
+        stamp = node.get_clock().now().to_msg()
+        for angles in [(0, 0, 90), (20, -15, 137)]:
+            q = Rotation.from_euler('xyz', angles, degrees=True).as_quat()
+            node.local_pose('test_uav', pose_message([5., 2., 3.], stamp, q))
+            body, camera = transforms[-2:]
+            assert body.header.frame_id == camera.header.frame_id == 'world'
+            assert camera.child_frame_id == 'test_uav/camera_optical_frame'
+            np.testing.assert_allclose([body.transform.rotation.x, body.transform.rotation.y,
+                                       body.transform.rotation.z, body.transform.rotation.w], q)
+            expected_p, expected_q = stabilized_camera_pose([5., 2., 3.])
+            np.testing.assert_allclose([camera.transform.translation.x, camera.transform.translation.y,
+                                       camera.transform.translation.z], expected_p)
+            np.testing.assert_allclose([camera.transform.rotation.x, camera.transform.rotation.y,
+                                       camera.transform.rotation.z, camera.transform.rotation.w], expected_q)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 @pytest.mark.parametrize('fail', [False, True])
 def test_run_node_records_constructor_success_or_failure(tmp_path, monkeypatch, fail):
     import json
