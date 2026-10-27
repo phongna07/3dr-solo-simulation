@@ -19,11 +19,13 @@ from std_srvs.srv import Trigger
 
 @pytest.fixture
 def run_dir(tmp_path):
-    (tmp_path / 'manifest.json').write_text(json.dumps({
+    for directory in ('metadata', 'config'):
+        (tmp_path / directory).mkdir()
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({
         'mode': 'simulation', 'profile': 'mpc',
         'config': {'uavs': [{'name': 'test_uav'}]},
     }))
-    (tmp_path / 'controller.yaml').write_text('''flight_altitude: 3.0
+    (tmp_path / 'config/controller.yaml').write_text('''flight_altitude: 3.0
 camera_hfov: 0.9
 pose_timeout_wall: 3.0
 command_timeout_wall: 3.0
@@ -32,7 +34,7 @@ target_search_timeout_sim: 8.0
 planner_failure_timeout_sim: 3.0
 arrival_timeout_sim: 3.0
 ''')
-    (tmp_path / 'scenario.yaml').write_text('target:\n  waypoints: [[0, 0], [10, 0]]\n')
+    (tmp_path / 'config/scenario.yaml').write_text('target:\n  waypoints: [[0, 0], [10, 0]]\n')
     return tmp_path
 
 
@@ -347,7 +349,7 @@ def test_start_cli_exit_keeps_supervision_and_automatic_landing(run_dir, complet
             assert server.is_alive()
             assert time.monotonic() < deadline
             time.sleep(0.05)
-        assert (run_dir / 'truth.jsonl').exists()
+        assert (run_dir / 'telemetry/truth.jsonl').exists()
     finally:
         (run_dir / 'exit-server').touch()
         server.join(timeout=5)

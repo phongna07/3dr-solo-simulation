@@ -30,7 +30,7 @@ disabled until all UAVs hold within 0.5 m of flight altitude, with vertical spee
 at most 0.2 m/s, for two simulation seconds of fresh telemetry.
 
 The persistent supervisor handles both `run` and `start`. It records independent
-Gazebo poses in `truth.jsonl`, enforces duration limits after the CLI exits, and
+Gazebo poses in `telemetry/truth.jsonl`, enforces duration limits after the CLI exits, and
 lands after route completion or timeout. Prolonged target loss, controller or
 publisher failure, stale inputs, connection loss, and flight-envelope violations
 trigger cleanup. In camera mode, during occlusion the estimate coasts, then searches; the
@@ -86,7 +86,7 @@ finite poses with distinct timestamps. The latest pose must be less than ten
 wall seconds old; FCU state must be less than 60 wall seconds old in simulation
 or 20 on hardware. Requests are serialized per FCU and reset on reconnect.
 
-`health.json` and `/solo/readiness` report live health; `ready.json` retains the
+`status/health.json` and `/solo/readiness` report live health; `status/ready.json` retains the
 most recent ready report. Docker health uses the live report. The initial monitor
 deadline defaults to 600 seconds; expiry shuts down launch. The host waiter has
 its own timeout and may leave the stack running for inspection. It rejects health
@@ -121,7 +121,7 @@ ros2 topic hz /uav1/camera/image_raw
 ros2 topic echo /solo/readiness --once
 ros2 topic echo /mpc/setpoint_status --once
 timeout 5s gz topic -e -t /world/mpc_small50/stats
-gz sdf -k /workspace/runs/latest/world.sdf
+gz sdf -k /workspace/runs/latest/config/world.sdf
 ```
 
 Use your configured world name if changed. Exit code 124 from `timeout` is
@@ -133,18 +133,21 @@ axis. Press Escape in the 3D view to navigate freely; reopen it to restore follo
 
 ## Logs and evaluation
 
+New runs keep only `recorded-mission.mp4` at the root when recording is enabled.
+Supporting files are grouped below; existing run directories are left as saved.
+
 | Output in `runs/<run-id>/` | Contents |
 |---|---|
-| `manifest.json`, `source-sha256.json` | Mode, fleet, versions, commit, file hashes |
-| `fleet.yaml`, `scenario.yaml`, `controller.yaml`, `mpc-config.json` | Input snapshots and resolved settings |
-| `world.sdf`, `bridge.yaml`, `uavN-mavros.yaml` | Generated world and runtime configuration |
-| `startup.json`, `health.json`, `ready.json` | Initialization and readiness reports |
-| `alignment.json` | Frozen world-to-local calibration |
-| `logs/`, `sitl/<instance>/` | Process logs, SITL EEPROM, flight logs |
-| `controller_sources.jsonl` | Controller startup hashes and settings |
-| `mpc.jsonl`, `truth.jsonl` | Controller measurements/diagnostics and independent Gazebo poses |
-| `evaluation.json` | Geometry, tracking, compute, and simulation-speed metrics |
-| `combined.avi`, `combined.timestamps.jsonl` | Optional synchronized overhead video with LiDAR occupancy map and all UAV FOVs |
+| `metadata/manifest.json`, `metadata/source-sha256.json` | Mode, fleet, versions, commit, file hashes |
+| `config/fleet.yaml`, `config/scenario.yaml`, `config/controller.yaml`, `config/mpc-config.json` | Input snapshots and resolved settings |
+| `config/world.sdf`, `config/bridge.yaml`, `config/uavN-mavros.yaml` | Generated world and runtime configuration |
+| `status/startup.json`, `status/health.json`, `status/ready.json` | Initialization and readiness reports |
+| `status/alignment.json`, `status/components/` | Frozen world-to-local calibration and per-node startup reports |
+| `logs/`, `sitl/<instance>/`, `gazebo-home/`, `optimizer-inputs/` | Process logs, simulator state, and optimizer diagnostics |
+| `metadata/controller_sources.jsonl`, `metadata/*.lock`, `metadata/*.sha256` | Controller startup hashes, settings, and dependency fingerprints |
+| `telemetry/mpc.jsonl`, `telemetry/truth.jsonl` | Controller measurements/diagnostics and independent Gazebo poses |
+| `reports/evaluation.json` | Geometry, tracking, compute, and simulation-speed metrics |
+| `recorded-mission.mp4`, `telemetry/recorded-mission.timestamps.jsonl` | Optional synchronized overhead video with LiDAR occupancy map and all UAV FOVs |
 
 The image ID is stored beside the run in `runs/<run-id>.image-id.json`.
 `runs/latest` changes on the next launch; preserve the actual directory.
@@ -178,7 +181,7 @@ and saves one synchronized recording. `--gui` is optional. Add
 `--ground-truth-target` to record while tracking the external timestamped target
 input; camera detectors remain disabled in that mode.
 
-The output is `runs/<run-id>/combined.avi`: a 1920 × 1080 MJPEG video at 20 FPS
+The output is `runs/<run-id>/recorded-mission.mp4`: a 1920 × 1080 MPEG-4 video at 20 FPS
 with the elevated target-following view as its background, a LiDAR occupancy map
 at top left, drone state instruments at bottom left, and labelled UAV FOVs
 stacked on the right. UAV cameras default to 160 × 160 at 8 FPS.
@@ -230,7 +233,7 @@ above its disarmed ground altitude. All camera feeds share this gate. Recording
 continues through landing until the stack stops. Mission completion and GUI
 closure do not finalize the video; `./scripts/dev stop` closes the file.
 
-The adjacent `combined.timestamps.jsonl` contains zero-based output frame indices
+The file `telemetry/recorded-mission.timestamps.jsonl` contains zero-based output frame indices
 and simulation timestamps (`stamp_ns`) on the shared 20 FPS timeline. No video is
 created without overhead images. Recorder errors appear in logs without stopping
 the flight stack.
@@ -239,7 +242,7 @@ Overhead recording is independent of GUI navigation and window size. The camera
 sits 24 m above the target, offset -10 m on each horizontal axis. This is a local target view; distant SEARCH vehicles and some outer
 formation slots can be outside its frame.
 Absence from this video alone does not establish a missing Gazebo
-model or a failure to take off. Check `truth.jsonl` or use the GUI to inspect
+model or a failure to take off. Check `telemetry/truth.jsonl` or use the GUI to inspect
 distant vehicles. A lazy bridge
 activates its feed on arming, avoiding unused Full HD rendering during startup.
 Rendering/encoding costs return during flight; an external image subscriber can

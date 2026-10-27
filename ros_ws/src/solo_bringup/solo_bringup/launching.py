@@ -45,7 +45,7 @@ def mavros(uav, run, *, simulation=False):
         package='mavros', executable='mavros_node', namespace=uav['name'],
         output='both', parameters=[
             str(share / 'launch/apm_pluginlists.yaml'),
-            mavros_config(uav, run / f"{uav['name']}-mavros.yaml", simulation=simulation),
+            mavros_config(uav, run / "config" / f"{uav['name']}-mavros.yaml", simulation=simulation),
             {'fcu_url': uav['fcu_url'], 'gcs_url': '', 'tgt_system': uav['sysid'],
              'base_link_frame': f"{uav['name']}/base_link", 'map_frame': f"{uav['name']}/map",
              'odom_frame': f"{uav['name']}/odom",

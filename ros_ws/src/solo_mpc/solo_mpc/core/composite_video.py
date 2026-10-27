@@ -50,7 +50,8 @@ class CompositeVideo:
     No camera can block recording indefinitely, including during shutdown.
     """
 
-    def __init__(self, path, fps, vehicles, *, occupancy=False, telemetry=False):
+    def __init__(self, path, fps, vehicles, *, occupancy=False, telemetry=False,
+                 timestamps_path=None):
         self.vehicles = tuple(vehicles)
         if not self.vehicles or len(set(self.vehicles)) != len(self.vehicles):
             raise ValueError("A composite video needs unique vehicle names")
@@ -58,7 +59,7 @@ class CompositeVideo:
             raise ValueError("The vehicle names 'overhead' and 'occupancy' are reserved for combined recording")
         self.occupancy = occupancy
         self.telemetry = {name: FlightStateHistory() for name in self.vehicles} if telemetry else {}
-        self.video = FrameVideo(path, fps)
+        self.video = FrameVideo(path, fps, timestamps_path=timestamps_path)
         # FOV queues are also bounded if the overhead feed never arrives/stalls.
         self.pending = {name: deque(maxlen=256) for name in ('overhead', *self.vehicles)}
         if occupancy:

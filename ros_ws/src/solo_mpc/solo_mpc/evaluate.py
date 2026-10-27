@@ -24,10 +24,10 @@ def main():
     run = Path(args.run_dir)
     import yaml
 
-    scenario = yaml.safe_load((run / "scenario.yaml").read_text())
-    cfg = json.loads((run / "mpc-config.json").read_text())
+    scenario = yaml.safe_load((run / "config/scenario.yaml").read_text())
+    cfg = json.loads((run / "config/mpc-config.json").read_text())
     records = [
-        json.loads(line) for line in (run / "mpc.jsonl").read_text().splitlines()
+        json.loads(line) for line in (run / "telemetry/mpc.jsonl").read_text().splitlines()
     ]
     airborne = [
         r
@@ -45,7 +45,7 @@ def main():
     separation = []
     margins = []
     target_distances = []
-    truth_path = run / "truth.jsonl"
+    truth_path = run / "telemetry/truth.jsonl"
     truth = (
         [json.loads(line) for line in truth_path.read_text().splitlines()]
         if truth_path.exists()
@@ -115,5 +115,7 @@ def main():
         output["target_estimation_error_p50_p95_max_m"] = (
             np.percentile(errors, [50, 95, 100]).tolist() if errors else None
         )
-    (run / "evaluation.json").write_text(json.dumps(output, indent=2) + "\n")
+    report = run / "reports/evaluation.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(output, indent=2) + "\n")
     print(json.dumps(output, indent=2))

@@ -38,7 +38,7 @@ class PluginParameters:
         for uav in uavs:
             prefix = f"/{uav['name']}/mavros/"
             self.required.update(prefix + plugin for plugin in ('local_position', 'imu', 'sys'))
-            data = yaml.safe_load((Path(run_dir) / f"{uav['name']}-mavros.yaml").read_text())
+            data = yaml.safe_load((Path(run_dir) / "config" / f"{uav['name']}-mavros.yaml").read_text())
             for selector, config in data.items():
                 if not selector.startswith('/**/'):
                     continue

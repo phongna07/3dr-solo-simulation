@@ -36,13 +36,15 @@ def create_run(config, mode, profile='', run_id='', resume=False):
     if run.exists():
         if not resume:
             raise ValueError(f'Run exists: {run}; select a new run_id or resume:=true')
-        manifest = json.loads((run / 'manifest.json').read_text())
+        manifest = json.loads((run / 'metadata/manifest.json').read_text())
         if (manifest['config'], manifest['mode'], manifest['profile']) != (config, mode, profile):
             raise ValueError('Resume requires identical mode, profile and fleet config')
         for filename in ('health.json', 'ready.json'):
-            (run / filename).unlink(missing_ok=True)
+            (run / 'status' / filename).unlink(missing_ok=True)
     else:
         run.mkdir()
+        for directory in ('config', 'metadata', 'status', 'telemetry', 'reports'):
+            (run / directory).mkdir()
         versions_path = Path('/opt/solo/versions.json')
         manifest = {
             'run_id': run_id, 'mode': mode, 'profile': profile, 'config': config,
@@ -59,19 +61,19 @@ def create_run(config, mode, profile='', run_id='', resume=False):
                 text=True).strip()
         except (OSError, subprocess.CalledProcessError):
             manifest['workspace_commit'] = None
-        (run / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-        (run / 'fleet.yaml').write_text(yaml.safe_dump(config, sort_keys=False))
+        (run / 'metadata/manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        (run / 'config/fleet.yaml').write_text(yaml.safe_dump(config, sort_keys=False))
         for filename in ('apt-packages.lock', 'submodules.lock', 'geoid.sha256', 'application.sha256'):
             source = Path('/opt/solo') / filename
             if source.exists():
-                shutil.copy2(source, run / filename)
+                shutil.copy2(source, run / 'metadata' / filename)
         hashes = {}
         for source_root in ('/workspace/config', '/workspace/ros_ws/src/solo_bringup',
                             '/workspace/ros_ws/src/solo_mpc'):
             for file in sorted(Path(source_root).rglob('*')):
                 if file.is_file() and '__pycache__' not in file.parts:
                     hashes[str(file.relative_to('/workspace'))] = hashlib.sha256(file.read_bytes()).hexdigest()
-        (run / 'source-sha256.json').write_text(json.dumps(hashes, indent=2) + '\n')
+        (run / 'metadata/source-sha256.json').write_text(json.dumps(hashes, indent=2) + '\n')
     logs = run / 'logs'
     logs.mkdir(exist_ok=True)
     # Atomic symlink replacement; no state directories are deleted.

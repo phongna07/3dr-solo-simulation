@@ -28,7 +28,7 @@ def start(context):
         actions += [critical(bridge), bridge]
     monitor = Node(
         package='solo_bringup', executable='readiness', name='companion_readiness',
-        arguments=['--fleet', str(run / 'fleet.yaml'), '--run-dir', str(run),
+        arguments=['--fleet', str(run / 'config/fleet.yaml'), '--run-dir', str(run),
                    '--hardware', '--timeout', '600'], output='both',
     )
     return actions + [critical(monitor), monitor]

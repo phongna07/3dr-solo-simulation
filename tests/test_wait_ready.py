@@ -97,8 +97,8 @@ def test_progress_does_not_claim_ready_from_stale_or_old_health(tmp_path, update
 
 
 def test_process_started_is_not_node_initialized_and_exit_overrides_ready(tmp_path):
-    directory = tmp_path / 'startup-components'
-    directory.mkdir()
+    directory = tmp_path / 'status/components'
+    directory.mkdir(parents=True)
     startup = {'started_wall_unix': 100, 'phase': 'Starting processes', 'processes': {
         'gazebo': {'state': 'running'},
         'controller': {'state': 'running', 'initializes': True, 'pid': 123},
@@ -120,8 +120,8 @@ def test_process_started_is_not_node_initialized_and_exit_overrides_ready(tmp_pa
 
 @pytest.mark.parametrize('pid,updated', [(122, 101), (123, 99)])
 def test_previous_component_initialization_is_ignored(tmp_path, pid, updated):
-    directory = tmp_path / 'startup-components'
-    directory.mkdir()
+    directory = tmp_path / 'status/components'
+    directory.mkdir(parents=True)
     (directory / 'controller.json').write_text(json.dumps({
         'state': 'initialized', 'pid': pid, 'updated_wall_unix': updated,
     }))
@@ -158,7 +158,7 @@ def test_simulation_diagnostics_explain_slow_clock_and_fcu_progress(tmp_path):
 
 def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(tmp_path, monkeypatch, capsys):
     run = tmp_path / 'runs/test'
-    run.mkdir(parents=True)
+    (run / 'status').mkdir(parents=True)
     data = health_payload()
     data['simulation'] = {'time_s': 0, 'real_time_factor': 0.1, 'clock_age_wall_s': 0.1}
     ticks = [0]
@@ -168,7 +168,7 @@ def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(
 
     def refresh():
         data['updated_wall_unix'] = 100 + ticks[0]
-        (run / 'health.json').write_text(json.dumps(data))
+        (run / 'status/health.json').write_text(json.dumps(data))
 
     def sleep(_):
         ticks[0] += 1
@@ -193,13 +193,13 @@ def test_wait_reports_transitions_immediately_but_only_repeats_every_15_seconds(
 
 def test_mpc_wait_requires_node_initialization_even_with_ready_fcu_health(tmp_path, monkeypatch):
     run = tmp_path / 'runs/test'
-    run.mkdir(parents=True)
-    (run / 'startup-components').mkdir()
-    (run / 'health.json').write_text(json.dumps({
+    (run / 'status').mkdir(parents=True)
+    (run / 'status/components').mkdir(parents=True)
+    (run / 'status/health.json').write_text(json.dumps({
         'ready': True, 'updated_wall_unix': 100, 'plugin_parameters_applied': True,
         'uavs': {},
     }))
-    (run / 'startup.json').write_text(json.dumps({
+    (run / 'status/startup.json').write_text(json.dumps({
         'started_wall_unix': 100, 'phase': 'Processes launched',
         'processes': {'controller': {'state': 'running', 'initializes': True, 'pid': 123}},
     }))
@@ -210,7 +210,7 @@ def test_mpc_wait_requires_node_initialization_even_with_ready_fcu_health(tmp_pa
 
     def sleep(_):
         ticks[0] += 1
-        (run / 'startup-components/controller.json').write_text(json.dumps({
+        (run / 'status/components/controller.json').write_text(json.dumps({
             'state': 'initialized', 'pid': 123, 'updated_wall_unix': 101,
         }))
 

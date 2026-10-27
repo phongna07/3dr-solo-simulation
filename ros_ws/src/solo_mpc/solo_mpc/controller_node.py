@@ -55,14 +55,16 @@ class Controller(Node):
             OccupancyGrid, OCCUPANCY_TOPIC, qos_profile_sensor_data)
         self.log = None
         if args.run_dir:
-            self.log = open(Path(args.run_dir, "mpc.jsonl"), "a", buffering=1)
+            for directory in ('telemetry', 'metadata'):
+                Path(args.run_dir, directory).mkdir(parents=True, exist_ok=True)
+            self.log = open(Path(args.run_dir, "telemetry/mpc.jsonl"), "a", buffering=1)
             package = Path(__file__).parent
             sources = {
                 str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in sorted(package.rglob("*.py"))
             }
             with open(
-                Path(args.run_dir, "controller_sources.jsonl"), "a"
+                Path(args.run_dir, "metadata/controller_sources.jsonl"), "a"
             ) as source_log:
                 source_log.write(
                     json.dumps(

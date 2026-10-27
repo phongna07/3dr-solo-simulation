@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 try:
-    data = json.loads(Path('/workspace/runs/latest/health.json').read_text())
+    data = json.loads(Path('/workspace/runs/latest/status/health.json').read_text())
     healthy = data['ready'] and time.time() - data['updated_wall_unix'] < 10
 except (OSError, ValueError, KeyError):
     healthy = False

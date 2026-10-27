@@ -45,7 +45,7 @@ def main(args=None):
                 print('Mission cancelled before takeoff.', flush=True)
                 return
             try:
-                startup = json.loads((run / 'startup.json').read_text())
+                startup = json.loads((run / 'status/startup.json').read_text())
             except (OSError, ValueError):
                 startup = None
             try:
@@ -56,7 +56,7 @@ def main(args=None):
             if time.monotonic() >= deadline:
                 raise SystemExit('Timeout: all simulation processes initialized')
             time.sleep(0.1)
-    manifest = json.loads((run / "manifest.json").read_text())
+    manifest = json.loads((run / "metadata/manifest.json").read_text())
     if manifest["mode"] != "simulation" or manifest["profile"] != "mpc":
         raise SystemExit("Mission CLI requires the MPC simulation profile")
     run = run.resolve()

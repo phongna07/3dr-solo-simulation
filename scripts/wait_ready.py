@@ -51,7 +51,7 @@ def process_status(run, startup):
         elif state == 'pending':
             groups['WAIT processes/nodes'].append(f'{name} (not started)')
         elif item.get('initializes'):
-            component = read_json(run / 'startup-components' / f'{name}.json')
+            component = read_json(run / 'status/components' / f'{name}.json')
             # A resumed/restarted process cannot inherit an old constructor result.
             if component and (component.get('pid') != item.get('pid') or
                               component.get('updated_wall_unix', 0) < startup['started_wall_unix']):
@@ -164,8 +164,8 @@ def main(argv=None):
             except (RuntimeError, subprocess.TimeoutExpired) as error:
                 raise SystemExit(str(error)) from error
             last_inspect = now
-        data = read_json(run / 'health.json')
-        startup = read_json(run / 'startup.json')
+        data = read_json(run / 'status/health.json')
+        startup = read_json(run / 'status/startup.json')
         try:
             lines = progress_lines(run, data, startup, time.time(), container_started)
             ready = bool(data and health_is_ready(data, time.time(), container_started))

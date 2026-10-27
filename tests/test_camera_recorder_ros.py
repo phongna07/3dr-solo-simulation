@@ -183,7 +183,7 @@ def test_ros_combined_recording_uses_one_takeoff_gate_and_one_video(tmp_path, co
         recorder.destroy_node()
         source.destroy_node()
         rclpy.shutdown()
-    path = tmp_path / 'combined.avi'
+    path = tmp_path / 'recorded-mission.mp4'
     capture = cv2.VideoCapture(str(path))
     try:
         assert capture.get(cv2.CAP_PROP_FPS) == 20
@@ -202,7 +202,7 @@ def test_ros_combined_recording_uses_one_takeoff_gate_and_one_video(tmp_path, co
     finally:
         capture.release()
     assert sorted(p.name for p in tmp_path.iterdir()) == [
-        'combined.avi', 'combined.timestamps.jsonl',
+        'recorded-mission.mp4', 'telemetry',
     ]
 
 
@@ -374,9 +374,9 @@ def test_shutdown_during_encoding_keeps_video_and_timestamps_in_step(tmp_path, s
     result = subprocess.run([sys.executable, '-c', script, shutdown_signal, str(tmp_path)],
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
-    timestamps = [json.loads(row) for row in (tmp_path / 'combined.timestamps.jsonl').read_text().splitlines()]
+    timestamps = [json.loads(row) for row in (tmp_path / 'telemetry/recorded-mission.timestamps.jsonl').read_text().splitlines()]
     assert timestamps == [{'frame': 0, 'stamp_ns': 1_000_000_000}]
-    video = cv2.VideoCapture(str(tmp_path / 'combined.avi'))
+    video = cv2.VideoCapture(str(tmp_path / 'recorded-mission.mp4'))
     try:
         assert video.get(cv2.CAP_PROP_FRAME_COUNT) == 1
         assert video.read()[0]

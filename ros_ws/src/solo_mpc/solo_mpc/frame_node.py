@@ -183,7 +183,8 @@ class Frames(Node):
                 n: {"yaw": float(r.as_euler("xyz")[2]), "translation": t.tolist()}
                 for n, (r, t) in self.transforms.items()
             }
-            path = Path(self.args.run_dir, "alignment.json")
+            path = Path(self.args.run_dir, "status/alignment.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".json.tmp")
             temporary.write_text(json.dumps(data, indent=2) + "\n")
             temporary.replace(path)

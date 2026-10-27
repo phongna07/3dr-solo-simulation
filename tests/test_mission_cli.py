@@ -51,7 +51,8 @@ def cli(monkeypatch, tmp_path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: now[0]))
-    (tmp_path / 'manifest.json').write_text(json.dumps({'mode': 'simulation', 'profile': 'mpc'}))
+    (tmp_path / 'metadata').mkdir()
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({'mode': 'simulation', 'profile': 'mpc'}))
 
     def snapshot(state, **kwargs):
         return dict(state=state, run_dir=str(tmp_path.resolve()), mission_id='test',

@@ -37,11 +37,11 @@ class MissionSupervisor(Flight):
 
     def __init__(self, run_dir):
         self.run_dir = Path(run_dir).resolve()
-        manifest = json.loads((self.run_dir / "manifest.json").read_text())
+        manifest = json.loads((self.run_dir / "metadata/manifest.json").read_text())
         if manifest["mode"] != "simulation" or manifest["profile"] != "mpc":
             raise ValueError("Mission supervisor requires the MPC simulation profile")
-        self.settings = yaml.safe_load((self.run_dir / "controller.yaml").read_text())
-        self.scenario = yaml.safe_load((self.run_dir / "scenario.yaml").read_text())
+        self.settings = yaml.safe_load((self.run_dir / "config/controller.yaml").read_text())
+        self.scenario = yaml.safe_load((self.run_dir / "config/scenario.yaml").read_text())
         uavs = manifest["config"]["uavs"]
         self.names = [u["name"] for u in uavs]
         super().__init__(uavs, timeout=240.0)
@@ -255,7 +255,9 @@ class MissionSupervisor(Flight):
             if operation == "start":
                 self.cancellable = True
                 self.check_stop()
-                self.truth_log = open(self.run_dir / "truth.jsonl", "a", buffering=1)
+                truth_path = self.run_dir / "telemetry/truth.jsonl"
+                truth_path.parent.mkdir(parents=True, exist_ok=True)
+                self.truth_log = open(truth_path, "a", buffering=1)
                 self.prepare_flight()
                 self.mission_state = "tracking"
                 self.supervise()
@@ -299,7 +301,7 @@ class MissionSupervisor(Flight):
 
         def fleet_ready():
             try:
-                health = json.loads((self.run_dir / "health.json").read_text())
+                health = json.loads((self.run_dir / "status/health.json").read_text())
                 return (
                     health["ready"] and time.time() - health["updated_wall_unix"] < 10
                 )
@@ -309,8 +311,8 @@ class MissionSupervisor(Flight):
         self.wait(fleet_ready, "fleet preflight readiness", 240.0)
         self.wait(
             lambda: (
-                (self.run_dir / "alignment.json").exists()
-                and len(json.loads((self.run_dir / "alignment.json").read_text())) == len(self.names)
+                (self.run_dir / "status/alignment.json").exists()
+                and len(json.loads((self.run_dir / "status/alignment.json").read_text())) == len(self.names)
             ),
             "common world alignment",
             90.0,

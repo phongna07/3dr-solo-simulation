@@ -85,7 +85,7 @@ class Setpoints(Node):
         if not self.enabled:
             return
         if self.args.run_dir and not self.align:
-            path = Path(self.args.run_dir, "alignment.json")
+            path = Path(self.args.run_dir, "status/alignment.json")
             try:
                 self.align = json.loads(path.read_text())
                 if len(self.align) != len(self.args.names):

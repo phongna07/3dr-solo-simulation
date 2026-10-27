@@ -87,7 +87,7 @@ to 20 **wall-clock seconds**, excluding takeoff and initialization. The supervis
 then requests LAND and waits for disarm. Omit `--seconds` to attempt the full route.
 
 Evaluate after landing while the container is still running. Results are written
-to `runs/latest/evaluation.json`. Normal `stop` completes cleanup before stopping
+to `runs/latest/reports/evaluation.json`. Normal `stop` completes cleanup before stopping
 the container and finalizing videos. See [recordings](OPERATIONS.md#record-video)
 for file locations.
 

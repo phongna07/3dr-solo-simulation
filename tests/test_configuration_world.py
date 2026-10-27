@@ -232,7 +232,8 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
     })
     actions = module.start(context)
     run = context.solo_run_dir
-    inventory = json.loads((run / 'startup.json').read_text())['processes']
+    assert all(entry.is_dir() for entry in run.iterdir())
+    inventory = json.loads((run / 'status/startup.json').read_text())['processes']
     shared = {'gazebo-server', 'readiness-monitor', 'sensor-bridge', 'frames',
               'target', 'controller', 'setpoints', 'mission-supervisor'}
     if record_video:
@@ -258,15 +259,15 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
     sitl_commands = [c for c in commands if c[0].endswith('/arducopter')]
     assert len(sitl_commands) == 3
     assert {c[c.index('-I') + 1] for c in sitl_commands} == {'0', '1', '2'}
-    assert all(c[c.index('--defaults') + 1].endswith(','+str(run / 'sitl-overrides.parm'))
+    assert all(c[c.index('--defaults') + 1].endswith(','+str(run / 'config/sitl-overrides.parm'))
                for c in sitl_commands)
     assert len(list((run / 'sitl').iterdir())) == 3
-    assert (run / 'sitl-overrides.parm').read_text() == 'WPNAV_SPEED 120\nWPNAV_ACCEL 200\n'
-    assert yaml.safe_load((run / 'fleet.yaml').read_text())['world_name'] == 'mpc_small50'
-    assert yaml.safe_load((run / 'controller.yaml').read_text())['target_mode'] == resolved_mode
-    world = ET.parse(run / 'world.sdf').getroot().find('world')
+    assert (run / 'config/sitl-overrides.parm').read_text() == 'WPNAV_SPEED 120\nWPNAV_ACCEL 200\n'
+    assert yaml.safe_load((run / 'config/fleet.yaml').read_text())['world_name'] == 'mpc_small50'
+    assert yaml.safe_load((run / 'config/controller.yaml').read_text())['target_mode'] == resolved_mode
+    world = ET.parse(run / 'config/world.sdf').getroot().find('world')
     cameras_enabled = resolved_mode == 'camera' or record_video
-    rows = yaml.safe_load((run / 'bridge.yaml').read_text())
+    rows = yaml.safe_load((run / 'config/bridge.yaml').read_text())
     topics = {r['ros_topic_name'] for r in rows}
     for i in range(1, 4):
         model = world.find(f"model[@name='uav{i}']")

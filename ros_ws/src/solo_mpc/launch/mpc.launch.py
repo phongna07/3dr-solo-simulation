@@ -57,11 +57,11 @@ def start(context):
     import json
     import shutil
 
-    shutil.copyfile(get("scenario"), run / "scenario.yaml")
+    shutil.copyfile(get("scenario"), run / "config/scenario.yaml")
     import yaml
 
-    (run / "controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
-    (run / "mpc-config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (run / "config/controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
+    (run / "config/mpc-config.json").write_text(json.dumps(cfg, indent=2) + "\n")
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
@@ -71,7 +71,7 @@ def start(context):
                 "config_file": bridge_config(
                     [u["name"] for u in fleet["uavs"]],
                     fleet["world_name"],
-                    run / "bridge.yaml",
+                    run / "config/bridge.yaml",
                     record_overhead=record_video,
                     camera_enabled=camera_enabled,
                 )
@@ -82,11 +82,11 @@ def start(context):
     actions += [critical(bridge)] + observed(bridge, progress, 'sensor-bridge')
     args = [
         "--scenario",
-        str(run / "scenario.yaml"),
+        str(run / "config/scenario.yaml"),
         "--settings",
-        str(run / "controller.yaml"),
+        str(run / "config/controller.yaml"),
         "--fleet",
-        str(run / "fleet.yaml"),
+        str(run / "config/fleet.yaml"),
         "--run-dir",
         str(run),
         "--world",
@@ -130,7 +130,7 @@ def start(context):
         recorder = ExecuteProcess(
             cmd=[
                 "python3", "-m", "solo_mpc.camera_recorder", "--combined",
-                "--fleet", str(run / "fleet.yaml"),
+                "--fleet", str(run / "config/fleet.yaml"),
                 "--output-dir", str(run), "--fps", str(OVERHEAD_FPS),
                 '--run-dir', str(run), '--startup-component', 'combined-recorder',
                 "--ros-args", "-p", "use_sim_time:=true",

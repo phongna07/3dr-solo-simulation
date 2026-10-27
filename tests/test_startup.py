@@ -22,6 +22,8 @@ def test_startup_inventory_and_component_writes_are_independent(tmp_path):
     assert inventory['processes']['controller']['state'] == 'running'
     assert inventory['phase'] == 'Processes launched'
     assert json.loads(component.path.read_text())['state'] == 'initialized'
+    assert progress.path == tmp_path / 'status/startup.json'
+    assert component.path == tmp_path / 'status/components/controller.json'
     progress.exited('controller', 7)
     assert json.loads(progress.path.read_text())['processes']['controller']['exit_code'] == 7
     assert not list(tmp_path.rglob('*.tmp'))

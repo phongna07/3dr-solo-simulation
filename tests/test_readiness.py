@@ -32,32 +32,32 @@ def test_clock_reports_speed_stall_and_reset_without_relaxing_readiness(tmp_path
 
     try:
         node.tick()
-        assert json.loads((tmp_path / 'health.json').read_text())['simulation']['time_s'] is None
+        assert json.loads((tmp_path / 'status/health.json').read_text())['simulation']['time_s'] is None
         clock(1)
         node.tick()
         wall[0] = 110.0
         clock(2)
         node.status_text(SimpleNamespace(text='EKF3 IMU0 initialised'), 'alpha')
         node.tick()
-        health = json.loads((tmp_path / 'health.json').read_text())
+        health = json.loads((tmp_path / 'status/health.json').read_text())
         assert health['simulation']['real_time_factor'] == pytest.approx(0.1)
         assert health['uavs']['alpha']['last_fcu_status'] == 'EKF3 IMU0 initialised'
         assert not health['ready']
         assert health['first_ready_elapsed_wall_s'] is None
         wall[0] = 116.0
         node.tick()
-        assert json.loads((tmp_path / 'health.json').read_text())['simulation']['clock_age_wall_s'] == 6
+        assert json.loads((tmp_path / 'status/health.json').read_text())['simulation']['clock_age_wall_s'] == 6
         clock(0)
         node.tick()
-        assert json.loads((tmp_path / 'health.json').read_text())['simulation']['real_time_factor'] is None
+        assert json.loads((tmp_path / 'status/health.json').read_text())['simulation']['real_time_factor'] is None
         record = node.records['alpha']
         record.update(state=SimpleNamespace(connected=True, armed=False, mode='STABILIZE'),
                       state_at=116, intervals={30, 32}, pose_count=3, pose_at=116)
         node.tick()
-        assert json.loads((tmp_path / 'health.json').read_text())['first_ready_elapsed_wall_s'] == 16
+        assert json.loads((tmp_path / 'status/health.json').read_text())['first_ready_elapsed_wall_s'] == 16
         wall[0] = 117.0
         node.tick()
-        assert json.loads((tmp_path / 'health.json').read_text())['first_ready_elapsed_wall_s'] == 16
+        assert json.loads((tmp_path / 'status/health.json').read_text())['first_ready_elapsed_wall_s'] == 16
     finally:
         node.destroy_node()
         rclpy.shutdown()
@@ -128,7 +128,7 @@ def test_readiness_explains_telemetry_pose_and_fleet_parameter_waits(tmp_path, m
             record.update(state=SimpleNamespace(connected=True, armed=False, mode='STABILIZE'),
                           state_at=100, client=SimpleNamespace(service_is_ready=lambda: False))
         node.tick()
-        health = json.loads((tmp_path / 'health.json').read_text())
+        health = json.loads((tmp_path / 'status/health.json').read_text())
         checks = health['uavs']['alpha']['checks']
         assert checks['FCU']['ready']
         assert checks['MAVROS parameters']['ready']
@@ -138,17 +138,17 @@ def test_readiness_explains_telemetry_pose_and_fleet_parameter_waits(tmp_path, m
         for record in node.records.values():
             record.update(intervals={30, 32}, pose_count=3, pose_at=100)
         node.tick()
-        health = json.loads((tmp_path / 'health.json').read_text())
+        health = json.loads((tmp_path / 'status/health.json').read_text())
         assert all(check['ready'] for check in health['uavs']['alpha']['checks'].values())
         assert not health['uavs']['alpha']['ready']  # The other UAV's parameters still gate the fleet.
         node.plugin_parameters.configured = True
         node.tick()
-        health = json.loads((tmp_path / 'health.json').read_text())
+        health = json.loads((tmp_path / 'status/health.json').read_text())
         assert health['ready']
-        assert (tmp_path / 'ready.json').exists()
+        assert (tmp_path / 'status/ready.json').exists()
         node.records['alpha']['pose_at'] = 80
         node.tick()
-        health = json.loads((tmp_path / 'health.json').read_text())
+        health = json.loads((tmp_path / 'status/health.json').read_text())
         assert not health['ready']
         assert health['uavs']['alpha']['checks']['local pose']['detail'] == 'local pose stream stale'
     finally:

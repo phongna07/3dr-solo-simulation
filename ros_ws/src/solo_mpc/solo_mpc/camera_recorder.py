@@ -35,9 +35,13 @@ class CameraRecorder(Node):
         self.bridge = CvBridge()
         self.vehicle_names = tuple(vehicle_names or names)
         self.overhead = overhead
-        self.composite = (CompositeVideo(Path(output_dir) / 'combined.avi', fps,
-                                         self.vehicle_names, occupancy=True,
-                                         telemetry=True) if combined else None)
+        self.composite = None
+        if combined:
+            self.composite = CompositeVideo(
+                Path(output_dir) / 'recorded-mission.mp4', fps, self.vehicle_names,
+                occupancy=True, telemetry=True,
+                timestamps_path=Path(output_dir) / 'telemetry/recorded-mission.timestamps.jsonl',
+            )
         self.videos = ({'combined': self.composite.video} if combined else {
             name: FrameVideo(Path(output_dir) / f"{name}.avi", fps) for name in names
         })
@@ -218,7 +222,7 @@ def main():
     vehicles = [uav['name'] for uav in load_config(args.fleet)['uavs']]
     names = ['overhead'] if args.overhead else vehicles
     # Finish the current frame and its timestamp before flushing on shutdown.
-    # A KeyboardInterrupt between those writes can leave an extra AVI frame.
+    # A KeyboardInterrupt between those writes can leave an extra video frame.
     rclpy.init(args=ros, signal_handler_options=SignalHandlerOptions.NO)
     node = None
     progress = None

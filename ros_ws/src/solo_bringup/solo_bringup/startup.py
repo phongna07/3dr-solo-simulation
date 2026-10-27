@@ -8,6 +8,7 @@ import time
 
 def write_status(path, payload):
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(payload, indent=2) + '\n')
     temporary.replace(path)
@@ -27,7 +28,7 @@ def startup_blockers(run, startup):
         if not item.get('initializes'):
             continue
         try:
-            component = json.loads((Path(run) / 'startup-components' / f'{name}.json').read_text())
+            component = json.loads((Path(run) / 'status/components' / f'{name}.json').read_text())
         except (OSError, ValueError):
             component = {}
         if (component.get('pid') != item.get('pid') or
@@ -44,7 +45,7 @@ class StartupProgress:
     """The launch process owns the process inventory and lifecycle events."""
 
     def __init__(self, run):
-        self.path = Path(run) / 'startup.json'
+        self.path = Path(run) / 'status/startup.json'
         self.started = time.time()
         self.phase = 'Preparing launch'
         self.processes = {}
@@ -79,8 +80,8 @@ class ComponentProgress:
     """Each MPC process owns its constructor status; no concurrent JSON writers."""
 
     def __init__(self, run, name):
-        self.path = Path(run) / 'startup-components' / f'{name}.json'
-        self.path.parent.mkdir(exist_ok=True)
+        self.path = Path(run) / 'status/components' / f'{name}.json'
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def update(self, state, detail):
         write_status(self.path, {

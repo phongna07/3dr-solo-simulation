@@ -58,7 +58,7 @@ def follow_target(gui, timeout=60.0, offset=FOLLOW_OFFSET):
 
 
 def main():
-    world_path = Path(os.environ.get("RUNS_ROOT", "/workspace/runs")) / "latest/world.sdf"
+    world_path = Path(os.environ.get("RUNS_ROOT", "/workspace/runs")) / "latest/config/world.sdf"
     track = has_target(world_path)
     gui = subprocess.Popen(["gz", "sim", "-g", "-v", "3"])
     try:

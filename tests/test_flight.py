@@ -214,16 +214,18 @@ def test_mission_moves_only_after_entire_fleet_settles(
     from solo_mpc_interfaces.srv import StartMission
 
     events = []
-    (tmp_path / 'manifest.json').write_text(json.dumps({
+    for directory in ('metadata', 'config', 'status'):
+        (tmp_path / directory).mkdir()
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({
         'mode': 'simulation', 'profile': 'mpc',
         'config': {'uavs': [{'name': n} for n in fleet.names]},
     }))
-    (tmp_path / 'controller.yaml').write_text('flight_altitude: 3.0\ntarget_mode: camera\n')
-    (tmp_path / 'scenario.yaml').write_text('{}')
-    (tmp_path / 'health.json').write_text(json.dumps({
+    (tmp_path / 'config/controller.yaml').write_text('flight_altitude: 3.0\ntarget_mode: camera\n')
+    (tmp_path / 'config/scenario.yaml').write_text('{}')
+    (tmp_path / 'status/health.json').write_text(json.dumps({
         'ready': True, 'updated_wall_unix': time.time(),
     }))
-    (tmp_path / 'alignment.json').write_text(json.dumps(dict.fromkeys(fleet.names)))
+    (tmp_path / 'status/alignment.json').write_text(json.dumps(dict.fromkeys(fleet.names)))
     rclpy.init()
     node = MissionSupervisor(tmp_path)
     try:

@@ -43,20 +43,20 @@ def start(context):
     progress.stage('Generating Gazebo world and sensor models')
     if profile == 'mpc':
         from solo_mpc.world import generate_mpc_world
-        world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf',
+        world, _ = generate_mpc_world(config, '/opt/ardupilot_gazebo', run / 'config/world.sdf',
                                       get('scenario'), get('settings'),
                                       record_overhead=get('record_video') == 'true',
                                       target_mode=get('target_mode') or None,
                                       record_cameras=get('record_video') == 'true')
     else:
-        world = generate_world(config, '/opt/ardupilot_gazebo', run / 'world.sdf', profile)
+        world = generate_world(config, '/opt/ardupilot_gazebo', run / 'config/world.sdf', profile)
     defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
                         for name in ('copter.parm', 'gazebo-iris.parm'))
     for path in defaults.split(','):
         if not Path(path).is_file():
             raise RuntimeError(f'Missing defaults: {path}')
     if profile == 'mpc' and settings.get('sitl_params'):
-        defaults += ',' + sitl_parameter_file(settings['sitl_params'], run / 'sitl-overrides.parm')
+        defaults += ',' + sitl_parameter_file(settings['sitl_params'], run / 'config/sitl-overrides.parm')
     gz_command = ['gz', 'sim', '-s', '-r', '-v', '3', str(world)]
     if profile in ('reference', 'mpc'):
         gz_command.insert(2, '--headless-rendering')
@@ -81,7 +81,7 @@ def start(context):
         actions += [critical(bridge)] + observed(bridge, progress, f"mavros-{uav['name']}")
     monitor = Node(
         package='solo_bringup', executable='readiness', name='fleet_readiness',
-        output='both', arguments=['--fleet', str(run / 'fleet.yaml'), '--run-dir', str(run),
+        output='both', arguments=['--fleet', str(run / 'config/fleet.yaml'), '--run-dir', str(run),
                                   '--timeout', get('readiness_timeout'), '--state-timeout', '60'],
     )
     actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')

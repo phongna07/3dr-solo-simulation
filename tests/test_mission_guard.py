@@ -8,10 +8,16 @@ pytest.importorskip("rclpy")
 from solo_mpc.mission import main
 
 
+@pytest.fixture(autouse=True)
+def run_folders(tmp_path):
+    for directory in ('metadata', 'config'):
+        (tmp_path / directory).mkdir()
+
+
 @pytest.mark.parametrize("mode,profile", [("hardware", "mpc"), ("simulation", "control")])
 @pytest.mark.parametrize("command", ["run", "start", "stop", "status", "reset"])
 def test_mission_rejects_non_mission_runs(tmp_path, mode, profile, command):
-    (tmp_path / "manifest.json").write_text(json.dumps({"mode": mode, "profile": profile}))
+    (tmp_path / "metadata/manifest.json").write_text(json.dumps({"mode": mode, "profile": profile}))
     with pytest.raises(SystemExit, match="MPC simulation profile"):
         main([command, "--run-dir", str(tmp_path)])
 
@@ -31,11 +37,11 @@ def test_startup_can_be_cancelled_before_run_directory_exists(tmp_path):
 
 
 def test_cancellation_works_while_simulation_clock_is_paused(tmp_path, capsys):
-    (tmp_path / 'manifest.json').write_text(json.dumps({
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({
         'mode': 'simulation', 'profile': 'mpc', 'config': {'uavs': []},
     }))
-    (tmp_path / 'controller.yaml').write_text('{}')
-    (tmp_path / 'scenario.yaml').write_text('{}')
+    (tmp_path / 'config/controller.yaml').write_text('{}')
+    (tmp_path / 'config/scenario.yaml').write_text('{}')
     cancel = tmp_path / 'mission.cancel'
     cancel.touch()
     started = time.monotonic()
@@ -49,7 +55,7 @@ def test_cancellation_works_while_simulation_clock_is_paused(tmp_path, capsys):
 @pytest.mark.parametrize('mode,profile', [('hardware', 'mpc'), ('simulation', 'control')])
 def test_supervisor_rejects_unsupported_runs_before_ros_initialization(tmp_path, mode, profile):
     from solo_mpc.mission_node import MissionSupervisor
-    (tmp_path / 'manifest.json').write_text(json.dumps({'mode': mode, 'profile': profile}))
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({'mode': mode, 'profile': profile}))
     with pytest.raises(ValueError, match='MPC simulation profile'):
         MissionSupervisor(tmp_path)
 
@@ -59,7 +65,7 @@ def test_cli_reports_takeover_without_claiming_fleet_landed(tmp_path, monkeypatc
     from types import SimpleNamespace
     from solo_mpc import mission
 
-    (tmp_path / 'manifest.json').write_text(json.dumps({'mode': 'simulation', 'profile': 'mpc'}))
+    (tmp_path / 'metadata/manifest.json').write_text(json.dumps({'mode': 'simulation', 'profile': 'mpc'}))
     def client(service, topic):
         def call(request):
             result = SimpleNamespace(success=True, mission_id='test', message=json.dumps({

@@ -30,8 +30,10 @@ def decode(path):
 
 
 def test_combined_video_aligns_delayed_feeds_and_preserves_elapsed_simulation_time(tmp_path):
-    path = tmp_path / 'combined.avi'
-    recorder = CompositeVideo(path, 20, ['alpha', 'bravo', 'charlie'])
+    path = tmp_path / 'recorded-mission.mp4'
+    timestamps = tmp_path / 'telemetry/recorded-mission.timestamps.jsonl'
+    recorder = CompositeVideo(path, 20, ['alpha', 'bravo', 'charlie'],
+                              timestamps_path=timestamps)
     background = image((80, 80, 80), (360, 640))
     red, green, blue = (0, 0, 240), (0, 240, 0), (240, 0, 0)
     # Different start times and rates, with FOV callbacks delivered after overhead.
@@ -49,6 +51,7 @@ def test_combined_video_aligns_delayed_feeds_and_preserves_elapsed_simulation_ti
     recorder.close()
     recorder.close()
 
+    assert path.read_bytes()[4:8] == b'ftyp'
     fps, frames = decode(path)
     assert fps == 20 and len(frames) == 3
     assert all(frame.shape == background.shape for frame in frames)
@@ -60,10 +63,10 @@ def test_combined_video_aligns_delayed_feeds_and_preserves_elapsed_simulation_ti
                           ((310, 570), [(24, 24, 24), blue, red])]:
         assert np.allclose([frame[point] for frame in frames], colors, atol=8)
     stamps = [json.loads(row)['stamp_ns'] for row in
-              path.with_suffix('.timestamps.jsonl').read_text().splitlines()]
+              timestamps.read_text().splitlines()]
     assert stamps == [10_000_000_000, 10_050_000_000, 10_100_000_000]
     assert sorted(p.name for p in tmp_path.iterdir()) == [
-        'combined.avi', 'combined.timestamps.jsonl',
+        'recorded-mission.mp4', 'telemetry',
     ]
 
 
@@ -87,7 +90,7 @@ def test_overlays_fit_every_vehicle_on_the_right_and_preserve_image_aspect(count
 
 def test_missing_camera_times_out_even_with_paused_simulation_and_flushes_tail(tmp_path, monkeypatch):
     monkeypatch.setattr('solo_mpc.core.composite_video.time.monotonic', lambda: 100.0)
-    recorder = CompositeVideo(tmp_path / 'combined.avi', 20, ['missing'])
+    recorder = CompositeVideo(tmp_path / 'recorded-mission.mp4', 20, ['missing'])
     background = image((90, 90, 90), (360, 640))
     recorder.write('overhead', background, 1_000_000_000)
     recorder.flush(now=101.9)
@@ -102,7 +105,7 @@ def test_missing_camera_times_out_even_with_paused_simulation_and_flushes_tail(t
 
 
 def test_simulation_buffer_limits_missing_camera_delay_and_ignores_old_samples(tmp_path):
-    recorder = CompositeVideo(tmp_path / 'combined.avi', 20, ['missing'])
+    recorder = CompositeVideo(tmp_path / 'recorded-mission.mp4', 20, ['missing'])
     background = image((90, 90, 90), (360, 640))
     recorder.write('overhead', background, 1_000_000_000)
     recorder.write('overhead', background, 1_500_000_000)
@@ -114,7 +117,7 @@ def test_simulation_buffer_limits_missing_camera_delay_and_ignores_old_samples(t
 
 
 def test_no_overhead_creates_no_output_and_fov_buffer_is_bounded(tmp_path):
-    recorder = CompositeVideo(tmp_path / 'combined.avi', 20, ['alpha'])
+    recorder = CompositeVideo(tmp_path / 'recorded-mission.mp4', 20, ['alpha'])
     for i in range(1000):
         recorder.write('alpha', image((90, 90, 90)), i)
     assert len(recorder.pending['alpha']) <= 256
@@ -123,7 +126,7 @@ def test_no_overhead_creates_no_output_and_fov_buffer_is_bounded(tmp_path):
 
 
 def test_eight_fps_fovs_stay_aligned_with_twenty_fps_overhead_despite_jitter(tmp_path):
-    path = tmp_path / 'combined.avi'
+    path = tmp_path / 'recorded-mission.mp4'
     names = ['alpha', 'bravo', 'charlie']
     starts = [0, 25_000_000, 75_000_000]
     delays = [30_000_000, 10_000_000, 20_000_000]
@@ -148,7 +151,7 @@ def test_eight_fps_fovs_stay_aligned_with_twenty_fps_overhead_despite_jitter(tmp
 
 
 def test_shutdown_closes_writer_even_when_composition_fails(tmp_path, monkeypatch):
-    recorder = CompositeVideo(tmp_path / 'combined.avi', 20, ['missing'])
+    recorder = CompositeVideo(tmp_path / 'recorded-mission.mp4', 20, ['missing'])
     recorder.write('overhead', image((90, 90, 90), (360, 640)), 1_000_000_000)
 
     def fail(*args):

@@ -30,6 +30,7 @@ class Readiness(Node):
     def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=20.0, simulation=False):
         super().__init__('fleet_readiness')
         self.run_dir = Path(run_dir)
+        (self.run_dir / 'status').mkdir(parents=True, exist_ok=True)
         self.timeout, self.max_pose_age = timeout, max_pose_age
         self.state_timeout = state_timeout
         self.started = time.monotonic()
@@ -212,11 +213,11 @@ class Readiness(Node):
                    'first_ready_elapsed_wall_s': self.first_ready_elapsed, 'uavs': report}
         if self.simulation:
             payload['simulation'] = self.simulation_status(now)
-        atomic_json(self.run_dir / 'health.json', payload)
+        atomic_json(self.run_dir / 'status/health.json', payload)
         self.publisher.publish(String(data=json.dumps(payload)))
         if ready:
             self.ever_ready = True
-            atomic_json(self.run_dir / 'ready.json', payload)
+            atomic_json(self.run_dir / 'status/ready.json', payload)
         status_summary = json.dumps({name: {'checks': item['checks'], 'plugins': item['plugins']}
                                      for name, item in report.items()}, sort_keys=True)
         if status_summary != self.previous_summary or ready != self.previous_ready or now - self.last_report > 15:

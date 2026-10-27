@@ -9,8 +9,9 @@ import pytest
 from solo_mpc.core.video import FrameVideo
 
 
-def test_video_round_trip_preserves_frames_fps_and_timestamps(tmp_path):
-    path = tmp_path / "cameras" / "alpha.avi"
+@pytest.mark.parametrize("extension", ["avi", "mp4"])
+def test_video_round_trip_preserves_frames_fps_and_timestamps(tmp_path, extension):
+    path = tmp_path / "cameras" / f"alpha.{extension}"
     video = FrameVideo(path, 8.0)
     assert not path.exists()
     colors = [(0, 0, 255), (0, 255, 0), (255, 0, 255)]
@@ -21,6 +22,8 @@ def test_video_round_trip_preserves_frames_fps_and_timestamps(tmp_path):
     finally:
         video.close()
     video.close()
+    if extension == "mp4":
+        assert path.read_bytes()[4:8] == b"ftyp"
     capture = cv2.VideoCapture(str(path))
     try:
         assert capture.isOpened()
@@ -48,15 +51,16 @@ def test_no_frames_creates_no_files_and_existing_video_is_preserved(tmp_path):
     assert path.read_bytes() == b"existing recording"
 
 
-def test_missing_codec_fails_clearly_and_releases_writer(tmp_path, monkeypatch):
+@pytest.mark.parametrize("extension,codec", [("avi", "MJPG"), ("mp4", "mp4v")])
+def test_missing_codec_fails_clearly_and_releases_writer(tmp_path, monkeypatch, extension, codec):
     from types import SimpleNamespace
 
     released = []
     monkeypatch.setattr(cv2, "VideoWriter", lambda *args: SimpleNamespace(
         isOpened=lambda: False, release=lambda: released.append(True),
     ))
-    video = FrameVideo(tmp_path / "alpha.avi", 8.0)
-    with pytest.raises(RuntimeError, match="Could not open MJPEG"):
+    video = FrameVideo(tmp_path / f"alpha.{extension}", 8.0)
+    with pytest.raises(RuntimeError, match=f"Could not open {codec}"):
         video.write(np.zeros((160, 160, 3), np.uint8), 0)
     assert released == [True]
     assert video.timestamps is None

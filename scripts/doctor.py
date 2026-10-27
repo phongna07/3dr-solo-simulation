@@ -63,10 +63,10 @@ def container_checks(require_renderer=False):
     # A prior run's log is evidence only while that exact server is alive.
     try:
         run_dir = log.parents[3].resolve()
-        startup = json.loads((run_dir / 'startup.json').read_text())
+        startup = json.loads((run_dir / 'status/startup.json').read_text())
         server = startup['processes']['gazebo-server']
         command = Path(f"/proc/{server['pid']}/cmdline").read_bytes()
-        live = server['state'] == 'running' and server_command_uses_world(command, run_dir / 'world.sdf')
+        live = server['state'] == 'running' and server_command_uses_world(command, run_dir / 'config/world.sdf')
     except (OSError, KeyError, ValueError):
         live = False
     value = renderer(log) if live else None

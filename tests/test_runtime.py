@@ -12,6 +12,9 @@ def test_state_isolation_and_explicit_resume(tmp_path, monkeypatch):
     monkeypatch.setenv('RUNS_ROOT', str(tmp_path))
     config = load_config(ROOT / 'config/fleet.yaml')
     first = create_run(config, 'simulation', 'control', 'first')
+    assert all(entry.is_dir() for entry in first.iterdir())
+    assert yaml.safe_load((first / 'config/fleet.yaml').read_text()) == config
+    assert (first / 'metadata/source-sha256.json').is_file()
     state = first / 'sitl/0/eeprom.bin'
     state.parent.mkdir(parents=True)
     state.write_bytes(b'persisted parameters')
@@ -20,12 +23,14 @@ def test_state_isolation_and_explicit_resume(tmp_path, monkeypatch):
     assert not (second / 'sitl/0/eeprom.bin').exists()
     with pytest.raises(ValueError):
         create_run(config, 'simulation', 'control', 'first')
-    (first / 'health.json').write_text('{}')
+    (first / 'status/health.json').write_text('{}')
+    (first / 'status/ready.json').write_text('{}')
     resumed = create_run(config, 'simulation', 'control', 'first', resume=True)
     assert resumed == first
     assert state.read_bytes() == b'persisted parameters'
-    assert not (first / 'health.json').exists()
-    assert json.loads((first / 'manifest.json').read_text())['mode'] == 'simulation'
+    assert not (first / 'status/health.json').exists()
+    assert not (first / 'status/ready.json').exists()
+    assert json.loads((first / 'metadata/manifest.json').read_text())['mode'] == 'simulation'
     with pytest.raises(ValueError):
         create_run(config, 'simulation', 'reference', 'first', resume=True)
 

@@ -161,7 +161,7 @@ def test_run_node_records_constructor_success_or_failure(tmp_path, monkeypatch, 
     args = node_args(tmp_path)
     args.startup_component = 'setpoints'
     monkeypatch.setattr(ros_utils, 'arguments', lambda _: (args, []))
-    path = tmp_path / 'startup-components/setpoints.json'
+    path = tmp_path / 'status/components/setpoints.json'
 
     def construct(options):
         assert json.loads(path.read_text())['state'] == 'initializing'

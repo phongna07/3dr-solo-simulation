@@ -91,7 +91,7 @@ if [[ "$TASK_SERVICE" == sim ]]; then
       ros2 topic echo --once --qos-reliability best_effort --field header.stamp "$topic" >> "$TASK_EVIDENCE/sensors.log" 2>&1
   done
   # Copy evidence through Docker: independent of bind-mount behavior on the host.
-  docker cp "$TASK_CONTAINER:/workspace/runs/$RUN_ID/health.json" "$TASK_EVIDENCE/health.json"
+  docker cp "$TASK_CONTAINER:/workspace/runs/$RUN_ID/status/health.json" "$TASK_EVIDENCE/health.json"
   docker cp "$TASK_CONTAINER:/workspace/runs/$RUN_ID/gazebo-home/.gz/rendering/ogre2.log" "$TASK_EVIDENCE/server-renderer.log"
 fi
 # Companion smoke validates MAVROS/library/config loading without connecting to

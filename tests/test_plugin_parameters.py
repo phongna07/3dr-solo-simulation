@@ -64,7 +64,8 @@ def test_bootstrap_changes_frames_without_reentering_unchanged_callbacks(tmp_pat
         '/**/local_position': {'ros__parameters': {'frame_id': 'uav1/map'}},
         '/**/setpoint_attitude': {'ros__parameters': {'use_quaternion': False}},
     }
-    (tmp_path / 'uav1-mavros.yaml').write_text(yaml.safe_dump(data))
+    (tmp_path / 'config').mkdir()
+    (tmp_path / 'config/uav1-mavros.yaml').write_text(yaml.safe_dump(data))
     node = FakeNode()
     for _ in range(2):
         bootstrap = PluginParameters(node, [{'name': 'uav1'}], tmp_path)
@@ -83,7 +84,8 @@ def test_plugin_progress_distinguishes_missing_nodes_services_and_parameter_phas
         'sys': {'heartbeat_rate': 1.0}, 'imu': {'frame_id': 'uav1/base_link'},
         'local_position': {'frame_id': 'uav1/map'},
     }.items()}
-    (tmp_path / 'uav1-mavros.yaml').write_text(yaml.safe_dump(data))
+    (tmp_path / 'config').mkdir()
+    (tmp_path / 'config/uav1-mavros.yaml').write_text(yaml.safe_dump(data))
     node = FakeNode()
     bootstrap = PluginParameters(node, [{'name': 'uav1'}], tmp_path)
     imu = '/uav1/mavros/imu'

@@ -43,7 +43,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--ground-truth-target]     Track exact timestamped target positions without camera detection
-      [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/combined.avi
+      [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
   mission run|start|stop|status|reset [--seconds WALL_SECONDS]
   evaluate                       Evaluate the latest MPC flight log
   wait [TIMEOUT]                 Wait for current simulation readiness
@@ -126,7 +126,7 @@ case "$command" in
     ;;
   status)
     "${dc[@]}" ps
-    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c 'import json; from pathlib import Path; print(json.dumps(json.loads(Path("/workspace/runs/latest/health.json").read_text()), indent=2))'
+    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c 'import json; from pathlib import Path; print(json.dumps(json.loads(Path("/workspace/runs/latest/status/health.json").read_text()), indent=2))'
     ;;
   logs) "${dc[@]}" logs -f --tail 100 sim ;;
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;

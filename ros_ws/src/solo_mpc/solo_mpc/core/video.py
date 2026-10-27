@@ -8,10 +8,13 @@ import cv2
 
 
 class FrameVideo:
-    def __init__(self, path, fps):
+    def __init__(self, path, fps, *, timestamps_path=None):
         if not math.isfinite(fps) or fps <= 0:
             raise ValueError("Video FPS must be finite and positive")
         self.path = Path(path)
+        self.timestamps_path = (Path(timestamps_path) if timestamps_path is not None
+                                else self.path.with_suffix('.timestamps.jsonl'))
+        self.codec = 'mp4v' if self.path.suffix.lower() == '.mp4' else 'MJPG'
         self.fps = fps
         self.writer = None
         self.timestamps = None
@@ -27,13 +30,14 @@ class FrameVideo:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if self.path.exists():
                 raise FileExistsError(self.path)
-            self.timestamps = self.path.with_suffix(".timestamps.jsonl").open("x")
+            self.timestamps_path.parent.mkdir(parents=True, exist_ok=True)
+            self.timestamps = self.timestamps_path.open("x")
             self.writer = cv2.VideoWriter(
-                str(self.path), cv2.VideoWriter_fourcc(*"MJPG"), self.fps, size
+                str(self.path), cv2.VideoWriter_fourcc(*self.codec), self.fps, size
             )
             if not self.writer.isOpened():
                 self.close()
-                raise RuntimeError(f"Could not open MJPEG video writer: {self.path}")
+                raise RuntimeError(f"Could not open {self.codec} video writer: {self.path}")
             self.size = size
         if size != self.size:
             raise ValueError(f"Camera resolution changed from {self.size} to {size}")
