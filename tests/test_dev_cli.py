@@ -30,6 +30,13 @@ elif "ps" in args and "-q" in args and "--status" not in args:
     print("test-container")
 elif args[-2:] == ["printenv", "READINESS_TIMEOUT"]:
     print("600")
+elif "ps" in args and "--status" in args and os.environ.get("SIM_ALREADY_RUNNING"):
+    print("existing-container")
+failure = os.environ.get("FAIL_DOCKER_STEP")
+if failure and (failure in args or (failure == "mission-run" and "mission" in args and args[args.index("mission") + 1] == "run")):
+    sys.exit(int(os.environ.get("FAIL_DOCKER_CODE", "1")))
+if args[-2:] == ["stop", "sim"] and os.environ.get("FAIL_CONTAINER_STOP"):
+    sys.exit(1)
 if args[-2:] == ["mission", "stop"] and os.environ.get("FAIL_MISSION_STOP"):
     sys.exit(1)
 ''')
@@ -230,6 +237,7 @@ def test_mpc_does_not_start_mission_after_readiness_failure(fake_docker):
     try:
         assert result.returncode == 1
         assert not any('mission' in e['args'] for e in entries)
+        assert entries[-1]['args'][-2:] == ['stop', 'sim']
     finally:
         for entry in entries:
             if entry['env']['RUN_ID']:
@@ -250,3 +258,57 @@ def test_mission_run_is_an_explicit_separate_command(fake_docker):
     commands = [e['args'] for e in calls(log)]
     assert len(commands) == 1
     assert commands[0][-6:] == ['run', 'solo_mpc', 'mission', 'run', '--seconds', '20']
+
+
+@pytest.mark.parametrize('step,args', [
+    ('up', ['mpc']),
+    ('inspect', ['mpc']),
+    ('printenv', ['mpc']),
+    ('/workspace/scripts/gazebo_gui.py', ['mpc', '--no-wait', '--gui']),
+    ('mission-run', ['mission', 'run', '--seconds', '20']),
+])
+def test_failed_command_stops_simulation(fake_docker, step, args):
+    log, env = fake_docker
+    env['FAIL_DOCKER_STEP'] = step
+    result = invoke(args, env)
+    entries = calls(log)
+    try:
+        assert result.returncode == 1
+        assert entries[-1]['args'][-2:] == ['stop', 'sim']
+        assert sum(e['args'][-2:] == ['stop', 'sim'] for e in entries) == 1
+        assert 'stopping simulation container' in result.stderr
+    finally:
+        for entry in entries:
+            if entry['env']['RUN_ID']:
+                (ROOT / 'runs' / (entry['env']['RUN_ID'] + '.image-id.json')).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('stop_fails', [False, True])
+def test_cleanup_preserves_original_failure_code(fake_docker, stop_fails):
+    log, env = fake_docker
+    env['FAIL_DOCKER_STEP'] = 'mission-run'
+    env['FAIL_DOCKER_CODE'] = '7'
+    if stop_fails:
+        env['FAIL_CONTAINER_STOP'] = '1'
+    result = invoke(['mission', 'run'], env)
+    assert result.returncode == 7
+    assert calls(log)[-1]['args'][-2:] == ['stop', 'sim']
+    if stop_fails:
+        assert 'retry ./scripts/dev stop --force' in result.stderr
+
+
+def test_mpc_does_not_stop_existing_simulation(fake_docker):
+    log, env = fake_docker
+    env['SIM_ALREADY_RUNNING'] = '1'
+    result = invoke(['mpc'], env)
+    assert result.returncode == 1
+    assert len(calls(log)) == 1
+    assert 'already running' in result.stderr
+
+
+@pytest.mark.parametrize('command', ['start', 'stop', 'status', 'reset'])
+def test_other_mission_failures_do_not_stop_simulation(fake_docker, command):
+    log, env = fake_docker
+    env['FAIL_DOCKER_STEP'] = 'mission'
+    assert invoke(['mission', command], env).returncode == 1
+    assert len(calls(log)) == 1

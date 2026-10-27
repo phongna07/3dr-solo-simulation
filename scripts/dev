@@ -62,6 +62,18 @@ Usage: ./scripts/dev COMMAND [arguments]
 EOF
 }
 
+cleanup_failed_simulation() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 )); then
+    printf 'Command failed (exit %s); stopping simulation container.\n' "$status" >&2
+    # The mission service may be unavailable after a failure. Use the same
+    # process shutdown as stop --force, preserving the original exit status.
+    "${dc[@]}" stop sim || printf 'Failed to stop simulation container; retry ./scripts/dev stop --force.\n' >&2
+  fi
+  exit "$status"
+}
+
 command="${1:-help}"
 [[ $# -eq 0 ]] || shift
 case "$command" in
@@ -94,6 +106,7 @@ case "$command" in
       exit 1
     fi
     mkdir -p runs
+    trap cleanup_failed_simulation EXIT
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
@@ -118,7 +131,12 @@ case "$command" in
   logs) "${dc[@]}" logs -f --tail 100 sim ;;
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py ;;
-  mission) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@" ;;
+  mission)
+    if [[ "${1:-}" == run ]]; then
+      trap cleanup_failed_simulation EXIT
+    fi
+    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"
+    ;;
   evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)
     if [[ "${1:-}" != --force ]]; then
