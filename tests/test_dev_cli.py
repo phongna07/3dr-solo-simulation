@@ -19,8 +19,8 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["DOCKER_TEST_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "env": {k: os.environ.get(k) for k in (
-        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_TARGET_MODE", "MPC_RECORD_CAMERAS",
-        "MPC_RECORD_OVERHEAD", "RUN_ID", "COMPOSE_FILE", "COMPOSE_PATH_SEPARATOR",
+        "FLEET_CONFIG", "MPC_SCENARIO", "MPC_SETTINGS", "MPC_TARGET_MODE", "MPC_RECORD_VIDEO",
+        "RUN_ID", "COMPOSE_FILE", "COMPOSE_PATH_SEPARATOR",
         "LIBGL_ALWAYS_SOFTWARE")}}) + "\\n")
 if args == ["compose", "config", "--environment"]:
     print(os.environ.get("TEST_COMPOSE_ENV", ""))
@@ -98,7 +98,9 @@ def test_explicit_shell_gpu_and_rendering_overrides_are_preserved(fake_docker):
 
 
 @pytest.mark.parametrize("args", [["sim"], ["flight", "takeoff"], ["flight", "position"],
-                                  ["mpc", "--profile", "control"], ["mpc", "--resume", "old"]])
+                                  ["mpc", "--profile", "control"], ["mpc", "--resume", "old"],
+                                  ["mpc", "--record-overhead"], ["mpc", "--record-cameras"],
+                                  ["mpc", "--record-combined"]])
 def test_legacy_commands_are_rejected_before_docker(fake_docker, args):
     log, env = fake_docker
     assert invoke(args, env).returncode == 2
@@ -124,21 +126,16 @@ def test_mpc_passes_custom_configuration_to_compose(fake_docker):
 
 
 @pytest.mark.parametrize("record", [False, True])
-@pytest.mark.parametrize("overhead", [False, True])
-def test_camera_recording_is_opt_in(fake_docker, record, overhead):
+def test_video_recording_is_opt_in(fake_docker, record):
     log, env = fake_docker
-    env["MPC_RECORD_CAMERAS"] = "true"
-    env["MPC_RECORD_OVERHEAD"] = "true"
-    args = ["mpc", "--no-wait"] + (["--record-cameras"] if record else [])
-    if overhead:
-        args.append("--record-overhead")
+    env["MPC_RECORD_VIDEO"] = "true"
+    args = ["mpc", "--no-wait"] + (["--record-video"] if record else [])
     result = invoke(args, env)
     entries = calls(log)
     try:
         assert result.returncode == 0, result.stderr
         start = next(e for e in entries if "up" in e["args"])
-        assert start["env"]["MPC_RECORD_CAMERAS"] == str(record).lower()
-        assert start["env"]["MPC_RECORD_OVERHEAD"] == str(overhead).lower()
+        assert start["env"]["MPC_RECORD_VIDEO"] == str(record).lower()
     finally:
         for entry in entries:
             if entry["env"]["RUN_ID"]:

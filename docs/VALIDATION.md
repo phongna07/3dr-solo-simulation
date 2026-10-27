@@ -180,8 +180,10 @@ Evidence: `artifacts/mission-supervisor-validation.json` and the
 ## Startup performance
 
 On 15 October, two fresh disarmed runs used the same image, default three-UAV
-scenario, both video flags, and software-rendered WSL host (Core Ultra 5 225H,
-14 CPUs available to Docker). The change deferred overhead rendering until
+scenario, overhead and UAV camera recording, and software-rendered WSL host
+(Core Ultra 5 225H, 14 CPUs available to Docker). These measurements used the
+earlier separate recorders; the current `--record-video` option saves a
+synchronized composite. The change deferred overhead rendering until
 arming and removed empty waits between parameter/telemetry bootstrap phases.
 
 | Measurement | Before | After |

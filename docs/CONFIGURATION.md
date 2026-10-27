@@ -151,7 +151,8 @@ Defaults are a 160 × 160 camera at 8 Hz, approximately 53.13° horizontal FOV,
 and horizontal LiDAR with 360 samples at 10 Hz, with 0.01 m Gaussian range-noise
 standard deviation. At 3 m the camera sees roughly
 a 3 m square of ground. Rates follow simulation time. The mission model has no
-gimbal; the optional recorders encode video separately.
+gimbal; `--record-video` encodes the overhead view and all UAV FOVs into one
+synchronized video.
 
 `camera` mode uses marker detections for target tracking; the controller does
 not subscribe to target truth. Ground truth still supports disarmed frame
@@ -180,8 +181,9 @@ and reported in `/mpc/status`, `mpc.jsonl`, and evaluation results.
 
 In `ground_truth` mode, marker detector processes are omitted from launch and
 startup readiness. UAV camera sensors and bridges are omitted unless
-`--record-cameras` is requested. Both recording flags and `--gui` can be combined
-with `--ground-truth-target`. LiDAR, measured UAV state, frame alignment,
+`--record-video` is requested. This flag also enables the overhead camera and
+saves one combined video. `--record-video` and `--gui` can be combined with
+`--ground-truth-target`. LiDAR, measured UAV state, frame alignment,
 formation distance gates, and independent setpoint expiry still apply.
 `SEARCH` retains the upstream meaning: actively pursue the supplied target,
 rather than hold position or wait for a detection. Target availability and

@@ -144,7 +144,7 @@ axis. Press Escape in the 3D view to navigate freely; reopen it to restore follo
 | `controller_sources.jsonl` | Controller startup hashes and settings |
 | `mpc.jsonl`, `truth.jsonl` | Controller measurements/diagnostics and independent Gazebo poses |
 | `evaluation.json` | Geometry, tracking, compute, and simulation-speed metrics |
-| `cameras/`, `overhead/` | Optional videos and frame timestamps |
+| `combined.avi`, `combined.timestamps.jsonl` | Optional synchronized overhead video with all UAV FOVs |
 
 The image ID is stored beside the run in `runs/<run-id>.image-id.json`.
 `runs/latest` changes on the next launch; preserve the actual directory.
@@ -168,29 +168,38 @@ continuous collision avoidance; inspect physics contacts and tracking as well.
 Enable recording when launching a fresh simulation:
 
 ```bash
-./scripts/dev mpc --record-cameras --record-overhead
+./scripts/dev mpc --record-video
 ./scripts/dev mission run --seconds 20
 ./scripts/dev stop
 ```
 
-Either recording flag works alone; `--gui` is optional. Add
-`--ground-truth-target` to the launch command to record video while tracking
-the external timestamped target input. Camera detectors remain disabled in that mode.
+`--record-video` enables both the overhead camera and every UAV's FOV camera,
+and saves one synchronized recording. `--gui` is optional. Add
+`--ground-truth-target` to record while tracking the external timestamped target
+input; camera detectors remain disabled in that mode.
 
-| Option | View and defaults | Host output |
-|---|---|---|
-| `--record-cameras` | Downward camera per UAV, 160 × 160 at 8 FPS | `runs/<run-id>/cameras/<uav-name>.avi` |
-| `--record-overhead` | Elevated target-following view, 1920 × 1080 at 20 FPS | `runs/<run-id>/overhead/overhead.avi` |
+The output is `runs/<run-id>/combined.avi`: a 1920 × 1080 MJPEG video at 20 FPS
+with the elevated target-following view as its background and labelled UAV FOVs
+stacked on the right. UAV cameras default to 160 × 160 at 8 FPS.
 
-MJPEG videos start when a connected, armed UAV rises more than 0.15 m above its
-disarmed ground altitude. UAV cameras have individual gates; overhead starts
-with the first UAV to lift off. Recording continues through landing until the
-stack stops. Mission completion and GUI closure do not finalize videos.
+There is one panel per configured UAV in fleet order. Panels shrink to fit larger
+fleets and preserve the camera aspect ratio.
+All feeds share a recording gate at the first UAV's takeoff and align using their
+original Gazebo timestamps. Output runs at 20 FPS in simulation time, starting
+with the first overhead image. A short buffer waits up to 0.5 simulation seconds
+or two wall seconds for delayed FOV messages. At each output timestamp, the most
+recent image at or before that time is used; 8 FPS FOVs and dropped frames hold
+their last image, preserving elapsed time. Panels with no image yet show a
+waiting label. The final buffered frames are flushed when the stack stops.
 
-Each received frame is written once at the configured simulation camera rate.
-Dropped frames shorten playback. Adjacent `.timestamps.jsonl` files contain
-zero-based frame indices and original simulation timestamps (`stamp_ns`). No
-video is created without images. Recorder errors appear in logs without stopping
+Recording starts when the first connected, armed UAV rises more than 0.15 m
+above its disarmed ground altitude. All camera feeds share this gate. Recording
+continues through landing until the stack stops. Mission completion and GUI
+closure do not finalize the video; `./scripts/dev stop` closes the file.
+
+The adjacent `combined.timestamps.jsonl` contains zero-based output frame indices
+and simulation timestamps (`stamp_ns`) on the shared 20 FPS timeline. No video is
+created without overhead images. Recorder errors appear in logs without stopping
 the flight stack.
 
 Overhead recording is independent of GUI navigation and window size. The camera
@@ -201,8 +210,9 @@ model or a failure to take off. Check `truth.jsonl` or use the GUI to inspect
 distant vehicles. A lazy bridge
 activates its feed on arming, avoiding unused Full HD rendering during startup.
 Rendering/encoding costs return during flight; an external image subscriber can
-activate rendering earlier. Direct ROS launch accepts `record_cameras:=true` and
-`record_overhead:=true`.
+activate rendering earlier. Direct ROS launch accepts `record_video:=true`.
+For direct Docker Compose launches, set `MPC_RECORD_VIDEO=true`; the development
+runner enables recording through `--record-video`.
 
 ## Record telemetry
 
@@ -236,7 +246,7 @@ Preserve a startup report on the host:
 
 ```bash
 mkdir -p artifacts
-./scripts/dev mpc --record-overhead --record-cameras | tee artifacts/startup.log
+./scripts/dev mpc --record-video | tee artifacts/startup.log
 ./scripts/dev doctor
 ./scripts/dev status
 ```

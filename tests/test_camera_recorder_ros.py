@@ -131,3 +131,98 @@ def test_recording_waits_for_armed_takeoff_and_uses_each_vehicles_ground_level(t
     finally:
         recorder.destroy_node()
         rclpy.shutdown()
+
+
+@pytest.mark.parametrize('count', [3, 6])
+def test_ros_combined_recording_uses_one_takeoff_gate_and_one_video(tmp_path, count):
+    names = [f'combined_uav{i}' for i in range(count)]
+    colors = [(20 + i * 30, 210, 90) for i in range(count)]
+    rclpy.init(args=['--ros-args', '-p', 'use_sim_time:=true'])
+    source = rclpy.create_node('combined_camera_test_source')
+    recorder = CameraRecorder(names, tmp_path, 20, combined=True)
+    bridge = CvBridge()
+    background = np.full((1080, 1920, 3), 70, np.uint8)
+    try:
+        assert set(recorder.image_subscriptions) == set(names)
+        assert set(recorder.videos) == {'combined'}
+        msg = bridge.cv2_to_imgmsg(background, 'bgr8')
+        msg.header.stamp.sec = 12
+        recorder.image('overhead', msg)
+        assert not list(tmp_path.iterdir())
+        # Other drones' FOVs share the first drone's gate, even before they lift.
+        recorder.state(names[0], State(connected=True, armed=False))
+        pose = PoseStamped()
+        pose.pose.position.z = 10.0
+        recorder.pose(names[0], pose)
+        recorder.state(names[0], State(connected=True, armed=True))
+        pose.pose.position.z = 10.3
+        recorder.pose(names[0], pose)
+        topics = ['/overhead/camera/image_raw',
+                  *(f'/{name}/camera/image_raw' for name in names)]
+        publishers = [source.create_publisher(Image, topic, qos_profile_sensor_data)
+                      for topic in topics]
+        deadline = time.monotonic() + 10
+        while any(pub.get_subscription_count() == 0 for pub in publishers):
+            assert time.monotonic() < deadline, 'Combined camera subscribers did not connect'
+            rclpy.spin_once(recorder, timeout_sec=0.01)
+        for i in range(2):
+            frames = [background, *(np.full((160, 160, 3), color, np.uint8)
+                                     for color in colors)]
+            for pub, frame in zip(publishers, frames):
+                msg = bridge.cv2_to_imgmsg(frame, 'bgr8')
+                msg.header.stamp.sec = 12
+                msg.header.stamp.nanosec = i * 100_000_000
+                pub.publish(msg)
+            while recorder.videos['combined'].frames < 1 + i * 2:
+                assert time.monotonic() < deadline, 'Combined camera frames did not arrive'
+                rclpy.spin_once(recorder, timeout_sec=0.01)
+    finally:
+        recorder.destroy_node()
+        source.destroy_node()
+        rclpy.shutdown()
+    path = tmp_path / 'combined.avi'
+    capture = cv2.VideoCapture(str(path))
+    try:
+        assert capture.get(cv2.CAP_PROP_FPS) == 20
+        assert capture.get(cv2.CAP_PROP_FRAME_COUNT) == 3
+        ok, frame = capture.read()
+        assert ok and frame.shape == (1080, 1920, 3)
+        assert np.allclose(frame[540, 20], (70, 70, 70), atol=6)
+        previous_y = -1
+        for color in colors:
+            matches = np.all(np.abs(frame.astype(float) - color) < 8, axis=2)
+            # Ignore isolated JPEG edge pixels that resemble another panel.
+            ys = np.where(matches.sum(axis=1) > 50)[0]
+            assert len(ys) > 50
+            assert not matches[:, :1440].any() and ys.min() > previous_y
+            previous_y = ys.max()
+    finally:
+        capture.release()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        'combined.avi', 'combined.timestamps.jsonl',
+    ]
+
+
+def test_combined_flush_timer_runs_while_ros_simulation_clock_is_paused(tmp_path):
+    rclpy.init(args=['--ros-args', '-p', 'use_sim_time:=true'])
+    recorder = CameraRecorder(['timer_uav'], tmp_path, 20, combined=True)
+    try:
+        recorder.state('timer_uav', State(connected=True, armed=False))
+        pose = PoseStamped()
+        recorder.pose('timer_uav', pose)
+        recorder.state('timer_uav', State(connected=True, armed=True))
+        pose.pose.position.z = 0.3
+        recorder.pose('timer_uav', pose)
+        recorder.composite.max_wait = 0.01
+        msg = CvBridge().cv2_to_imgmsg(np.zeros((360, 640, 3), np.uint8), 'bgr8')
+        msg.header.stamp.sec = 12
+        recorder.image('overhead', msg)
+        assert recorder.videos['combined'].frames == 0
+        deadline = time.monotonic() + 2
+        while recorder.videos['combined'].frames == 0:
+            assert time.monotonic() < deadline, 'Wall timer stalled with paused ROS clock'
+            rclpy.spin_once(recorder, timeout_sec=0.1)
+        assert recorder.get_clock().now().nanoseconds == 0
+    finally:
+        recorder.destroy_node()
+        rclpy.shutdown()

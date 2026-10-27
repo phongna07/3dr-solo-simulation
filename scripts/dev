@@ -43,8 +43,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--ground-truth-target]     Track exact timestamped target positions without camera detection
-      [--record-cameras]          Save each UAV's FOV video to runs/<run-id>/cameras/
-      [--record-overhead]         Save a 1920x1080 elevated view to runs/<run-id>/overhead/
+      [--record-video]            Save synchronized overhead + all UAV FOVs to runs/<run-id>/combined.avi
   mission run|start|stop|status|reset [--seconds WALL_SECONDS]
   evaluate                       Evaluate the latest MPC flight log
   wait [TIMEOUT]                 Wait for current simulation readiness
@@ -75,8 +74,7 @@ case "$command" in
   mpc)
     show_gui=false
     wait_ready=true
-    export MPC_RECORD_CAMERAS=false
-    export MPC_RECORD_OVERHEAD=false
+    export MPC_RECORD_VIDEO=false
     RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
     export RUN_ID
     while [[ $# -gt 0 ]]; do
@@ -87,8 +85,7 @@ case "$command" in
         --gui) show_gui=true; shift ;;
         --no-wait) wait_ready=false; shift ;;
         --ground-truth-target) export MPC_TARGET_MODE=ground_truth; shift ;;
-        --record-cameras) export MPC_RECORD_CAMERAS=true; shift ;;
-        --record-overhead) export MPC_RECORD_OVERHEAD=true; shift ;;
+        --record-video) export MPC_RECORD_VIDEO=true; shift ;;
         *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
       esac
     done

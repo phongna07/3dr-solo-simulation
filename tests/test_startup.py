@@ -47,13 +47,13 @@ def test_launch_events_record_real_process_start_and_exit(tmp_path):
 def test_mission_startup_gate_requires_current_initialized_nodes(tmp_path):
     progress = StartupProgress(tmp_path)
     progress.register('controller', initializes=True)
-    progress.register('camera-recorder', initializes=True)
+    progress.register('combined-recorder', initializes=True)
     assert startup_blockers(tmp_path, json.loads(progress.path.read_text()))
     progress.running('controller', os.getpid())
-    progress.running('camera-recorder', os.getpid())
+    progress.running('combined-recorder', os.getpid())
     ComponentProgress(tmp_path, 'controller').update('initialized', 'ready')
-    assert startup_blockers(tmp_path, json.loads(progress.path.read_text())) == ['camera-recorder: initializing']
-    ComponentProgress(tmp_path, 'camera-recorder').update('initialized', 'waiting for takeoff')
+    assert startup_blockers(tmp_path, json.loads(progress.path.read_text())) == ['combined-recorder: initializing']
+    ComponentProgress(tmp_path, 'combined-recorder').update('initialized', 'waiting for takeoff')
     assert startup_blockers(tmp_path, json.loads(progress.path.read_text())) == []
     progress.running('controller', os.getpid() + 1)
     assert startup_blockers(tmp_path, json.loads(progress.path.read_text())) == ['controller: initializing']

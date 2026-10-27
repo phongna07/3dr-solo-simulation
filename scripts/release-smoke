@@ -36,7 +36,7 @@ export LIBGL_ALWAYS_SOFTWARE=1 READINESS_TIMEOUT="${READINESS_TIMEOUT:-900}"
 export RUN_ID="smoke-${RANDOM}"
 # Ignore development .env/configuration on the invoking machine.
 unset FLEET_CONFIG MPC_SCENARIO MPC_SETTINGS PYTHONPATH COMPOSE_FILE COMPOSE_PROFILES
-unset MPC_RECORD_CAMERAS MPC_RECORD_OVERHEAD MPC_TARGET_MODE
+unset MPC_RECORD_VIDEO MPC_TARGET_MODE
 cd "$TASK_DEPLOY"
 docker cp "$TASK_EXTRACT:/opt/solo/deploy/compose.release.yaml" .
 docker cp "$TASK_EXTRACT:/workspace/config" config

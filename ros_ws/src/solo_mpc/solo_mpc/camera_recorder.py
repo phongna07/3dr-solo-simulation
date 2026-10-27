@@ -1,4 +1,4 @@
-"""Optional recording of UAV FOV feeds or the elevated scene camera."""
+"""Optional separate or synchronized combined recording of scene/FOV feeds."""
 
 import argparse
 from pathlib import Path
@@ -6,6 +6,7 @@ import time
 
 from cv_bridge import CvBridge, CvBridgeError
 import rclpy
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -16,18 +17,26 @@ from solo_bringup.configuration import load_config
 from solo_bringup.startup import ComponentProgress
 
 from .core.video import FrameVideo
+from .core.composite_video import CompositeVideo
 from .scene_view import OVERHEAD_TOPIC
 
 
 class CameraRecorder(Node):
-    def __init__(self, names, output_dir, fps, *, overhead=False, vehicle_names=None):
-        super().__init__("mpc_overhead_recorder" if overhead else "mpc_camera_recorder")
+    def __init__(self, names, output_dir, fps, *, overhead=False, combined=False,
+                 vehicle_names=None):
+        super().__init__("mpc_combined_recorder" if combined else
+                         "mpc_overhead_recorder" if overhead else "mpc_camera_recorder")
         self.bridge = CvBridge()
-        self.videos = {
-            name: FrameVideo(Path(output_dir) / f"{name}.avi", fps) for name in names
-        }
         self.vehicle_names = tuple(vehicle_names or names)
         self.overhead = overhead
+        self.composite = (CompositeVideo(Path(output_dir) / 'combined.avi', fps,
+                                         self.vehicle_names) if combined else None)
+        self.videos = ({'combined': self.composite.video} if combined else {
+            name: FrameVideo(Path(output_dir) / f"{name}.avi", fps) for name in names
+        })
+        self.flush_timer = (self.create_timer(
+            0.1, self.flush_composite, clock=Clock(clock_type=ClockType.STEADY_TIME),
+        ) if combined else None)
         self.states = {}
         self.poses = {}
         self.ground_altitudes = {}
@@ -50,7 +59,7 @@ class CameraRecorder(Node):
 
     def state(self, name, msg):
         self.states[name] = (msg, time.monotonic())
-        if self.overhead and msg.connected and msg.armed:
+        if (self.overhead or self.composite) and msg.connected and msg.armed:
             # Start transport on arming, ahead of the takeoff recording gate,
             # while avoiding Full HD rendering during EKF startup.
             self.subscribe_images('overhead')
@@ -58,7 +67,8 @@ class CameraRecorder(Node):
     def subscribe_images(self, name):
         if name not in self.image_subscriptions:
             subscription = self.create_subscription(
-                Image, OVERHEAD_TOPIC if self.overhead else f"/{name}/camera/image_raw",
+                Image, OVERHEAD_TOPIC if self.overhead or (self.composite and name == 'overhead')
+                else f"/{name}/camera/image_raw",
                 lambda msg, n=name: self.image(n, msg), qos_profile_sensor_data,
             )
             self.image_subscriptions[name] = subscription
@@ -83,23 +93,35 @@ class CameraRecorder(Node):
         )
 
     def image(self, name, msg):
-        if name not in self.recording:
-            vehicles = self.vehicle_names if self.overhead else (name,)
+        key = 'combined' if self.composite else name
+        if key not in self.recording:
+            vehicles = self.vehicle_names if self.overhead or self.composite else (name,)
             if not any(self.flying(n) for n in vehicles):
                 return
-            self.recording.add(name)
+            self.recording.add(key)
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except CvBridgeError as exc:
             self.get_logger().error(f"{name}: cannot convert camera frame: {exc}")
             return
         stamp = msg.header.stamp
-        video = self.videos[name]
-        video.write(frame, stamp.sec * 1_000_000_000 + stamp.nanosec)
-        if video.frames == 1:
-            self.get_logger().info(f"{name}: writing {video.path} at {video.fps:g} FPS")
+        stamp_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+        video = self.videos[key]
+        before = video.frames
+        if self.composite:
+            self.composite.write(name, frame, stamp_ns)
+        else:
+            video.write(frame, stamp_ns)
+        if before == 0 and video.frames:
+            self.get_logger().info(f"{key}: writing {video.path} at {video.fps:g} FPS")
+
+    def flush_composite(self):
+        if self.composite:
+            self.composite.flush()
 
     def destroy_node(self):
+        if self.composite:
+            self.composite.close()
         for name, video in self.videos.items():
             video.close()
             self.get_logger().info(f"{name}: saved {video.frames} camera frames")
@@ -109,7 +131,9 @@ class CameraRecorder(Node):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fleet", required=True)
-    parser.add_argument("--overhead", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--overhead", action="store_true")
+    mode.add_argument("--combined", action="store_true")
     parser.add_argument('--run-dir')
     parser.add_argument('--startup-component')
     parser.add_argument("--output-dir", required=True)
@@ -126,7 +150,7 @@ def main():
         if progress:
             progress.update('initializing', 'Creating camera and flight telemetry subscriptions')
         node = CameraRecorder(names, args.output_dir, args.fps, overhead=args.overhead,
-                              vehicle_names=vehicles)
+                              combined=args.combined, vehicle_names=vehicles)
         if progress:
             progress.update('initialized', 'Waiting for armed UAV takeoff')
         rclpy.spin(node)

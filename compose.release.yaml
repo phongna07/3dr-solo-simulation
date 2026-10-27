@@ -50,8 +50,7 @@ services:
       MPC_SCENARIO: ${MPC_SCENARIO:-/opt/solo_ws/install/solo_mpc/share/solo_mpc/scenarios/small50_3uav.yaml}
       MPC_SETTINGS: ${MPC_SETTINGS:-/opt/solo_ws/install/solo_mpc/share/solo_mpc/config/controller.yaml}
       MPC_TARGET_MODE: ${MPC_TARGET_MODE:-}
-      MPC_RECORD_CAMERAS: ${MPC_RECORD_CAMERAS:-false}
-      MPC_RECORD_OVERHEAD: ${MPC_RECORD_OVERHEAD:-false}
+      MPC_RECORD_VIDEO: ${MPC_RECORD_VIDEO:-false}
     command: [ros2, launch, solo_mpc, mpc.launch.py]
     healthcheck:
       test: [CMD, python3, /workspace/scripts/healthcheck.py]

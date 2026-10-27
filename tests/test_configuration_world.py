@@ -177,10 +177,9 @@ def test_three_uav_lidar_stays_usable_at_commanded_acceleration():
 
 
 @pytest.mark.parametrize('target_mode', ['', 'ground_truth', 'settings_ground_truth'])
-@pytest.mark.parametrize('record_cameras', [False, True])
-@pytest.mark.parametrize('record_overhead', [False, True])
+@pytest.mark.parametrize('record_video', [False, True])
 def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_starting(
-    tmp_path, upstream, monkeypatch, target_mode, record_cameras, record_overhead,
+    tmp_path, upstream, monkeypatch, target_mode, record_video,
 ):
     import importlib.util
     import json
@@ -228,8 +227,7 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
         'scenario': str(pkg / 'scenarios/small50_3uav.yaml'),
         'settings': str(settings_path),
         'resume': 'false', 'run_id': 'three-uav-offline', 'readiness_timeout': '600',
-        'record_cameras': str(record_cameras).lower(),
-        'record_overhead': str(record_overhead).lower(),
+        'record_video': str(record_video).lower(),
         'target_mode': target_mode if target_mode != 'settings_ground_truth' else '',
     })
     actions = module.start(context)
@@ -237,20 +235,26 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
     inventory = json.loads((run / 'startup.json').read_text())['processes']
     shared = {'gazebo-server', 'readiness-monitor', 'sensor-bridge', 'frames',
               'target', 'controller', 'setpoints', 'mission-supervisor'}
-    if record_cameras:
-        shared.add('camera-recorder')
-    if record_overhead:
-        shared.add('overhead-recorder')
+    if record_video:
+        shared.add('combined-recorder')
     kinds = ['sitl', 'mavros'] + (['camera-detector'] if resolved_mode == 'camera' else [])
     individual = {f'{kind}-uav{i}' for kind in kinds
                   for i in range(1, 4)}
     assert set(inventory) == shared | individual
     assert all(item['state'] == 'pending' for item in inventory.values())
     processes = [a for a in actions if isinstance(a, ExecuteProcess)]
-    assert len(processes) == 8 + 3 * len(kinds) + int(record_cameras) + int(record_overhead)
+    assert len(processes) == 8 + 3 * len(kinds) + int(record_video)
     from launch.utilities import perform_substitutions
     commands = [[perform_substitutions(context, part) for part in a.cmd]
                 for a in processes if not isinstance(a, Node)]
+    recorders = [c for c in commands if 'solo_mpc.camera_recorder' in c]
+    if record_video:
+        assert len(recorders) == 1
+        assert '--combined' in recorders[0]
+        assert recorders[0][recorders[0].index('--output-dir') + 1] == str(run)
+        assert recorders[0][recorders[0].index('--fps') + 1] == '20.0'
+    else:
+        assert not recorders
     sitl_commands = [c for c in commands if c[0].endswith('/arducopter')]
     assert len(sitl_commands) == 3
     assert {c[c.index('-I') + 1] for c in sitl_commands} == {'0', '1', '2'}
@@ -261,7 +265,7 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
     assert yaml.safe_load((run / 'fleet.yaml').read_text())['world_name'] == 'mpc_small50'
     assert yaml.safe_load((run / 'controller.yaml').read_text())['target_mode'] == resolved_mode
     world = ET.parse(run / 'world.sdf').getroot().find('world')
-    cameras_enabled = resolved_mode == 'camera' or record_cameras
+    cameras_enabled = resolved_mode == 'camera' or record_video
     rows = yaml.safe_load((run / 'bridge.yaml').read_text())
     topics = {r['ros_topic_name'] for r in rows}
     for i in range(1, 4):
@@ -280,4 +284,4 @@ def test_three_vehicle_launch_builds_shared_and_per_vehicle_processes_without_st
         assert publisher.findtext('publish_model_pose') == 'true'
         assert publisher.findtext('use_pose_vector_msg') == 'false'
         assert float(publisher.findtext('update_frequency')) > 0
-    assert len(world.findall("model[@name='tracking_target']//sensor")) == int(record_overhead)
+    assert len(world.findall("model[@name='tracking_target']//sensor")) == int(record_video)

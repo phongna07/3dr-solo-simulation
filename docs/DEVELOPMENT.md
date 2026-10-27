@@ -99,8 +99,10 @@ publishes timestamped route positions directly to the controller. An
 velocity estimator, confidence gate, and filtered lead-pursuit goal as upstream;
 sample intervals follow simulation timestamps. Camera mode uses `TargetTracker`.
 The controller subscribes only to the selected source. World generation, sensor
-bridging, and the startup inventory omit unused cameras and detectors. Recording
-can independently enable camera streams without enabling detection.
+bridging, and the startup inventory omit unused cameras and detectors.
+`--record-video` enables the UAV and overhead camera streams and one synchronized
+recorder without enabling detection. The runner passes `MPC_RECORD_VIDEO` through
+Compose to the `record_video` ROS launch argument.
 
 ## Edit and rebuild
 

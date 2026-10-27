@@ -28,7 +28,8 @@ def start(context):
         raise ValueError("Invalid target_mode")
     # Resolve before world generation so sensors and ROS processes agree.
     context.launch_configurations["target_mode"] = settings["target_mode"]
-    camera_enabled = settings["target_mode"] == "camera" or get("record_cameras") == "true"
+    record_video = get("record_video") == "true"
+    camera_enabled = settings["target_mode"] == "camera" or record_video
     if len(fleet["uavs"]) != len(scenario["starts"]):
         raise ValueError("Fleet/scenario UAV count mismatch")
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
@@ -71,7 +72,7 @@ def start(context):
                     [u["name"] for u in fleet["uavs"]],
                     fleet["world_name"],
                     run / "bridge.yaml",
-                    record_overhead=get("record_overhead") == "true",
+                    record_overhead=record_video,
                     camera_enabled=camera_enabled,
                 )
             }
@@ -123,34 +124,20 @@ def start(context):
             parameters=[{"use_sim_time": True}], output="both",
         )
         actions += observed(node, progress, name, initializes=True)
-    if get("record_cameras") == "true":
-        # Run the live module so enabling recording needs no image rebuild.
+    if record_video:
+        # Run the live module so recording needs no image rebuild in development.
         # Disk writes run independently of camera detection and flight control.
         recorder = ExecuteProcess(
             cmd=[
-                "python3", "-m", "solo_mpc.camera_recorder",
+                "python3", "-m", "solo_mpc.camera_recorder", "--combined",
                 "--fleet", str(run / "fleet.yaml"),
-                "--output-dir", str(run / "cameras"),
-                "--fps", str(settings["camera_rate"]),
-                '--run-dir', str(run), '--startup-component', 'camera-recorder',
+                "--output-dir", str(run), "--fps", str(OVERHEAD_FPS),
+                '--run-dir', str(run), '--startup-component', 'combined-recorder',
                 "--ros-args", "-p", "use_sim_time:=true",
             ],
-            name="mpc-camera-recorder", output="both",
+            name="mpc-combined-recorder", output="both",
         )
-        actions += observed(recorder, progress, 'camera-recorder', initializes=True)
-    if get("record_overhead") == "true":
-        recorder = ExecuteProcess(
-            cmd=[
-                "python3", "-m", "solo_mpc.camera_recorder", "--overhead",
-                '--fleet', str(run / 'fleet.yaml'),
-                "--output-dir", str(run / "overhead"),
-                "--fps", str(OVERHEAD_FPS),
-                '--run-dir', str(run), '--startup-component', 'overhead-recorder',
-                "--ros-args", "-p", "use_sim_time:=true",
-            ],
-            name="mpc-overhead-recorder", output="both",
-        )
-        actions += observed(recorder, progress, 'overhead-recorder', initializes=True)
+        actions += observed(recorder, progress, 'combined-recorder', initializes=True)
     progress.stage('Starting processes; waiting for fleet telemetry')
     return actions
 
@@ -184,13 +171,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("profile", default_value="mpc"),
             DeclareLaunchArgument(
-                "record_cameras",
-                default_value=os.environ.get("MPC_RECORD_CAMERAS", "false"),
-                choices=["true", "false"],
-            ),
-            DeclareLaunchArgument(
-                "record_overhead",
-                default_value=os.environ.get("MPC_RECORD_OVERHEAD", "false"),
+                "record_video",
+                default_value=os.environ.get("MPC_RECORD_VIDEO", "false"),
                 choices=["true", "false"],
             ),
             DeclareLaunchArgument(
