@@ -65,6 +65,10 @@ MPC launch takes the UAV positions from the scenario, so no fleet file
 changes are needed. The row defines the initial formation; the controller can
 adjust UAV positions while following the target and avoiding obstacles.
 
+The target travels at 0.9 m/s, with a UAV speed limit of 1.8 m/s to leave
+catch-up margin through turns and obstacle detours. Acceleration remains
+2 m/s², and the 2.5 s backup stopping horizon remains enabled.
+
 ## Three-UAV fleet
 
 The supplied simulation uses three fleet entries and three finite XYZ rows in
@@ -119,7 +123,7 @@ configurations leaving less than one grid cell for the seed are rejected.
 | `LOCAL_SEARCH` | `jps` | Local JPS with Dijkstra fallback; select `dijkstra` to apply `UNKNOWN_COST` |
 | `ROBOT_RADIUS` / `INFLATE_MARGIN` | 0.36 / 0.15 m | Vehicle footprint / obstacle margin |
 | `UAV_SAFE_DISTANCE` | 1 m | Initial spacing and separation parameter |
-| `VMAX` / `UMAX` | 1.2 m/s / 2 m/s² | Horizontal speed / acceleration limits |
+| `VMAX` / `UMAX` | 1.8 m/s / 2 m/s² | Horizontal speed / acceleration limits |
 | `ACCEL_TAU` | 0.2 s | Acceleration-lag time constant |
 | `CORRIDOR_MAX_FACES` | 16 | Initial solver allocation; grows if needed |
 | `CORRIDOR_BOX` / derived `CORRIDOR_MARGIN` | 1.5 / approximately 0.522 m | Decomposition box half size / hard obstacle margin |

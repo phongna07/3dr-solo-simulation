@@ -6,6 +6,7 @@ import time
 import cv2
 
 from .video import FrameVideo
+from .occupancy_video import overlay_occupancy
 
 
 def overlay_views(background, views):
@@ -48,15 +49,18 @@ class CompositeVideo:
     No camera can block recording indefinitely, including during shutdown.
     """
 
-    def __init__(self, path, fps, vehicles):
+    def __init__(self, path, fps, vehicles, *, occupancy=False):
         self.vehicles = tuple(vehicles)
         if not self.vehicles or len(set(self.vehicles)) != len(self.vehicles):
             raise ValueError("A composite video needs unique vehicle names")
-        if 'overhead' in self.vehicles:
-            raise ValueError("The vehicle name 'overhead' is reserved for combined recording")
+        if {'overhead', 'occupancy'} & set(self.vehicles):
+            raise ValueError("The vehicle names 'overhead' and 'occupancy' are reserved for combined recording")
+        self.occupancy = occupancy
         self.video = FrameVideo(path, fps)
         # FOV queues are also bounded if the overhead feed never arrives/stalls.
         self.pending = {name: deque(maxlen=256) for name in ('overhead', *self.vehicles)}
+        if occupancy:
+            self.pending['occupancy'] = deque(maxlen=64)
         self.latest = {}
         self.current = {name: None for name in self.pending}
         self.background_received = None
@@ -97,7 +101,10 @@ class CompositeVideo:
             if not (ready or expired or final):
                 return
             views = {name: self.current[name] for name in self.vehicles}
-            self.video.write(overlay_views(self.current['overhead'], views), stamp)
+            frame = overlay_views(self.current['overhead'], views)
+            if self.occupancy:
+                frame = overlay_occupancy(frame, self.current['occupancy'])
+            self.video.write(frame, stamp)
 
     def close(self):
         try:

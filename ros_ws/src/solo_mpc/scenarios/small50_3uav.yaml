@@ -6,7 +6,7 @@ description: 50 x 30 m scattered obstacle field with a winding target route
 xlim: [0, 50]
 ylim: [0, 30]
 viewing_radius: 1.5
-tar_max_speed: 0.6
+tar_max_speed: 0.9       # 50% faster; UAV VMAX is 1.8 m/s to retain catch-up margin
 
 starts:                 # [x, y, z], metres; middle UAV first, then left and right
   - [5, 2, 3]

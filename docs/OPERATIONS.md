@@ -144,7 +144,7 @@ axis. Press Escape in the 3D view to navigate freely; reopen it to restore follo
 | `controller_sources.jsonl` | Controller startup hashes and settings |
 | `mpc.jsonl`, `truth.jsonl` | Controller measurements/diagnostics and independent Gazebo poses |
 | `evaluation.json` | Geometry, tracking, compute, and simulation-speed metrics |
-| `combined.avi`, `combined.timestamps.jsonl` | Optional synchronized overhead video with all UAV FOVs |
+| `combined.avi`, `combined.timestamps.jsonl` | Optional synchronized overhead video with LiDAR occupancy map and all UAV FOVs |
 
 The image ID is stored beside the run in `runs/<run-id>.image-id.json`.
 `runs/latest` changes on the next launch; preserve the actual directory.
@@ -179,8 +179,18 @@ and saves one synchronized recording. `--gui` is optional. Add
 input; camera detectors remain disabled in that mode.
 
 The output is `runs/<run-id>/combined.avi`: a 1920 × 1080 MJPEG video at 20 FPS
-with the elevated target-following view as its background and labelled UAV FOVs
-stacked on the right. UAV cameras default to 160 × 160 at 8 FPS.
+with the elevated target-following view as its background, a LiDAR occupancy map
+on the left, and labelled UAV FOVs stacked on the right. UAV cameras default to
+160 × 160 at 8 FPS.
+
+The map combines the controller's persistent LiDAR maps for the fleet: coral
+cells mark detected obstacles, pale green cells mark scanned free space, and
+dark cells remain unknown. It shows the whole scenario in world coordinates
+(+Y up, +X right), with numbered UAV positions, a metric scale, scanned percentage,
+and a legend. Only sensor-observed cells are shown; obstacle ground truth and
+the planner's inflated safety margins are not added. An obstacle report takes
+precedence when UAV maps disagree. UAV positions use aligned measured world
+poses at or before the map timestamp, never MAVROS's separate local origins.
 
 There is one panel per configured UAV in fleet order. Panels shrink to fit larger
 fleets and preserve the camera aspect ratio.
@@ -191,6 +201,9 @@ or two wall seconds for delayed FOV messages. At each output timestamp, the most
 recent image at or before that time is used; 8 FPS FOVs and dropped frames hold
 their last image, preserving elapsed time. Panels with no image yet show a
 waiting label. The final buffered frames are flushed when the stack stops.
+Map updates also use the latest timestamp at or before each output frame. A
+missing map shows a waiting message and does not delay camera recording; the
+last map remains visible between updates and through landing.
 
 Recording starts when the first connected, armed UAV rises more than 0.15 m
 above its disarmed ground altitude. All camera feeds share this gate. Recording

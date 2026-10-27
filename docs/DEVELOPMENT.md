@@ -104,6 +104,13 @@ bridging, and the startup inventory omit unused cameras and detectors.
 recorder without enabling detection. The runner passes `MPC_RECORD_VIDEO` through
 Compose to the `record_video` ROS launch argument.
 
+The controller publishes `/mpc/occupancy_grid` (`nav_msgs/OccupancyGrid`, sensor
+QoS, world frame) when subscribed, after a completed fleet cycle. This combines
+the workers' uninflated occupied/free/unknown classifications for visualization;
+the workers retain their independent maps for planning. The combined recorder
+renders the map on the left, uses `/<uav>/mpc/pose` for world-aligned markers,
+and samples map panels on the same simulation-time timeline as camera feeds.
+
 ## Edit and rebuild
 
 In development, the checkout is mounted at `/workspace`; the entrypoint places

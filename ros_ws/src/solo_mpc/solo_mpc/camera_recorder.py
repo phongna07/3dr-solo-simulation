@@ -1,9 +1,11 @@
 """Optional separate or synchronized combined recording of scene/FOV feeds."""
 
 import argparse
+from collections import deque
 from pathlib import Path
 import time
 
+import numpy as np
 from cv_bridge import CvBridge, CvBridgeError
 import rclpy
 from rclpy.clock import Clock, ClockType
@@ -13,11 +15,13 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
+from nav_msgs.msg import OccupancyGrid
 from solo_bringup.configuration import load_config
 from solo_bringup.startup import ComponentProgress
 
 from .core.video import FrameVideo
 from .core.composite_video import CompositeVideo
+from .core.occupancy_video import OCCUPANCY_TOPIC, render_occupancy
 from .scene_view import OVERHEAD_TOPIC
 
 
@@ -30,7 +34,7 @@ class CameraRecorder(Node):
         self.vehicle_names = tuple(vehicle_names or names)
         self.overhead = overhead
         self.composite = (CompositeVideo(Path(output_dir) / 'combined.avi', fps,
-                                         self.vehicle_names) if combined else None)
+                                         self.vehicle_names, occupancy=True) if combined else None)
         self.videos = ({'combined': self.composite.video} if combined else {
             name: FrameVideo(Path(output_dir) / f"{name}.avi", fps) for name in names
         })
@@ -43,6 +47,14 @@ class CameraRecorder(Node):
         self.recording = set()
         self.subscriptions_keep = []
         self.image_subscriptions = {}
+        self.map_positions = {name: deque(maxlen=256) for name in self.vehicle_names}
+        if combined:
+            self.subscriptions_keep.append(self.create_subscription(
+                OccupancyGrid, OCCUPANCY_TOPIC, self.occupancy, qos_profile_sensor_data))
+            for name in self.vehicle_names:
+                self.subscriptions_keep.append(self.create_subscription(
+                    PoseStamped, f'/{name}/mpc/pose',
+                    lambda msg, n=name: self.map_pose(n, msg), qos_profile_sensor_data))
         if not overhead:
             for name in names:
                 self.subscribe_images(name)
@@ -80,6 +92,41 @@ class CameraRecorder(Node):
         state = self.states.get(name)
         if state is None or not state[0].armed:
             self.ground_altitudes[name] = z
+
+    def map_pose(self, name, msg):
+        # MAVROS local origins differ between UAVs; use aligned world poses.
+        if msg.header.frame_id != 'world':
+            return
+        p = msg.pose.position
+        if not np.isfinite([p.x, p.y]).all():
+            return
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        history = self.map_positions[name]
+        if not history or stamp > history[-1][0]:
+            history.append((stamp, (p.x, p.y)))
+
+    def occupancy(self, msg):
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        if (msg.header.frame_id != 'world'
+                or stamp <= self.composite.latest.get('occupancy', -1)):
+            return
+        info = msg.info
+        if (info.width == 0 or info.height == 0 or not np.isfinite(info.resolution)
+                or info.resolution <= 0 or len(msg.data) != info.width * info.height):
+            self.get_logger().warning('Ignoring invalid occupancy grid metadata')
+            return
+        cells = np.asarray(msg.data, dtype=np.int8).reshape(info.height, info.width)
+        positions = {}
+        for name, history in self.map_positions.items():
+            for at, position in reversed(history):
+                if at <= stamp:
+                    if stamp - at <= 1_000_000_000:
+                        positions[name] = position
+                    break
+        panel = render_occupancy(
+            cells, info.resolution, (info.origin.position.x, info.origin.position.y),
+            positions, self.vehicle_names, stamp)
+        self.composite.write('occupancy', panel, stamp)
 
     def flying(self, name):
         state = self.states.get(name)

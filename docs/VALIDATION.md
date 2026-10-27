@@ -2,6 +2,42 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
+## Faster three-UAV target — 27 October 2026
+
+The default target speed increased from 0.6 to **0.9 m/s**, with UAV `VMAX`
+increased from 1.2 to **1.8 m/s**. Acceleration remains 2 m/s² and the enabled
+backup horizon remains 2.5 s. The resolved corridor margin was 0.535 m and
+target standoff was 0.6 m.
+
+Gazebo/SITL run `20261027T045143Z-23934` used the default camera target input:
+`./scripts/dev mpc`, then `./scripts/dev mission run` without a duration limit.
+The mission completed the full winding route and all three UAVs landed and
+disarmed. Recorded airborne flight covered 104.52 simulation seconds. Final
+target distances after landing were 2.34, 1.68, and 0.28 m for UAVs 1–3.
+
+Evaluation of 853 airborne controller records against independent Gazebo poses:
+
+- Nearest-UAV target distance: median **1.06 m**, p95 **1.38 m**, maximum 2.05 m.
+- TRACK mode fractions for UAVs 1–3: **97.1%, 88.0%, 96.8%**; followers recovered
+  from SEARCH while pursuing the moving target.
+- Minimum sampled obstacle body clearance: **0.645 m**.
+- Minimum sampled inter-UAV distance: **0.940 m**, below the configured 1 m
+  separation parameter; separation constraints remain soft.
+- Controller ready fraction: **98.4%**. UAVs 1 and 2 reported 2 and 11
+  `mpc_failed` samples respectively, recovering before successful completion.
+- Fleet computation median/p95: **119.9/159.4 ms**; 84.5% of airborne cycles
+  exceeded the 100 ms control period. Achieved simulation speed was 1.00×.
+
+Existing configuration, target-motion, physical-tracking, and target-tracker
+checks passed **38/38** inside the ROS container. The overspeed regression now
+uses velocities relative to the configured speed limit.
+
+Run snapshots, flight logs, `evaluation.json`, and `validation-summary.json`
+are under `runs/20261027T045143Z-23934/` (Git-ignored). The container stopped
+after completion; evaluation was generated from the saved logs on the host.
+This validates route completion for this run, including transient failures;
+it does not establish strict separation or a 100 ms computation guarantee.
+
 These are recorded results from **9–19 October 2026**, not guarantees for another
 machine or code revision. Evidence under `runs/` and `artifacts/` is Git-ignored
 and may be absent from a fresh clone. Test counts describe the suite at each

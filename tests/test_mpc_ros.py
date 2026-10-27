@@ -58,6 +58,36 @@ def node_args(tmp_path):
     )
 
 
+def test_controller_publishes_world_aligned_sensor_map_only_when_subscribed(tmp_path):
+    import numpy as np
+
+    args = node_args(tmp_path)
+    rclpy.init()
+    node = Controller(args)
+    try:
+        published = []
+        node.occupancy_pub = SimpleNamespace(
+            get_subscription_count=lambda: 0, publish=published.append)
+        grid = node.team.planners['test_uav'].gmap
+        grid.occupied = np.array([[False, False, True], [False, False, False]])
+        grid.unknown = np.array([[True, False, False], [False, True, False]])
+        now = node.get_clock().now()
+        node._publish_occupancy(now)
+        assert not published
+        node.occupancy_pub.get_subscription_count = lambda: 1
+        node._publish_occupancy(now)
+        msg, = published
+        assert msg.header.frame_id == 'world' and msg.header.stamp == now.to_msg()
+        assert (msg.info.width, msg.info.height) == (3, 2)
+        assert msg.info.resolution == pytest.approx(args.cfg['GRID_RESOLUTION'])
+        assert (msg.info.origin.position.x, msg.info.origin.position.y) == args.cfg['WORLD_BOUNDS'][:2]
+        assert msg.info.origin.orientation.w == 1.
+        assert list(msg.data) == [-1, 0, 100, 0, -1, 0]
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 @pytest.mark.parametrize("accepted", [True, False])
 def test_stop_plan_reference_keeps_nominal_failure_visible(tmp_path, monkeypatch, accepted):
     import json

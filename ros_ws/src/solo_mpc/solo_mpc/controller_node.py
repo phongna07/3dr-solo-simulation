@@ -3,12 +3,13 @@
 import hashlib
 import json
 import time
+from array import array
 from pathlib import Path
 
 import numpy as np
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from mavros_msgs.msg import PositionTarget, State
-from nav_msgs.msg import Path as RosPath
+from nav_msgs.msg import OccupancyGrid, Path as RosPath
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -18,6 +19,7 @@ from builtin_interfaces.msg import Duration
 from .core.controller import VehicleState
 from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
 from .core.parallel_controller import ParallelTeamController
+from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
 from .core.tracking import ExactTargetTracker
 from .ros_utils import (
@@ -49,6 +51,8 @@ class Controller(Node):
         self.outputs = {}
         self.trajectories = {}
         self.status_pub = self.create_publisher(String, "/mpc/status", 10)
+        self.occupancy_pub = self.create_publisher(
+            OccupancyGrid, OCCUPANCY_TOPIC, qos_profile_sensor_data)
         self.log = None
         if args.run_dir:
             self.log = open(Path(args.run_dir, "mpc.jsonl"), "a", buffering=1)
@@ -206,6 +210,7 @@ class Controller(Node):
                         results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
                         reason = 'partial_solver_failure'
             self._publish_cycle(start, now, stamp, reason, results)
+            self._publish_occupancy(now)
             if reason != 'ready':
                 return
         start = time.perf_counter()
@@ -299,6 +304,27 @@ class Controller(Node):
                 self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
                 return
         self._publish_cycle(start, now, stamp, reason, results)
+
+    def _publish_occupancy(self, now):
+        # Read only after the background fleet cycle completes. Publishing is
+        # optional and never changes the workers' independent planning maps.
+        if not self.occupancy_pub.get_subscription_count():
+            return
+        maps = [p.gmap for p in self.team.planners.values()
+                if p.gmap.occupied is not None and p.gmap.unknown is not None]
+        if not maps:
+            return
+        cells = fuse_occupancy(maps)
+        msg = OccupancyGrid()
+        msg.header.stamp = now.to_msg()
+        msg.header.frame_id = 'world'
+        msg.info.resolution = float(self.args.cfg['GRID_RESOLUTION'])
+        msg.info.height, msg.info.width = cells.shape
+        msg.info.origin.position.x, msg.info.origin.position.y = map(
+            float, self.args.cfg['WORLD_BOUNDS'][:2])
+        msg.info.origin.orientation.w = 1.0
+        msg.data = array('b', cells.tobytes())
+        self.occupancy_pub.publish(msg)
 
     def _publish_cycle(self, start, now, stamp, reason, results):
         settings = self.args.settings_data

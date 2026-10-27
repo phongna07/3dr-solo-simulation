@@ -28,8 +28,8 @@ def test_delayed_plan_samples_elapsed_time_and_interval_control():
         sample_trajectory(points, .1)
 
 
-@pytest.mark.parametrize('velocity,acceleration', [(1.25, .2), (1.19, 1.0)])
-def test_measured_overspeed_has_bounded_feasible_recovery_and_stopping_branch(velocity, acceleration):
+@pytest.mark.parametrize('speed_offset,acceleration', [(.05, .2), (-.01, 1.0)])
+def test_measured_overspeed_has_bounded_feasible_recovery_and_stopping_branch(speed_offset, acceleration):
     pytest.importorskip('casadi')
     from solo_mpc.core.mpc_problem import MPCProblem, speed_recovery_limits
     from solo_mpc.settings import load_settings
@@ -37,7 +37,7 @@ def test_measured_overspeed_has_bounded_feasible_recovery_and_stopping_branch(ve
     _, _, cfg = load_settings(pkg / 'scenarios/small50_3uav.yaml', pkg / 'config/controller.yaml')
     cfg['SPEED_RECOVERY'] = True
     cfg['IPOPT_OPTIONS'] = {**cfg['IPOPT_OPTIONS'], 'ipopt.max_cpu_time': 2.}
-    x0 = np.array([10., 10., velocity, 0., acceleration, 0.])
+    x0 = np.array([10., 10., cfg['VMAX'] + speed_offset, 0., acceleration, 0.])
     limits = speed_recovery_limits(x0, cfg, cfg['BACKUP_HORIZON'])
     assert limits[0] > cfg['VMAX']
     assert limits[-1] == cfg['VMAX']

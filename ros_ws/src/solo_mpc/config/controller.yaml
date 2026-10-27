@@ -41,7 +41,7 @@ params:
   INFLATE_MARGIN: 0.15
   UAV_SAFE_DISTANCE: 1.0
   COLLISION_AVOID_DISTANCE: 1.5
-  VMAX: 1.2
+  VMAX: 1.8  # twice the default scenario target speed, leaving room to catch up
   UMAX: 2.0
   ACCEL_TAU: 0.2
   SENSING_RADIUS: 3.0

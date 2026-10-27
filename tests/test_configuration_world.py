@@ -103,8 +103,8 @@ def test_three_uav_world_covers_field_and_configures_sensors(tmp_path, upstream,
     fleet['world_name'] = scenario.get('world_name', 'mpc_small50')
     assert len(fleet['uavs']) == len(scenario['starts']) == 3
     assert len(cfg['GRID_CELLS']) == 2
-    assert (cfg['VMAX'], cfg['UMAX'], cfg['SENSING_RADIUS']) == (1.2, 2, 3)
-    assert cfg['TARGET_MAX_SPEED'] == 1.2
+    assert (cfg['VMAX'], cfg['UMAX'], cfg['SENSING_RADIUS']) == (1.8, 2, 3)
+    assert cfg['TARGET_MAX_SPEED'] == 1.8
     assert np.allclose(np.asarray(scenario['starts'])[:, 2], settings['flight_altitude'])
     assert settings['obstacle_height'] > settings['flight_altitude'] + cfg['ROBOT_RADIUS']
     footprint = settings['flight_altitude'] * np.tan(settings['camera_hfov'] / 2)

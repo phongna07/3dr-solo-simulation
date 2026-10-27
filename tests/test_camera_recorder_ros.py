@@ -226,3 +226,48 @@ def test_combined_flush_timer_runs_while_ros_simulation_clock_is_paused(tmp_path
     finally:
         recorder.destroy_node()
         rclpy.shutdown()
+
+
+def test_map_overlay_uses_only_aligned_past_poses_and_ignores_old_maps(tmp_path, monkeypatch):
+    from nav_msgs.msg import OccupancyGrid
+
+    panels = []
+
+    def render(cells, resolution, origin, positions, names, stamp):
+        panels.append((cells.copy(), origin, positions, stamp))
+        return np.zeros((100, 100, 3), np.uint8)
+
+    monkeypatch.setattr('solo_mpc.camera_recorder.render_occupancy', render)
+    rclpy.init()
+    recorder = CameraRecorder(['alpha'], tmp_path, 20, combined=True)
+    try:
+        for frame_id, at, x in [('world', 10, -2.), ('world', 12, 8.), ('map', 13, 99.)]:
+            msg = PoseStamped()
+            msg.header.frame_id = frame_id
+            msg.header.stamp.sec = at
+            msg.pose.position.x = x
+            recorder.map_pose('alpha', msg)
+        grid = OccupancyGrid()
+        grid.header.frame_id = 'world'
+        grid.header.stamp.sec = 11
+        grid.info.width, grid.info.height = 3, 2
+        grid.info.resolution = 0.5
+        grid.info.origin.position.x = -10.
+        grid.data = [-1, 0, 100, 0, -1, 0]
+        recorder.occupancy(grid)
+        assert panels[0][1:] == ((-10., 0.), {'alpha': (-2., 0.)}, 11_000_000_000)
+        np.testing.assert_array_equal(panels[0][0], [[-1, 0, 100], [0, -1, 0]])
+        grid.header.stamp.sec = 10
+        recorder.occupancy(grid)
+        assert len(panels) == 1
+        grid.header.stamp.sec = 20
+        recorder.occupancy(grid)
+        assert panels[-1][2] == {}  # Old poses do not pin a UAV marker forever.
+        grid.header.stamp.sec = 21
+        grid.data = []
+        recorder.occupancy(grid)
+        assert len(panels) == 2
+        assert not list(tmp_path.iterdir())  # Maps alone never create a video.
+    finally:
+        recorder.destroy_node()
+        rclpy.shutdown()
