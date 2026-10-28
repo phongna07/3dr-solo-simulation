@@ -2,6 +2,36 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
+## City obstacle appearances — 28 October 2026
+
+Run `20261028T044454Z-12615` used `./scripts/dev mpc --record-video`,
+`./scripts/dev mission run --seconds 60`, `./scripts/dev evaluate` after landing,
+and normal `./scripts/dev stop`. All three UAVs tracked using camera detections,
+landed, and disarmed. The NVIDIA RTX 5050 rendered the server scene. A separate
+Gazebo GUI attached to that server was inspected on a virtual X11 display.
+Both the GUI and recorded overhead frames show windowed towers and leafy trees,
+without the original colored scan primitives. The recorded UAV feeds and
+sensor-derived occupancy map remained active. The finalized video contains
+1,547 frames at 1920 × 1080 / 20 FPS (77.35 simulation seconds).
+
+Generated SDF inspection confirmed all 24 original obstacle poses and collision
+dimensions. A recorded scan/pose bag supplied 467 airborne scans for comparison
+with the original primitives: 1,519 expected box hits and 1,763 expected cylinder
+hits. Median absolute range errors were 8.5 / 8.3 mm; p95 errors were 27.9 /
+25.2 mm. Four box rays and six cylinder rays had no return; this comparison
+uses poses within 40 ms of exposure and includes noise and silhouette edges.
+Evidence is in `reports/lidar-appearance.json`, `telemetry/lidar-appearance/`,
+the GUI screenshot, and extracted video frames under `reports/` in that run.
+
+Evaluation reported 0.849 m minimum sampled obstacle body clearance, 1.736 m
+minimum inter-UAV distance, and 99.2% controller readiness. Fleet compute
+median/p95 was 151.6 / 188.8 ms, exceeding the 100 ms period; simulation speed
+was 0.588×. No mesh/material loading errors appeared. Startup emitted EGL
+fallback warnings before successful NVIDIA rendering, and normal shutdown
+required SIGTERM for MAVROS after its SIGINT timeout. This was a bounded
+mission, not a complete route or hardware validation. The taller appearance
+does not extend the original 5 m physics/LiDAR obstacle height.
+
 ## World-stabilized camera — 27 October 2026
 
 The simulated UAV cameras now use an ideal three-axis gimbal. The Harmonic

@@ -55,6 +55,24 @@ UAV, initially heading north. Its smooth route sweeps across the field, with
 east/west turns and changes between northward and southward travel, finishing
 at `[47, 23]`.
 
+Gazebo displays the rectangles as varied city towers with window grids, roof
+parapets, and rooftop equipment, and the circles as tall broadleaf trees. The
+same local, generated meshes appear in the GUI, overhead recording, and UAV
+cameras; no online model downloads are needed. Meshes live beside the generated
+world in `runs/<run-id>/config/city_assets/`.
+
+These are visual appearances only. Footprints, positions, collision geometry,
+and LiDAR returns retain the original boxes and cylinders, extruded to
+`obstacle_height` (5 m by default). GPU LiDAR uses a separate visibility mask
+to scan those original primitives and exclude the decorative meshes; cameras
+and the GUI hide the scan primitives. Proxy shadows are disabled. Building
+visuals are 1.8–2.52 times `obstacle_height` tall (9–12.6 m by default), and
+trees are 1.25–1.49 times that height (6.25–7.45 m). Tree crowns stay inside
+their circular footprints. The taller visual portions do not add physical or
+LiDAR obstacles above the original collision height. Camera images and marker
+occlusion follow the visible buildings and trees. Planning and mapping still
+use the existing measured LiDAR scans and 2D geometry.
+
 Start a fresh simulation with the existing three-UAV fleet and controller:
 
 ```bash

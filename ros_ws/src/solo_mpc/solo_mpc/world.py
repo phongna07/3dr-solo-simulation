@@ -1,4 +1,4 @@
-"""Generate the same obstacle footprints in SDF, with lightweight sensors."""
+"""Generate original scan/collision primitives with separate city appearances."""
 
 import copy
 import math
@@ -10,6 +10,10 @@ from solo_bringup.world import generate_world
 
 from .settings import load_settings
 from .core.sensors import CAMERA_WORLD_OFFSET
+from .obstacle_visuals import (
+    CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
+    LIDAR_VISIBILITY_MASK, building_mesh, tree_mesh,
+)
 from .scene_view import (
     OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
 )
@@ -48,6 +52,20 @@ def solid(world, name, position, shape, size, color):
     return model
 
 
+def city_visual(model, mesh_path, obstacle_height):
+    """Retain the original primitive for physics and GPU LiDAR only."""
+    link = model.find("link[@name='body']")
+    proxy = link.find("visual")
+    element(proxy, "visibility_flags", LIDAR_PROXY_FLAGS)
+    element(proxy, "cast_shadows", "false")
+    visual = element(link, "visual", name="city_appearance")
+    # The model origin stays at the ORIGINAL collision primitive's midpoint.
+    element(visual, "pose", f"0 0 {-obstacle_height / 2} 0 0 0")
+    element(visual, "visibility_flags", CITY_VISUAL_FLAGS)
+    mesh = element(element(visual, "geometry"), "mesh")
+    element(mesh, "uri", Path(mesh_path).resolve().as_uri())
+
+
 def sensors(model, name, settings, cfg, camera_enabled=True):
     link = element(model, "link", name="perception_link")
     element(link, "pose", "0 0 0 0 0 0", relative_to="iris_with_standoffs::base_link")
@@ -67,6 +85,7 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     element(laser, "always_on", "true")
     element(laser, "visualize", "false")
     ray = element(laser, "ray")
+    element(ray, "visibility_mask", LIDAR_VISIBILITY_MASK)
     scan = element(ray, "scan")
     horizontal = element(scan, "horizontal")
     count = settings["lidar_samples"]
@@ -115,6 +134,7 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     element(camera, "update_rate", settings["camera_rate"])
     element(camera, "always_on", "true")
     optics = element(camera, "camera")
+    element(optics, "visibility_mask", CAMERA_VISIBILITY_MASK)
     element(optics, "horizontal_fov", settings["camera_hfov"])
     element(optics, "camera_info_topic", f"/{name}/camera/camera_info")
     image = element(optics, "image")
@@ -140,6 +160,7 @@ def overhead_camera(target, settings):
     element(camera, "always_on", "true")
     element(camera, "visualize", "false")
     optics = element(camera, "camera")
+    element(optics, "visibility_mask", CAMERA_VISIBILITY_MASK)
     element(optics, "horizontal_fov", math.pi / 3)
     image = element(optics, "image")
     element(image, "width", OVERHEAD_WIDTH)
@@ -192,8 +213,9 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
           "plane", [max(150, xmax - xmin + padding), max(150, ymax - ymin + padding)],
           "0.6 0.6 0.6 1")
     height = settings["obstacle_height"]
+    assets = Path(output).parent / "city_assets"
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
-        solid(
+        model = solid(
             world,
             f"obstacle_rect_{i}",
             [x + w / 2, y + h / 2, height / 2],
@@ -201,8 +223,9 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
             [w, h, height],
             "0.1 0.45 0.15 1",
         )
+        city_visual(model, building_mesh(assets / f"building_{i}.dae", w, h, height, i), height)
     for i, (x, y, r) in enumerate(scenario["obstacles"]["circles"]):
-        solid(
+        model = solid(
             world,
             f"obstacle_circle_{i}",
             [x, y, height / 2],
@@ -210,6 +233,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
             [r, height],
             "0.15 0.35 0.65 1",
         )
+        city_visual(model, tree_mesh(assets / f"tree_{i}.dae", r, height, i), height)
     first = scenario["target"]["waypoints"][0]
     target = solid(
         world,
