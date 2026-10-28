@@ -6,7 +6,8 @@ import math
 import cv2
 import numpy as np
 
-from .occupancy_video import MUTED, PANEL, TEXT, VEHICLE_COLORS
+from .occupancy_video import MUTED, PANEL, TEXT
+from .visual_style import vehicle_color
 
 
 VELOCITY = (255, 210, 91)
@@ -97,7 +98,7 @@ def render_states(states, stamp_ns):
     text('World axes | +Y up, +X right | nose = heading', (20, 53), color=MUTED)
     for i, (name, state) in enumerate(states.items()):
         top = header + i * row_height
-        color = VEHICLE_COLORS[i % len(VEHICLE_COLORS)]
+        color = vehicle_color(i)
         cv2.rectangle(panel, (12, top), (547, top + row_height - 7), (39, 35, 31), -1)
         cv2.line(panel, (12, top), (12, top + row_height - 7), color, 3)
         label = f'{i + 1} {name}'

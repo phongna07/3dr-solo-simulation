@@ -8,6 +8,7 @@ import cv2
 from .video import FrameVideo
 from .occupancy_video import overlay_occupancy
 from .state_video import FlightStateHistory, overlay_states, render_states
+from .visual_style import vehicle_color
 
 
 def overlay_views(background, views):
@@ -21,6 +22,7 @@ def overlay_views(background, views):
     label_height = max(4, min(28, side // 8))
     x = width - gap - side
     for i, (name, image) in enumerate(views.items()):
+        color = vehicle_color(i)
         y = gap + i * (side + gap)
         frame[y:y + side, x:x + side] = (24, 24, 24)
         if image is not None:
@@ -36,8 +38,8 @@ def overlay_views(background, views):
         text_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0]
         scale *= min(1.0, (side - 6) / max(1, text_width))
         cv2.putText(frame, label, (x + 3, y + label_height - 3),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.rectangle(frame, (x, y), (x + side - 1, y + side - 1), (220, 220, 220), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x, y), (x + side - 1, y + side - 1), color, 2)
     return frame
 
 

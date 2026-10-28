@@ -43,6 +43,7 @@ Its `flight.py` provides internal simulation takeoff/LAND helpers.
 | `perception_node.py`, `target_node.py` | Marker detection and simulated target motion |
 | `world.py`, `settings.py` | World generation and resolved settings |
 | `gazebo/WorldStabilizedCamera.cc` | Ideal camera gimbal applied on the sensor render thread before exposure |
+| `gazebo/CameraCoverage.hh`, `gazebo/CameraCoverageGui.cc` | Shared render-only camera rays and ground outlines in server and GUI scenes |
 | `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, evaluation |
 
 `TeamController.step(states, scans, stamp, seers)` has no ROS imports. It uses
@@ -94,6 +95,12 @@ a delayed ROS gimbal loop and a body-rotated mounting offset. The detector uses
 that same fixed optical orientation and the vehicle position at image time.
 Camera TF is dynamic `world` → `uavN/camera_optical_frame`; LiDAR TF remains
 static relative to the body. This ideal mount has no mechanical dynamics.
+The camera plugin updates coverage guides in that same render snapshot. A GUI
+plugin uses the shared geometry helper on the GUI render thread, following its
+own current scene poses, including when attached after startup. The generated
+world includes the installed Harmonic GUI defaults alongside this plugin.
+Guides use visibility bit `0x20`: overhead and GUI views include it, while UAV
+cameras and GPU LiDAR exclude it. The guides have no physics or control role.
 Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
 in `mpc.jsonl` and `/mpc/status`. Select `controller_execution: sequential` for
 an algorithm comparison with ordered dispatch to the same persistent UAV workers
@@ -141,6 +148,7 @@ Changes under `ros_ws/src/solo_mpc/gazebo/` also require this image rebuild.
 The Docker build compiles the Harmonic plugin into `/opt/solo_gazebo/lib`;
 the entrypoint adds that directory to `GZ_SIM_SYSTEM_PLUGIN_PATH`. The companion
 image does not include this simulation plugin.
+It also adds the directory to `GZ_GUI_PLUGIN_PATH` for the coverage GUI plugin.
 
 For an experimental package build inside `./scripts/dev shell`:
 

@@ -5,6 +5,8 @@ import math
 import cv2
 import numpy as np
 
+from .visual_style import vehicle_color
+
 
 OCCUPANCY_TOPIC = '/mpc/occupancy_grid'
 # OpenCV uses BGR. Unknown space stays visibly distinct from observed free space.
@@ -14,8 +16,6 @@ OCCUPIED = (88, 115, 247)
 PANEL = (28, 24, 21)
 TEXT = (242, 242, 242)
 MUTED = (179, 175, 168)
-VEHICLE_COLORS = ((255, 202, 91), (105, 225, 255), (222, 155, 239),
-                  (134, 237, 167), (190, 175, 255), (246, 217, 155))
 
 
 def fuse_occupancy(maps):
@@ -63,7 +63,7 @@ def render_occupancy(cells, resolution, origin, positions, names, stamp_ns):
     text('+X', (left + map_width - 23, bottom + 15), 0.36, MUTED)
 
     for i, name in enumerate(names):
-        color = VEHICLE_COLORS[i % len(VEHICLE_COLORS)]
+        color = vehicle_color(i)
         if name in positions:
             x, y = positions[name][:2]
             gx, gy = (x - origin[0]) / resolution, (y - origin[1]) / resolution

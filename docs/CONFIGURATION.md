@@ -61,6 +61,23 @@ same local, generated meshes appear in the GUI, overhead recording, and UAV
 cameras; no online model downloads are needed. Meshes live beside the generated
 world in `runs/<run-id>/config/city_assets/`.
 
+Whenever UAV cameras are enabled, the Gazebo GUI and overhead recording show
+each camera's coverage as four colored rays from its optical center beneath the
+UAV and a matching ground outline. Colors follow fleet order and match the
+recording's UAV FOV labels, map markers, and state panels: cyan for UAV 1,
+yellow for UAV 2, and pink for UAV 3 in the default fleet. The outline uses the
+configured camera FOV and image aspect ratio at the current simulator altitude;
+the default square camera covers approximately 2.96 × 2.96 m at body altitude
+3 m, accounting for its 0.04 m downward mount offset. The world-stabilized camera
+keeps the outline aligned with world axes during body tilt and yaw.
+
+Coverage guides project onto the flat ground plane at Z = 0. Buildings and
+trees can hide parts of the guides; the outline does not subtract occluded areas
+or project onto rooftops. These render-only guides cast no shadows, add no
+collisions, and are excluded from UAV camera images and LiDAR scans. They are
+also available with `--ground-truth-target --record-video`; ground-truth mode
+without recording omits the cameras and their guides.
+
 These are visual appearances only. Footprints, positions, collision geometry,
 and LiDAR returns retain the original boxes and cylinders, extruded to
 `obstacle_height` (5 m by default). GPU LiDAR uses a separate visibility mask

@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/SoloCameraCoverageGui">
+    <file>SoloCameraCoverageGui.qml</file>
+  </qresource>
+</RCC>

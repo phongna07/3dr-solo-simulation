@@ -10,6 +10,7 @@ from solo_bringup.world import generate_world
 
 from .settings import load_settings
 from .core.sensors import CAMERA_WORLD_OFFSET
+from .core.visual_style import vehicle_color
 from .obstacle_visuals import (
     CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
     LIDAR_VISIBILITY_MASK, building_mesh, tree_mesh,
@@ -17,6 +18,10 @@ from .obstacle_visuals import (
 from .scene_view import (
     OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
 )
+
+
+# Keep in sync with CameraCoverage::visibility in gazebo/CameraCoverage.hh.
+COVERAGE_VISUAL_FLAGS = 0x20
 
 
 def element(parent, tag, text=None, **attrs):
@@ -66,7 +71,7 @@ def city_visual(model, mesh_path, obstacle_height):
     element(mesh, "uri", Path(mesh_path).resolve().as_uri())
 
 
-def sensors(model, name, settings, cfg, camera_enabled=True):
+def sensors(model, name, settings, cfg, camera_enabled=True, color_index=0):
     link = element(model, "link", name="perception_link")
     element(link, "pose", "0 0 0 0 0 0", relative_to="iris_with_standoffs::base_link")
     inertial = element(link, "inertial")
@@ -85,7 +90,7 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     element(laser, "always_on", "true")
     element(laser, "visualize", "false")
     ray = element(laser, "ray")
-    element(ray, "visibility_mask", LIDAR_VISIBILITY_MASK)
+    element(ray, "visibility_mask", LIDAR_VISIBILITY_MASK & ~COVERAGE_VISUAL_FLAGS)
     scan = element(ray, "scan")
     horizontal = element(scan, "horizontal")
     count = settings["lidar_samples"]
@@ -127,6 +132,10 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
                      name="solo::WorldStabilizedCamera")
     element(gimbal, "camera_name", f"{name}::perception_link::camera")
     element(gimbal, "world_offset", " ".join(map(str, CAMERA_WORLD_OFFSET)))
+    element(gimbal, "coverage_parent", f"{name}::perception_link")
+    element(gimbal, "coverage_hfov", settings["camera_hfov"])
+    element(gimbal, "coverage_aspect", settings["camera_width"] / settings["camera_height"])
+    element(gimbal, "coverage_color", coverage_color(color_index))
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -134,7 +143,7 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     element(camera, "update_rate", settings["camera_rate"])
     element(camera, "always_on", "true")
     optics = element(camera, "camera")
-    element(optics, "visibility_mask", CAMERA_VISIBILITY_MASK)
+    element(optics, "visibility_mask", CAMERA_VISIBILITY_MASK & ~COVERAGE_VISUAL_FLAGS)
     element(optics, "horizontal_fov", settings["camera_hfov"])
     element(optics, "camera_info_topic", f"/{name}/camera/camera_info")
     image = element(optics, "image")
@@ -144,6 +153,37 @@ def sensors(model, name, settings, cfg, camera_enabled=True):
     clip = element(optics, "clip")
     element(clip, "near", 0.05)
     element(clip, "far", 100)
+
+
+def coverage_color(index):
+    return " ".join(str(c / 255) for c in reversed(vehicle_color(index))) + " 1"
+
+
+def coverage_gui(world, names, settings):
+    """Load the coverage helper in GUI clients, including viewers attached later."""
+    gui = world.find("gui")
+    if gui is None:
+        gui = element(world, "gui")
+        # A custom SDF GUI replaces Gazebo's fallback plugin list. Retain the
+        # installed Harmonic defaults (scene, navigation, tools, world controls).
+        defaults = Path("/usr/share/gz/gz-sim8/gui/gui.config").read_text()
+        defaults = ET.fromstring("<gui>" + defaults.split("?>", 1)[-1] + "</gui>")
+        gui.extend(defaults.findall("plugin"))
+    plugin = element(gui, "plugin", filename="SoloCameraCoverageGui",
+                     name="Camera coverage")
+    properties = element(plugin, "gz-gui")
+    for key, kind, value in (("state", "string", "floating"),
+                             ("width", "double", "0"), ("height", "double", "0"),
+                             ("showTitleBar", "bool", "false"),
+                             ("visible", "bool", "false"),
+                             ("resizable", "bool", "false")):
+        element(properties, "property", value, key=key, type=kind)
+    for index, name in enumerate(names):
+        element(plugin, "uav", link=f"{name}::perception_link",
+                hfov=str(settings["camera_hfov"]),
+                aspect=str(settings["camera_width"] / settings["camera_height"]),
+                offset=" ".join(map(str, CAMERA_WORLD_OFFSET)),
+                color=coverage_color(index))
 
 
 def overhead_camera(target, settings):
@@ -245,9 +285,12 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
     )
     if record_overhead:
         overhead_camera(target, settings)
-    for uav in fleet["uavs"]:
+    for index, uav in enumerate(fleet["uavs"]):
         model = world.find(f"model[@name='{uav['name']}']")
-        sensors(model, uav["name"], settings, cfg, camera_enabled=camera_enabled)
+        sensors(model, uav["name"], settings, cfg, camera_enabled=camera_enabled,
+                color_index=index)
+    if camera_enabled:
+        coverage_gui(world, [uav["name"] for uav in fleet["uavs"]], settings)
     ET.indent(tree, space="  ")
     tree.write(output, encoding="utf-8", xml_declaration=True)
     return output, fleet

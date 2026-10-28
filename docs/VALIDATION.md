@@ -2,6 +2,44 @@
 
 [Project overview](../README.md) · [Collect a new run](OPERATIONS.md#logs-and-evaluation)
 
+## Camera coverage guides — 28 October 2026
+
+Run `20261028T072108Z-19354` used `./scripts/dev build sim`,
+`./scripts/dev mpc --record-video`, `./scripts/dev mission run --seconds 30`,
+`./scripts/dev evaluate`, and normal `./scripts/dev stop`. Gazebo ran with
+`--headless-rendering -s`; no GUI was launched. `doctor` identified the NVIDIA
+RTX 5050 server renderer. All three UAVs tracked using camera detections,
+landed, and disarmed; the mission finished without an error and released all
+vehicle ownership.
+
+The finalized MP4 contains 1,131 frames at 1920 × 1080 / 20 FPS (56.55 simulation
+seconds, including takeoff and landing). Inspected frames at video offsets
+2, 10, 22, 34, and 47 seconds show cyan, yellow, and pink corner rays and ground
+outlines following their respective UAVs. The outlines remain world-aligned
+through yaw changes, shrink during descent, remain colored in shadows, and
+are occluded by scene obstacles. The right-hand UAV images contain no guides.
+Emissive guide materials suppress reflected light and convert the panel's sRGB
+palette to linear RGB, avoiding the washed-out colors of the initial material.
+Generated SDF inspection confirmed the 0.04 m mount offset, 2.96 × 2.96 m
+footprints at 3 m body altitude, and guide visibility bit `0x20` included in the
+overhead camera mask and excluded from UAV camera and GPU LiDAR masks.
+
+Evidence is in that run's `logs/coverage-*.log`, `logs/compose.log`,
+`logs/headless-processes.txt`, `reports/coverage-*.png`,
+`reports/coverage-geometry.json`, `reports/renderer.txt`, `reports/video.json`,
+`reports/mission-status.json`, `reports/evaluation.json`, and telemetry files.
+No automated tests were added or run for this change.
+
+Evaluation reported 0.793 m minimum sampled obstacle body clearance, 1.803 m
+minimum inter-UAV distance, 98.3% controller readiness, and 0.686× simulation
+speed. UAV 1 recovered from four `Maximum_CpuTime_Exceeded` outcomes. Fleet
+compute median/p95 was 134.1 / 187.7 ms, exceeding the 100 ms control period.
+Startup emitted EGL fallback warnings before successful NVIDIA rendering;
+shutdown required SIGTERM for MAVROS after its SIGINT timeout. No guide, camera,
+or recorder errors appeared. This bounded mission verifies flat-ground coverage
+visualization and headless recording; it does not verify GUI rendering, a full
+route, terrain or rooftop projection, or subtraction of occluded ground area.
+
 ## City obstacle appearances — 28 October 2026
 
 Run `20261028T044454Z-12615` used `./scripts/dev mpc --record-video`,

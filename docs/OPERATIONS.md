@@ -185,6 +185,13 @@ The output is `runs/<run-id>/recorded-mission.mp4`: a 1920 × 1080 MPEG-4 video 
 with the elevated target-following view as its background, a LiDAR occupancy map
 at top left, drone state instruments at bottom left, and labelled UAV FOVs
 stacked on the right. UAV cameras default to 160 × 160 at 8 FPS.
+The scene shows each UAV's camera coverage with colored corner rays and a
+ground outline, also visible in the Gazebo GUI. The colors match the FOV panel
+borders and labels, map markers, and state rows. The UAV FOV images remain free
+of these guides so camera detection sees only the original scene. Outlines show
+the camera's ground-plane projection; obstacles may occlude parts of that area.
+The guides are rendered by the headless server; recording them does not require
+starting or attaching the GUI.
 
 The map combines the controller's persistent LiDAR maps for the fleet: coral
 cells mark detected obstacles, pale green cells mark scanned free space, and

@@ -14,6 +14,8 @@
 #include <gz/sim/rendering/Events.hh>
 #include <sdf/Element.hh>
 
+#include "CameraCoverage.hh"
+
 namespace solo
 {
 class WorldStabilizedCamera final : public gz::sim::System,
@@ -30,6 +32,11 @@ class WorldStabilizedCamera final : public gz::sim::System,
     }
     this->cameraName = _sdf->Get<std::string>("camera_name");
     this->offset = _sdf->Get<gz::math::Vector3d>("world_offset");
+    this->coverage.parentName = _sdf->Get<std::string>("coverage_parent");
+    this->coverage.offset = this->offset;
+    this->coverage.hfov = _sdf->Get<double>("coverage_hfov");
+    this->coverage.aspect = _sdf->Get<double>("coverage_aspect");
+    this->coverage.color = _sdf->Get<gz::math::Color>("coverage_color");
     this->connection = _events.Connect<gz::sim::events::PreRender>(
         [this]() { this->Stabilize(); });
   }
@@ -41,6 +48,7 @@ class WorldStabilizedCamera final : public gz::sim::System,
     auto scene = gz::rendering::sceneFromFirstRenderEngine();
     if (!scene)
       return;
+    this->coverage.Update(scene);
     auto camera = scene->SensorByName(this->cameraName);
     if (!camera || !camera->Parent())
       return;
@@ -59,6 +67,7 @@ class WorldStabilizedCamera final : public gz::sim::System,
 
   private: std::string cameraName;
   private: gz::math::Vector3d offset;
+  private: CameraCoverage coverage;
   // Destroy the event connection before the state captured by its callback.
   private: gz::common::ConnectionPtr connection;
 };
