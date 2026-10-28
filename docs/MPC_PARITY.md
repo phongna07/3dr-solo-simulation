@@ -2,48 +2,30 @@
 
 [Development](DEVELOPMENT.md) · [Validation record](VALIDATION.md)
 
-The supplied simulation uses three UAVs. Offline comparisons check controller
-behavior against the external `motion_planning_MPC` implementation; they do not
-establish successful flight or achieved control rates.
+The supplied simulation uses three UAVs. Verify controller behavior through
+simulation evidence and captured optimizer inputs. Numerical replay alone does
+not establish successful flight or achieved control rates.
 
-## Regression coverage
+## Simulation verification
 
-Run the normal suite in the simulation image:
-
-```bash
-./scripts/dev test
-```
-
-`tests/test_parallel_mpc.py` compares three persistent workers with serial
-execution for camera and ground-truth target input. It checks assembled solver
-inputs, predictions, map state, persistent process IDs, overlapping solves,
-worker failures, deadlines, and shutdown. Single-worker checks cover empty
-neighbor sets and disconnects.
-
-`tests/test_upstream_parity.py` optionally compares three-UAV coordination,
-leader and assignment hysteresis, moving slots, target estimates, planner paths,
-solver inputs, nominal/backup outputs, warm starts, and stopping fallback with
-actual upstream definitions. These controlled snapshots use the external
-reference settings on both sides; they are not replays of a Gazebo mission.
-The harness fingerprints reference files before and after the tests and disables
-Numba disk caches in extracted definitions.
-
-The external source and matching saved run are optional, read-only inputs.
-Supply their paths explicitly in an environment containing the numerical test
-dependencies:
+Do not write automated tests. Run a representative mission, evaluate after
+landing, and stop normally to finalize the recording:
 
 ```bash
-python3 scripts/verify_mpc_parity.py \
-  --reference /path/to/motion_planning_MPC \
-  --reference-run /path/to/matching/saved-run
+./scripts/dev mpc --record-video
+./scripts/dev mission run --seconds 20
+./scripts/dev evaluate
+./scripts/dev stop
 ```
 
-The saved run must contain `config.json` with `scenario_def.params` and `params`
-from the compatible upstream revision recorded in
-[UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json). The numerical probes expect
-its original 20-step horizon and iteration-only IPOPT options. The wrapper sets
-`MPC_REFERENCE` and `MPC_REFERENCE_RUN`; without both inputs, these optional
-tests skip. The simulation itself needs no upstream checkout.
+Inspect `telemetry/mpc.jsonl`, `telemetry/truth.jsonl`,
+`reports/evaluation.json`, process logs, and `recorded-mission.mp4` under the
+saved run directory. For serial/parallel or camera/ground-truth comparisons,
+use separate runs with matching settings and preserve both run directories.
+Review worker timing, failures, tracking, and landing alongside numerical output.
+Controller provenance remains in
+[UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json); the simulation needs no
+external upstream checkout.
 
 ## Physical adaptations
 
@@ -59,9 +41,8 @@ failed nominal solves remain visible to mission supervision.
 
 The three-UAV controller keeps its 0.2-second IPOPT CPU cap and one-second worker
 phase deadline. The independent publisher samples trajectories at elapsed
-simulation time and retains their source timestamps for expiry. Offline
-comparisons use the reference solver options to isolate numerical differences.
-Passing those comparisons does not establish runtime deadline performance.
+simulation time and retains their source timestamps for expiry. Inspect live
+worker timing and failure diagnostics to assess runtime deadline performance.
 
 ## Optimizer capture and replay
 

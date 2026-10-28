@@ -26,13 +26,11 @@ cp .env.example .env
 ```bash
 ./scripts/dev build sim
 ./scripts/dev doctor
-./scripts/dev test
 ```
 
 The first build downloads dependencies and compiles ArduPilot, MAVROS, and the
 Gazebo plugin. `doctor` checks Docker, configuration, architecture, and device
 access. It can inspect the server renderer once a simulation is running.
-`test` runs the automated suite inside the image.
 
 ## 3. Start the simulation
 

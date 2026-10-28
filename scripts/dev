@@ -53,7 +53,6 @@ Usage: ./scripts/dev COMMAND [arguments]
   gui                            Gazebo GUI client; server keeps running on GUI exit
   stop                           LAND, await disarm, then stop simulation
   stop --force                   Stop processes immediately, no LAND
-  test                           Unit/config tests inside image
   lock                           Export manifests and image ID to artifacts/
   pull                           Pull images specified in .env (use registry digests)
   companion                      Start hardware-profile MAVROS (requires config/devices)
@@ -143,9 +142,6 @@ case "$command" in
       "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop
     fi
     "${dc[@]}" stop sim
-    ;;
-  test)
-    "${dc[@]}" run --rm --no-deps sim python3 -m pytest -q /workspace/tests
     ;;
   lock)
     mkdir -p artifacts

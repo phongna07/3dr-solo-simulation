@@ -54,7 +54,7 @@ ros_ws/src/solo_bringup/        Launch, readiness, and flight helpers
 ros_ws/src/solo_mpc/            Planning, MPC, perception, missions, evaluation
 ros_ws/src/solo_mpc_interfaces/ Mission service definition
 scripts/                       Development and release command-line tools
-tests/                         Automated checks
+AGENTS.md                      Agent instructions and simulation verification
 docs/                          User and contributor guides
 runs/                          Generated run data (Git-ignored)
 artifacts/                     Manifests and validation evidence (Git-ignored)

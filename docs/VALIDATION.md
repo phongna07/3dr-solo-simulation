@@ -214,8 +214,8 @@ Evidence: `artifacts/release-final-tests.log`,
 `artifacts/companion-offline-smoke/`. Preserved local inputs are
 `solo-simulation-inputs:release`, `solo-companion-inputs:release`, and
 `solo-base:inputs`. This local check did not test ARM64, GPU acceleration, or
-registry publication. The [release workflow](../.github/workflows/release.yml)
-provides native platform acceptance; see [Reproducibility](REPRODUCIBILITY.md).
+registry publication. Native platform acceptance must be performed separately;
+see [Reproducibility](REPRODUCIBILITY.md).
 
 ## Persistent supervision — 15 October
 

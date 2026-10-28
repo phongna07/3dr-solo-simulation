@@ -13,10 +13,10 @@ also needed to identify the application that ran.
 
 ## Deploy a tested image
 
-Get the **runtime** registry digest for your architecture from the
-[release-images workflow](../.github/workflows/release.yml) acceptance artifact or
-job summary. Input/archive digests serve a different purpose. The workflow builds
-and tests on native AMD64/ARM64 runners, publishing each passing platform.
+Get the **runtime** registry digest for your architecture from the publisher's
+saved release evidence. Input/archive digests serve a different purpose.
+Build and validate each target platform before publishing; this repository no
+longer includes GitHub Actions workflows.
 Companion smoke acceptance does not establish FCU connectivity or flight support.
 
 In an empty deployment directory, with Docker Compose and Python 3 available:
@@ -99,11 +99,10 @@ Flattening removes deleted build material from lower layers.
 versions before pruning. Updating APT inside a pruned image is unsupported;
 rebuild the release.
 
-The workflow saves checksummed runtime/input archives, tests on fresh native
-runners with no checkout, then publishes runtime, input, and clean-base images.
-Acceptance records their registry digests and platform. CI artifacts expire
-after 90 days: archive acceptance evidence and retain input/base images for the
-supported lifetime of a release.
+Save checksummed runtime/input archives, validate on the target platform without
+a checkout, then publish runtime, input, and clean-base images. Record their
+registry digests and platform with the acceptance evidence. Retain that evidence
+and the input/base images for the supported lifetime of a release.
 
 ## Build and smoke-test a candidate
 

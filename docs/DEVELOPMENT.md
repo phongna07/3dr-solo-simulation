@@ -134,7 +134,6 @@ package metadata, interfaces, or dependencies require rebuilding:
 
 ```bash
 ./scripts/dev build sim
-./scripts/dev test
 git diff --check
 ```
 
@@ -242,10 +241,21 @@ validating a new release.
 
 ## Verification
 
-`./scripts/dev test` covers configuration/world generation, controller and sensor
-logic, ROS construction/transforms, expiry, mission guards, and CLI ordering.
-The [simulation workflow](../.github/workflows/simulation.yml) builds, tests, and
-checks three-FCU heartbeat/pose readiness without arming. Flight-behavior changes
-also need a supervised simulation and review of measured logs. Record evidence
-and limitations in [Validation](VALIDATION.md); hardware follows the staged
-[migration plan](HARDWARE.md).
+Do not write automated tests. Verify changes with representative simulation
+missions and inspect measured logs, telemetry, evaluation reports, or video:
+
+```bash
+./scripts/dev mpc --record-video
+./scripts/dev mission run --seconds 20
+./scripts/dev evaluate
+./scripts/dev stop
+git diff --check
+```
+
+Review the relevant evidence in `runs/<run-id>/`, including `logs/`,
+`telemetry/mpc.jsonl`, `telemetry/truth.jsonl`, `reports/evaluation.json`, and
+`recorded-mission.mp4`. Stop normally to finalize the video. See
+[AGENTS.md](../AGENTS.md) for contributor instructions and
+[Operations](OPERATIONS.md#logs-and-evaluation) for evidence details. Record
+results and limitations in [Validation](VALIDATION.md); hardware follows the
+staged [migration plan](HARDWARE.md).
