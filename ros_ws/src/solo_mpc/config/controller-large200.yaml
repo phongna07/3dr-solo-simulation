@@ -42,7 +42,7 @@ params:
   INFLATE_MARGIN: 0.15
   UAV_SAFE_DISTANCE: 1.0
   COLLISION_AVOID_DISTANCE: 1.5
-  VMAX: 2.2
+  # VMAX is selected by the scenario so separated rendezvous can run slower.
   UMAX: 2.0
   ACCEL_TAU: 0.2
   SPEED_RECOVERY: true  # local adapter permits unavoidable initial overspeed while braking

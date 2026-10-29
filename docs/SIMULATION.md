@@ -33,9 +33,20 @@ For the five-UAV 200 × 200 m random field, use the matching preset:
 ./scripts/dev stop
 ```
 
-The dense seeded route takes about 464 simulation seconds (7.7 minutes at real time),
-with several early slalom bends through nearby obstacles. Use 300 wall seconds
-or more to inspect multiple bends when rendering slows the clock.
+To watch distant followers rendezvous with a leader already over the target,
+select `--preset large200_5uav_separated` in the same commands. Keep camera mode
+(the default) to check that UAV 1 retains the pink target while the other four
+approach from about 9–37 m away. UAV 3 starts southwest of the leader to reduce
+crossing during joining. Its UAV speed bound is 1.2 m/s; the target uses 0.4 m/s
+on its first two legs, then 0.6 m/s. Allow at least 450 wall seconds for joining
+and subsequent tracking, and inspect the recorded modes and measured separations; wall time
+is longer than simulation time on a loaded renderer.
+
+The original fast large preset takes about 464 simulation seconds (7.7 minutes
+at real time) to complete its route, with several early slalom bends through
+nearby obstacles. The slower separated preset takes about 786 simulation seconds
+(13.1 minutes at real time). Use 450 wall seconds or more to inspect joining
+and multiple bends when rendering slows the clock.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to

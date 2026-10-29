@@ -178,6 +178,98 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
 
+The slower separated preset sets scenario `VMAX` to 1.2 m/s (previously 2.2),
+with target speeds 0.4 m/s on the first two legs and 0.6 m/s thereafter.
+The shared large controller leaves `VMAX` to each scenario; the original large
+scenario/generator retain 2.2 m/s, and the small preset still resolves to 1.2 m/s.
+Acceleration/braking, solver budgets, flight supervision and expiry are unchanged.
+Headless camera/video run `20261029T154718Z-23044` completed 450 wall seconds of
+tracking (129.6 simulation seconds, 69.0 m of target travel), then landed and
+disarmed all five UAVs with ownership released before normal stop. All five first
+entered TRACK after 31.9 simulation seconds and stayed TRACK for all 976 subsequent
+airborne controller cycles. UAV 1 remained leader with fresh target input in all
+1,323 airborne samples; all 1,061 sampled leader images contained the marker.
+
+Measured median UAV speeds fell from 0.977–1.048 to 0.569–0.628 m/s compared with
+`20261029T152520Z-17272`. The largest measured speed fell from 2.562 to 1.851 m/s;
+followers still overshot the prediction bound, reaching 1.699–1.851 m/s, while
+the leader peaked at 0.735 m/s. Minimum sampled separation increased from 1.111
+to 1.309 m. Minimum obstacle body clearance was 0.151 m (UAV 5 during approach),
+with no sampled footprint overlap. Of 1,323 airborne cycles, 1,249 were ready,
+62 rejected tilted scans and 12 had partial nominal failure; 6,292/6,305 nominal
+calls succeeded. All 13 failed calls reached the unchanged CPU cap before full
+rendezvous; no nominal failures occurred after joining. Fleet compute p95 was
+294.8 ms, above the 100 ms target and the previous run's 264.2 ms. These speed
+changes reduce measured motion peaks; computation remains a limitation.
+
+All 640 retained captures matched the unchanged upstream pin and adapter.
+The 164.95 s recording decoded all 3,299 frames; reviewed closest-approach and
+tracking frames show the slower fleet with complete state/FOV panels. No worker
+timeouts or Python tracebacks were observed. Known SITL SIGINT exits and MAVROS
+SIGTERM escalation followed confirmed disarm. The full 786-simulation-second
+route remains unverified; sampled clearance does not guarantee continuous safety.
+Exact commands, resolved limits, speed comparison, evaluation, final state,
+source provenance and sampled frames are in this run's
+`reports/separated-verification.json`, `speed-comparison.json`, adjacent reports,
+telemetry and recording.
+
+The southwest-start revision places UAV 1 and the initial target at `[18,18]`,
+and UAV 3 at `[10,14,3]`, 8.94 m southwest of the leader. Headless camera/video
+run `20261029T152520Z-17272` completed 300 wall seconds of tracking (87.4 simulation
+seconds, 75.8 m of target travel), followed by fleet landing/disarm and normal stop.
+UAV 3 first joined its west slot 4.9 simulation seconds after target motion began;
+all five first entered TRACK after 20.2 seconds. Minimum sampled separation rose
+from 0.786 m in the previous layout to 1.111 m (UAV 1/UAV 5); UAV 3/UAV 4 stayed
+at least 2.432 m apart, with no sampled pair below 1 m. Minimum body clearance
+was 0.363 m. UAV 1 remained leader with fresh target input in all 901 airborne
+controller samples; all 724 sampled airborne leader images contained the marker.
+The initial marker centroid was `[79.5,77.5]` in a 160 × 160 image.
+
+UAV 3 briefly returned to SEARCH after joining (30 cycles between stamps 74.78
+and 81.98), then rejoined; all final airborne modes were TRACK. There were 18
+nominal CPU-cap failures and 35 rejected-scan cycles; 4,312/4,330 nominal calls
+succeeded. Compute p95 was 264.2 ms, above the 100 ms target. All 640 retained
+captures matched the unchanged upstream pin and adapter. The 128.4 s recording
+decoded all 2,568 frames; reviewed joining, closest-approach and tracking frames
+show UAV 3 approaching from the southwest and occupying the west slot. The full
+route remains unverified, and sampled distances do not guarantee continuous
+separation. Exact commands, comparison, evaluation, final disarmed state,
+provenance and sampled video frames are in this run's
+`reports/separated-verification.json`, adjacent reports, telemetry and recording.
+
+The previous separated-start layout completed 300 wall seconds of headless
+camera tracking in `20261029T150000Z-27105`, followed by landing/disarm of all
+five UAVs and normal stop. The target covered 75.7 m in 88.3 simulation seconds.
+UAV 1 remained leader in all 907 airborne controller samples, with fresh target
+input throughout; its marker was visible in all 731 sampled airborne images.
+Before target motion, the marker centroid was `[79.5,78.5]` in a 160 × 160 image.
+Only UAV 1 supplied detections during the first tracking second. Followers first
+joined TRACK 16.6–20.6 simulation seconds after target motion began. UAV 3 briefly
+returned to SEARCH during a later bend (35 cycles between stamps 100.88 and
+107.78), then rejoined; the final airborne modes were all TRACK.
+
+Minimum sampled body clearance was 0.376 m, and UAV separation was 0.786 m,
+above the configured 0.72 m body diameter but below the soft 1 m separation
+objective. Of 907 airborne cycles, 842 were ready, 46 rejected tilted scans and
+19 had a nominal CPU-cap failure (all on followers); 4,286/4,305 nominal calls
+succeeded. Fleet compute p95 was 247.5 ms, above the 100 ms target. All 640 retained
+captures matched the unchanged upstream pin and adapter. The 121.2 s recording
+decoded all 2,424 frames; reviewed start, approach, formation, tracking and landing
+frames retained five complete state/FOV panels. No worker timeouts or Python
+tracebacks were observed. Shutdown retained the known SITL SIGINT exits and
+MAVROS SIGTERM escalation after confirmed disarm. The complete route remains
+unverified. Commands and detailed observations are in this run's
+`reports/separated-verification.json`, evaluation, closest-approach report,
+final mission state, sampled PNGs, telemetry and video.
+
+The earlier separated-start attempts remain in `20261029T143816Z-18798` and
+`20261029T144610Z-7010`. The first exposed initial marker loss and close follower
+convergence; the second retained the marker but grazed the configured body margin
+at a building on UAV 2's approach. That layout staggers follower starts,
+uses 0.6 m/s for the first two target legs before restoring 1 m/s, and starts UAV 2
+farther southwest to approach west of that building. Controller/solver behavior,
+obstacles, route geometry, sensing, safety margins and expiry are unchanged.
+
 The faster, tighter five-UAV preset raises target speed from 0.6 to 1.0 m/s
 and MPC `VMAX` from 1.5 to 2.2 m/s. Its regenerated seed `200205` retains 480
 obstacles, with 162 roadside placements, a 2.0 m route-to-disc clearance band,

@@ -5,10 +5,15 @@ Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy, ArduCop
 uses a 50 × 30 m field and a 3 m flight altitude. Vehicle physics runs in 3D;
 MPC plans horizontally, with separate altitude control.
 
-A second preset, `large200_5uav`, uses five UAVs in a 200 × 200 m field with
-seeded random obstacles and a random winding target route. Both presets fly at
-3 m. Select it with `./scripts/dev mpc --preset large200_5uav --record-video`;
-`--preset small50_3uav` explicitly selects the original scenario.
+The `large200_5uav` preset uses five UAVs in a 200 × 200 m field with
+seeded random obstacles and a random winding target route. Select it with
+`./scripts/dev mpc --preset large200_5uav --record-video`.
+`large200_5uav_separated` keeps that field and shifts the first target waypoint
+northeast. Its four followers start about 9–37 m from UAV 1, which starts directly
+above the target. UAV 3 starts southwest of the leader to reduce crossing during
+formation joining. This preset uses a 1.2 m/s UAV prediction bound and a target
+speed up to 0.6 m/s. All presets fly at 3 m; `--preset small50_3uav` explicitly
+selects the original scenario.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)

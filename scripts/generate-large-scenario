@@ -114,7 +114,7 @@ def generate(seed):
         "target:", "  waypoints:", *[f"    - {json.dumps(p)}" for p in waypoints],
         "obstacles:", "  rects:", *[f"    - {json.dumps(p)}" for p in rects],
         "  circles:", *[f"    - {json.dumps(p)}" for p in circles],
-        "params:", "  GRID_RESOLUTION: 0.3", "  LOCAL_PLAN_RADIUS: 10",
+        "params:", "  VMAX: 2.2", "  GRID_RESOLUTION: 0.3", "  LOCAL_PLAN_RADIUS: 10",
         "  UNKNOWN_POLICY: optimistic", "  UNKNOWN_COST: 1.5",
         "  TARGET_REPLAN_THRESHOLD: 0.6", "  PATH_DEVIATION_THRESHOLD: 1.0",
         "  TAR_SMOOTH_ENABLE: true", "  TAR_SPLINE_DS: 0.1",

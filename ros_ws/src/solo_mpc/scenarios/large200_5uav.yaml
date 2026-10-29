@@ -516,6 +516,7 @@ obstacles:
     - [106.754, 126.297, 1.101]
     - [140.007, 103.336, 0.774]
 params:
+  VMAX: 2.2  # original large-map speed; separated preset selects its own bound
   GRID_RESOLUTION: 0.3
   LOCAL_PLAN_RADIUS: 10
   UNKNOWN_POLICY: optimistic

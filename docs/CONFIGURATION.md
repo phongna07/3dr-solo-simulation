@@ -31,7 +31,7 @@ as described in [Simulation](SIMULATION.md#gpu-and-display).
 
 - [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five independent SITL/MAVROS instances.
 - [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
-- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 2.2 m/s MPC speed bound for all UAVs, 6 m LiDAR range and a 0.35 s solver CPU cap. Target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
+- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 6 m LiDAR range and a 0.35 s solver CPU cap. The original large scenario supplies its 2.2 m/s MPC speed bound; target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
 
 The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
 downward camera footprint. Followers start 2.625 m left, right, behind and ahead.
@@ -72,6 +72,44 @@ experiments in `artifacts/` when they should not be committed. Different seeds
 need their own simulator verification. Explicit
 `--fleet`, `--scenario`, and `--settings` arguments after `--preset` override that
 preset; the original no-argument defaults remain unchanged.
+
+### Separated five-UAV rendezvous
+
+`./scripts/dev mpc --preset large200_5uav_separated --record-video` selects
+[large200_5uav_separated.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav_separated.yaml)
+with the same five-UAV fleet and large-map controller. It preserves the original
+200 × 200 m obstacle field, later route waypoints and 3 m flight altitude.
+UAV 1 and the first target waypoint shift 2 m northeast on each axis to `[18,18]`.
+The scenario sets `params.VMAX: 1.2` m/s, reduced from 2.2 m/s, while retaining
+the 2 m/s² acceleration/braking limit. The target moves at 0.4 m/s on its first
+two legs to allow rendezvous, then 0.6 m/s. The shared large-map controller
+leaves `VMAX` to the scenario; the original `large200_5uav` scenario and generator
+explicitly retain 2.2 m/s. Controller overrides still take precedence.
+Lower speeds reduce travel while a plan is being computed; they do not guarantee
+shorter solve times or strict measured-speed limits. The four follower starts are:
+
+| UAV | Start XYZ (m) | Initial distance from UAV 1 |
+|---|---|---:|
+| UAV 1 | `[18,18,3]` | 0 m |
+| UAV 2 | `[38,2,3]` | 25.61 m |
+| UAV 3 | `[10,14,3]` | 8.94 m |
+| UAV 4 | `[8,50,3]` | 33.53 m |
+| UAV 5 | `[48,40,3]` | 37.20 m |
+
+UAV 3 starts southwest of UAV 1 to approach the west formation slot
+from the same side, reducing crossing with the northern arrivals. Its initial distance is deliberately
+shorter than the other followers; slot assignment remains dynamic.
+UAV 1 starts directly above the stationary pink target at `[18,18]`, centered
+in its stabilized downward camera. Takeoff completes before target motion starts.
+The default camera mode exercises actual marker perception; do not select
+`--ground-truth-target` when checking initial visual acquisition and retention.
+Followers start outside camera/formation range and use existing SEARCH pursuit,
+local sensor maps and MPC to approach the shared target estimate. Existing
+leader-distance hysteresis then switches them to TRACK and assigns formation
+slots. Leadership remains selected by observed visibility; it is not forced to
+UAV 1. Run long enough for the distant followers to rendezvous before assessing
+team tracking. The scenario is a separate checked-in snapshot: regenerating
+`large200_5uav.yaml` does not update its obstacle field or route automatically.
 
 ## Fleet and geometry
 
