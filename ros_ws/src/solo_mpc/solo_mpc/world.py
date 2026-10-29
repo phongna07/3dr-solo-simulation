@@ -331,7 +331,11 @@ def bridge_config(names, world, destination, record_overhead=False, *, camera_en
             ros_type_name="sensor_msgs/msg/Image",
             gz_type_name="gz.msgs.Image",
             direction="GZ_TO_ROS",
-            qos_profile="SENSOR_DATA",
+            # Full HD images span thousands of DDS fragments. Best-effort
+            # delivery loses whole images on a fragment drop, producing holds
+            # in the constant-rate recording. Omit the sensor-data profile to
+            # use the bridge's default reliable QoS, matching the recorder.
+            publisher_queue=20,
             # Gazebo skips rendering without transport subscribers. The
             # recorder subscribes on arming, before its takeoff recording gate.
             lazy=True,

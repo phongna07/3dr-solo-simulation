@@ -22,7 +22,7 @@ class FrameVideo:
         self.frames = 0
         self.closed = False
 
-    def write(self, frame, stamp_ns):
+    def write(self, frame, stamp_ns, *, source_stamps=None):
         if self.closed:
             raise RuntimeError("Video is closed")
         size = (frame.shape[1], frame.shape[0])
@@ -42,7 +42,10 @@ class FrameVideo:
         if size != self.size:
             raise ValueError(f"Camera resolution changed from {self.size} to {size}")
         self.writer.write(frame)
-        self.timestamps.write(json.dumps({"frame": self.frames, "stamp_ns": stamp_ns}) + "\n")
+        record = {"frame": self.frames, "stamp_ns": stamp_ns}
+        if source_stamps is not None:
+            record['source_stamps_ns'] = source_stamps
+        self.timestamps.write(json.dumps(record) + "\n")
         self.frames += 1
 
     def close(self):

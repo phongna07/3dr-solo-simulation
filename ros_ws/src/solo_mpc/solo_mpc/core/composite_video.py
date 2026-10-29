@@ -68,6 +68,7 @@ class CompositeVideo:
             self.pending['occupancy'] = deque(maxlen=64)
         self.latest = {}
         self.current = {name: None for name in self.pending}
+        self.current_stamps = dict.fromkeys(self.pending)
         self.background_received = None
         self.start_ns = None
         self.buffer_ns = 500_000_000
@@ -102,7 +103,7 @@ class CompositeVideo:
                 return
             for name, queue in self.pending.items():
                 while queue and queue[0][0] <= stamp:
-                    _, self.current[name], received = queue.popleft()
+                    self.current_stamps[name], self.current[name], received = queue.popleft()
                     if name == 'overhead':
                         self.background_received = received
             ready = all(self.latest.get(name, -1) >= stamp for name in self.vehicles)
@@ -118,7 +119,7 @@ class CompositeVideo:
             if self.telemetry:
                 states = {name: history.sample(stamp) for name, history in self.telemetry.items()}
                 frame = overlay_states(frame, render_states(states, stamp))
-            self.video.write(frame, stamp)
+            self.video.write(frame, stamp, source_stamps=self.current_stamps)
 
     def close(self):
         try:

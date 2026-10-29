@@ -106,6 +106,13 @@ guards. Arrow scales are 2 m/s or 2 m/s² at the rim. Missing/stale values show
 
 Feeds align by original simulation timestamps; slower feeds hold their last
 frame. `telemetry/recorded-mission.timestamps.jsonl` maps output frames to time.
+Each combined-frame record also includes `source_stamps_ns` for the overhead,
+UAV images, and occupancy map; repeated source stamps identify held feeds.
+The Full HD overhead bridge and recorder use reliable ROS delivery with a
+20-image history so lost DDS fragments can be retransmitted. Best-effort
+delivery of these large images can cause periodic freezes even when Gazebo
+renders at 20 FPS; the smaller perception feeds retain sensor-data QoS.
+Restart the stack after changing recording code or bridge configuration.
 Rendering/encoding adds load. Add rosbag recording from `shell` only when needed,
 using a fresh output directory and stopping it before the container.
 

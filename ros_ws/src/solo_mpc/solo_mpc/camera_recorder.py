@@ -12,7 +12,7 @@ import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped, TwistStamped
@@ -92,10 +92,13 @@ class CameraRecorder(Node):
 
     def subscribe_images(self, name):
         if name not in self.image_subscriptions:
+            is_overhead = self.overhead or (self.composite and name == 'overhead')
             subscription = self.create_subscription(
-                Image, OVERHEAD_TOPIC if self.overhead or (self.composite and name == 'overhead')
-                else f"/{name}/camera/image_raw",
-                lambda msg, n=name: self.image(n, msg), qos_profile_sensor_data,
+                Image, OVERHEAD_TOPIC if is_overhead else f"/{name}/camera/image_raw",
+                # Request retransmission for fragmented Full HD recording
+                # images. Keep the small flight/perception feeds best-effort.
+                lambda msg, n=name: self.image(n, msg),
+                QoSProfile(depth=20) if is_overhead else qos_profile_sensor_data,
             )
             self.image_subscriptions[name] = subscription
             self.subscriptions_keep.append(subscription)
