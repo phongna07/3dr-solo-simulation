@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from solo_mpc.scene_view import FOLLOW_OFFSET, TARGET, follow_offset
+from solo_mpc.core.visual_style import FOLLOW_OFFSET, TARGET, follow_offset
 
 
 def has_target(world_path):

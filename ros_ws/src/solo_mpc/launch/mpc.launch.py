@@ -1,33 +1,34 @@
-"""Existing fleet bringup plus scenario, sensors and independent ROS MPC nodes."""
+"""Gazebo/SITL fleet, sensors, recording and independent MPC mission processes."""
 
+import json
 import os
+import shutil
+import socket
 from pathlib import Path
 
+import yaml
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
-from solo_bringup.launching import critical, observed
+from solo_bringup.launching import critical, mavros, observed
+from solo_bringup.runtime import create_run, sitl_parameter_file
+from solo_bringup.startup import StartupProgress
 from solo_mpc.settings import load_settings
-from solo_mpc.scene_view import OVERHEAD_FPS
-from solo_mpc.world import bridge_config
+from solo_mpc.core.visual_style import OVERHEAD_FPS
+from solo_mpc.world import bridge_config, generate_mpc_world
 
 
 def start(context):
     get = lambda n: LaunchConfiguration(n).perform(context)
-    if get("resume") == "true":
-        raise ValueError(
-            "Start a fresh MPC run; old alignment and sensor state cannot be resumed"
-        )
     fleet = load_config(get("fleet"))
     scenario, settings, cfg = load_settings(get("scenario"), get("settings"))
     if get("target_mode"):
         settings["target_mode"] = get("target_mode")
     if settings["target_mode"] not in ("camera", "ground_truth"):
         raise ValueError("Invalid target_mode")
-    # Resolve before world generation so sensors and ROS processes agree.
-    context.launch_configurations["target_mode"] = settings["target_mode"]
     record_video = get("record_video") == "true"
     camera_enabled = settings["target_mode"] == "camera" or record_video
     if len(fleet["uavs"]) != len(scenario["starts"]):
@@ -35,31 +36,59 @@ def start(context):
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
         uav["spawn"] = [point[0], point[1], 0.195, 0, 0, 90]
     fleet["world_name"] = scenario.get("world_name", "mpc_small50")
-    # Reuse all existing SITL, readiness, critical-process and parameter behavior.
-    import importlib.util
-
-    path = Path("/workspace/ros_ws/src/solo_bringup/launch/simulation.launch.py")
-    if os.environ.get("SOLO_DEV") != "1" or not path.exists():
-        from ament_index_python.packages import get_package_share_directory
-
-        path = Path(
-            get_package_share_directory("solo_bringup"), "launch/simulation.launch.py"
+    # All FCU ports stay inside the simulation container.
+    for uav in fleet['uavs']:
+        for kind, port in ((socket.SOCK_STREAM, uav['tcp_port']),
+                           (socket.SOCK_DGRAM, uav['json_port'])):
+            with socket.socket(socket.AF_INET, kind) as sock:
+                try:
+                    sock.bind(('127.0.0.1', port))
+                except OSError as error:
+                    raise RuntimeError(f"{uav['name']}: port {port} occupied") from error
+    run = create_run(fleet, get('run_id'))
+    progress = StartupProgress(run)
+    progress.stage('Generating Gazebo world and sensor models')
+    world = generate_mpc_world(
+        fleet, '/opt/ardupilot_gazebo', run / 'config/world.sdf',
+        scenario, settings, cfg, record_video=record_video,
+    )
+    defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
+                        for name in ('copter.parm', 'gazebo-iris.parm'))
+    for path in defaults.split(','):
+        if not Path(path).is_file():
+            raise RuntimeError(f'Missing defaults: {path}')
+    if settings.get('sitl_params'):
+        defaults += ',' + sitl_parameter_file(settings['sitl_params'], run / 'config/sitl-overrides.parm')
+    server_home = run / 'gazebo-home'
+    server_home.mkdir()
+    gazebo = ExecuteProcess(
+        cmd=['gz', 'sim', '--headless-rendering', '-s', '-r', '-v', '3', str(world)],
+        name='gazebo-server', output='both', additional_env={'HOME': str(server_home)},
+    )
+    progress.stage('Preparing SITL and MAVROS configuration')
+    actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs')),
+               critical(gazebo)] + observed(gazebo, progress, 'gazebo-server')
+    for uav in fleet['uavs']:
+        cwd = run / 'sitl' / str(uav['instance'])
+        cwd.mkdir(parents=True)
+        sitl = ExecuteProcess(
+            cmd=['/opt/ardupilot/build/sitl/bin/arducopter', '-S', '--model', 'JSON',
+                 '--speedup', '1', '--sim-address=127.0.0.1', '-I', str(uav['instance']),
+                 '--sysid', str(uav['sysid']), '--defaults', defaults],
+            cwd=str(cwd), name=f"sitl-{uav['name']}", output='both',
         )
-    spec = importlib.util.spec_from_file_location("solo_sim_launch", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    context.launch_configurations["profile"] = "mpc"
-    actions = module.start(context)
-    progress = context.solo_startup_progress
+        fcu_bridge = mavros(uav, run)
+        actions += [critical(sitl)] + observed(sitl, progress, f"sitl-{uav['name']}")
+        actions += [critical(fcu_bridge)] + observed(fcu_bridge, progress, f"mavros-{uav['name']}")
+    monitor = Node(
+        package='solo_bringup', executable='readiness', name='fleet_readiness',
+        output='both', arguments=['--fleet', str(run / 'config/fleet.yaml'), '--run-dir', str(run),
+                                  '--timeout', get('readiness_timeout'), '--state-timeout', '60'],
+    )
+    actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
     progress.stage('Preparing MPC nodes and sensor bridges')
-    run = Path(context.solo_run_dir)
-    # Save the actual resolved experiment input alongside the existing manifests.
-    import json
-    import shutil
-
+    # Snapshot the same resolved inputs used for the world and FCU setup.
     shutil.copyfile(get("scenario"), run / "config/scenario.yaml")
-    import yaml
-
     (run / "config/controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
     (run / "config/mpc-config.json").write_text(json.dumps(cfg, indent=2) + "\n")
     bridge = Node(
@@ -169,7 +198,6 @@ def generate_launch_description():
                     "MPC_SETTINGS", str(share / "config/controller.yaml")
                 ),
             ),
-            DeclareLaunchArgument("profile", default_value="mpc"),
             DeclareLaunchArgument(
                 "record_video",
                 default_value=os.environ.get("MPC_RECORD_VIDEO", "false"),
@@ -179,7 +207,6 @@ def generate_launch_description():
                 "target_mode", default_value=os.environ.get("MPC_TARGET_MODE", "")
             ),
             DeclareLaunchArgument("run_id", default_value=os.environ.get("RUN_ID", "")),
-            DeclareLaunchArgument("resume", default_value="false"),
             DeclareLaunchArgument(
                 "readiness_timeout",
                 default_value=os.environ.get("READINESS_TIMEOUT", "600"),

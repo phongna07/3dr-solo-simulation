@@ -7,7 +7,7 @@ of ROS and preserve measured-state control and independent flight supervision.
 
 ## Architecture
 
-`scripts/dev` starts Docker Compose; ROS launch owns Gazebo, one SITL/MAVROS
+`scripts/dev` starts Docker Compose; `solo_mpc/launch/mpc.launch.py` owns Gazebo, one SITL/MAVROS
 pair per UAV, readiness, bridges, frame/perception/target nodes, the controller,
 independent setpoint publisher, and mission supervisor. The GUI is a separate
 client. Each persistent UAV worker owns its map, planner, corridor, solver,
@@ -24,8 +24,15 @@ committed path, warm start, and stopping plan.
 | `controller_node.py`, `frame_node.py`, `perception_node.py` | ROS input/output, alignment, marker detection |
 | `setpoint_node.py` | Trajectory sampling, altitude feedback, command expiry, proximity guard |
 | `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, measured-flight evaluation |
-| `solo_bringup/` | Fleet configuration, generated runtime files, MAVROS bootstrap, readiness |
+| `solo_bringup/` | Fleet validation, run snapshots, MAVROS bootstrap, readiness and flight ownership |
 | `solo_mpc/gazebo/` | Native world-stabilized camera and coverage plugins |
+
+The launch resolves fleet/scenario/controller inputs once for world generation,
+SITL overrides, bridges and ROS nodes. `solo_mpc/world.py` builds the Iris fleet
+and sensor world together; `solo_bringup/launching.py` owns MAVROS configuration
+and process lifecycle callbacks. Every run is fresh; old sensor/alignment state
+cannot be resumed. `core/visual_style.py` shares the camera framing and fleet
+palette between the GUI, world and recorder.
 
 `TeamController.step(states, scans, stamp, seers)` has no ROS imports and never
 advances a simulated replacement for the measured vehicle. Workers freeze a
@@ -171,25 +178,31 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
 
-Cleanup run `20261029T044343Z-8504` rebuilt the image and repeated a headless
-30-wall-second ground-truth-target mission after removing unused code and the
-standalone hardware workspace. All UAVs landed/disarmed; 301 of 303 airborne
-cycles were fleet-ready, with two CPU-cap failures. Minimum sampled body clearance
-was 0.778 m and separation 1.818 m. Installed imports and live source hashes
-confirmed the renamed occupancy grid, removed legacy modules, and unchanged
-upstream pin. Evidence is in that run's `reports/cleanup.json`, `evaluation.json`,
-mission status, telemetry, and command logs. Documentation links/import references
-and `git diff --check` also passed.
+The simulation-only refactor was rebuilt and checked with two headless,
+GPU-rendered missions, each with 30 wall seconds of tracking and video enabled.
+Development camera run `20261029T083900Z-12828` completed with all UAVs
+landed/disarmed, 237/239 fleet-ready airborne cycles, 0.798 m minimum sampled
+body clearance and 1.761 m separation. Its finalized 1920 × 1080 / 20 FPS video
+contains 1,010 frames (50.5 s), including takeoff, tracking and landing.
 
-Headless run `20261029T042434Z-29175` used upstream commit `3f71d4c`, measured
-FCU state/LiDAR, and ground-truth target input for 30 wall seconds of tracking.
-All three UAVs landed/disarmed. Of 306 airborne cycles, 304 were fleet-ready;
-UAV 1 hit the unchanged CPU cap twice. Minimum sampled body clearance was
-0.816 m; separation was 1.767 m. Fleet compute median/p95/max was
-100.2/139.7/220.7 ms, so the 100 ms target was not consistently achieved.
+Standalone installed-image run `installed-20261029T084146Z` used read-only root
+and configuration mounts, no source checkout or Git metadata, and bundled
+upstream sources with ground-truth target input. All UAVs landed/disarmed;
+238/240 airborne cycles were fleet-ready, with 0.819 m minimum sampled body
+clearance and 1.827 m separation. Its finalized video contains 939 frames
+(46.95 s) at the same resolution/rate. Both videos decoded completely and their
+sampled frames showed the overhead view, growing sensor map, state instruments,
+UAV camera feeds and landing. Server Ogre logs confirmed NVIDIA RTX 5050
+acceleration. The GUI/display configurations resolved; an interactive GUI session
+and the full route were outside these checks.
 
-The run's `reports/mpc-migration.json`, `evaluation.json`, source metadata,
-optimizer inputs, and telemetry retain the evidence. An archived optimizer call
-also replayed with zero state-trajectory difference from its pre-migration result.
-Camera detections, a complete route, and hardware flight were outside that check.
-Historical experiment details remain in their saved run directories and Git history.
+Every UAV's retained optimizer captures matched the unchanged upstream pin
+`3f71d4c` and local adapter hash in both runs. UAV 1 reached the unchanged CPU
+cap twice per run; other UAV solves succeeded. Fleet compute p95 was 149.3 ms
+(camera) and 132.5 ms (installed), exceeding the 100 ms target. Normal cleanup
+finalized both videos; logs retain SITL SIGINT exits and pinned MAVROS SIGTERM
+escalation after disarm. Evidence is in each run's `reports/evaluation.json`,
+`simulation-only-refactor.json`, `mission-final.json`, `video.json`, contact sheet,
+telemetry and logs. Build/installed-runtime diagnostics are under
+`artifacts/simulation-only-refactor/`. Historical experiments remain in their
+saved run directories and Git history.

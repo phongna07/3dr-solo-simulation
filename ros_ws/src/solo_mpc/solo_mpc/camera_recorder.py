@@ -24,7 +24,7 @@ from solo_bringup.startup import ComponentProgress
 from .core.video import FrameVideo
 from .core.composite_video import CompositeVideo
 from .core.occupancy_video import OCCUPANCY_TOPIC, render_occupancy
-from .scene_view import OVERHEAD_TOPIC
+from .core.visual_style import OVERHEAD_TOPIC
 
 
 class CameraRecorder(Node):

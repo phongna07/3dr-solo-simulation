@@ -7,7 +7,7 @@ Harmonic. MPC is planar; Gazebo/ArduPilot provide 3D vehicle physics.
 Read `README.md` first. The four guides are `docs/SIMULATION.md` (run, record,
 inspect, recover, GPU), `docs/CONFIGURATION.md` (inputs and timing),
 `docs/DEVELOPMENT.md` (architecture, submodule, interfaces, replay), and
-`docs/DEPLOYMENT.md` (installed images and optional MAVROS companion support).
+`docs/DEPLOYMENT.md` (standalone simulation images and preserved build inputs).
 Keep this documentation structure compact; update an existing guide rather
 than adding a separate document for each feature or experiment.
 
@@ -24,15 +24,17 @@ than adding a separate document for each feature or experiment.
   These remain local ports and do not automatically follow upstream changes.
 - `ros_ws/src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
   mission supervision, recording, and evaluation.
+- `ros_ws/src/solo_mpc/launch/mpc.launch.py`: single simulation launch entry point.
 - `ros_ws/src/solo_mpc/gazebo/`: native camera/gimbal/coverage plugins.
-- `ros_ws/src/solo_bringup/`: fleet launch, readiness, generated files, MAVROS helpers.
+- `ros_ws/src/solo_bringup/`: fleet validation, readiness, run files, MAVROS/flight helpers.
 - `ros_ws/src/solo_mpc_interfaces/`: mission service definition.
 - `config/`, package `config/` and `scenarios/`: fleet/controller/scenario settings.
 - `docker/`, `compose*.yaml`, `locks/`: runtime, deployment, pinned dependencies.
 - `runs/`, `artifacts/`: generated evidence, ignored by Git; do not delete prior runs.
 
-The standalone hardware workspace has been removed. The optional companion
-profile starts MAVROS/readiness only; it does not provide physical MPC flight.
+This repository is simulation-only. Do not add physical-drone profiles, serial
+device integration, or hardware migration scaffolding. All flight and recording
+runs use Gazebo and ArduCopter SITL.
 
 ## Submodule workflow
 

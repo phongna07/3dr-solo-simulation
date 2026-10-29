@@ -290,4 +290,4 @@ class Flight(Node):
 
 
 class FlightReleased(Exception):
-    """The pilot or FCU has taken control; companion must not reclaim it."""
+    """The pilot or FCU has taken control; mission must not reclaim it."""

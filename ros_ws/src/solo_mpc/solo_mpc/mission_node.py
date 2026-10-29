@@ -219,7 +219,7 @@ class MissionSupervisor(Flight):
             self.pending = "stop"
             self.mission_state = "landing"
         response.success = True
-        response.message = "Stop requested; cleaning up companion-owned flight"
+        response.message = "Stop requested; cleaning up mission-owned flight"
         return response
 
     def request_reset(self, request, response):

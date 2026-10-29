@@ -2,13 +2,12 @@
 <package format="3">
   <name>solo_bringup</name>
   <version>0.1.0</version>
-  <description>Reproducible Solo SITL and companion bringup.</description>
+  <description>Gazebo fleet runtime, readiness and flight supervision.</description>
   <maintainer email="maintainer@example.invalid">Solo project team</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>launch_xml</exec_depend>
   <exec_depend>mavros</exec_depend>
   <exec_depend>mavros_msgs</exec_depend>
   <exec_depend>rcl_interfaces</exec_depend>

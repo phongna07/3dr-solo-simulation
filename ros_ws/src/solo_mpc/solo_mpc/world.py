@@ -6,22 +6,64 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
-from solo_bringup.world import generate_world
 
-from .settings import load_settings
 from .core.sensors import CAMERA_WORLD_OFFSET
-from .core.visual_style import vehicle_color
 from .obstacle_visuals import (
     CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
     LIDAR_VISIBILITY_MASK, building_mesh, tree_mesh,
 )
-from .scene_view import (
-    OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset,
+from .core.visual_style import (
+    OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset, vehicle_color,
 )
 
 
 # Keep in sync with CameraCoverage::visibility in gazebo/CameraCoverage.hh.
 COVERAGE_VISUAL_FLAGS = 0x20
+
+
+def fleet_world(config, source):
+    source = Path(source)
+    tree = ET.parse(source / 'worlds/iris_runway.sdf')
+    world = tree.getroot().find('world')
+    template = ET.parse(source / 'models/iris_with_gimbal/model.sdf').getroot().find('model')
+    if world is None or template is None:
+        raise ValueError('Official Iris world/model missing')
+    originals = [i for i in world.findall('include')
+                 if i.findtext('uri') == 'model://iris_with_gimbal']
+    if len(originals) != 1:
+        raise ValueError('Expected exactly one Iris include in official world')
+    world.remove(originals[0])
+    world.set('name', config['world_name'])
+    # Replace the official rendering sensors with our LiDAR/camera system.
+    for plugin in list(world.findall('plugin')):
+        if plugin.get('name') == 'gz::sim::systems::Sensors':
+            world.remove(plugin)
+    for uav in config['uavs']:
+        model = copy.deepcopy(template)
+        model.set('name', uav['name'])
+        pose = model.find('pose')
+        if pose is None:
+            pose = ET.SubElement(model, 'pose')
+        pose.set('degrees', 'true')
+        pose.text = ' '.join(map(str, uav['spawn']))
+        plugin = model.find("plugin[@name='ArduPilotPlugin']")
+        if plugin is None or plugin.find('fdm_port_in') is None:
+            raise ValueError('ArduPilot plugin/JSON port missing')
+        plugin.find('fdm_port_in').text = str(uav['json_port'])
+        for include in list(model.findall('include')):
+            if include.findtext('name') == 'gimbal':
+                model.remove(include)
+        for joint in list(model.findall('joint')):
+            if joint.get('name') == 'gimbal_joint':
+                model.remove(joint)
+        for control in list(plugin.findall('control')):
+            if int(control.get('channel')) >= 8:
+                plugin.remove(control)
+        for system in list(model.findall('plugin')):
+            if system.get('name') == 'gz::sim::systems::JointPositionController':
+                model.remove(system)
+        world.append(model)
+    return tree
 
 
 def element(parent, tag, text=None, **attrs):
@@ -211,22 +253,14 @@ def overhead_camera(target, settings):
     element(clip, "far", max(200, 2 * math.sqrt(x * x + y * y + z * z)))
 
 
-def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
-                       record_overhead=False, *, target_mode=None, record_cameras=False):
-    scenario, settings, cfg = load_settings(scenario_path, settings_path)
-    target_mode = target_mode or settings["target_mode"]
-    if target_mode not in ("camera", "ground_truth"):
-        raise ValueError("Invalid target_mode")
-    camera_enabled = target_mode == "camera" or record_cameras
+def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
+                       record_video=False):
+    camera_enabled = settings["target_mode"] == "camera" or record_video
     if camera_enabled and settings["camera_width"] != settings["camera_height"]:
         raise ValueError("World-stabilized visibility model requires a square camera image")
-    fleet = copy.deepcopy(fleet)
-    if len(fleet["uavs"]) != len(scenario["starts"]):
-        raise ValueError("Fleet and scenario must contain the same number of UAVs")
-    for uav, start in zip(fleet["uavs"], scenario["starts"]):
-        uav["spawn"] = [start[0], start[1], 0.195, 0, 0, 90]
-    output = generate_world(fleet, source, destination, "control")
-    tree = ET.parse(output)
+    output = Path(destination)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tree = fleet_world(fleet, source)
     world = tree.getroot().find("world")
     # The 2D experiment advances only after solving; the physical simulator
     # otherwise advances at wall rate even when a fleet solve takes longer.
@@ -283,7 +317,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         [2 * cfg.get("TAR_RADIUS", 0.15), 2 * cfg.get("TAR_RADIUS", 0.15), 0.04],
         "1 0 1 1",
     )
-    if record_overhead:
+    if record_video:
         overhead_camera(target, settings)
     for index, uav in enumerate(fleet["uavs"]):
         model = world.find(f"model[@name='{uav['name']}']")
@@ -293,7 +327,7 @@ def generate_mpc_world(fleet, source, destination, scenario_path, settings_path,
         coverage_gui(world, [uav["name"] for uav in fleet["uavs"]], settings)
     ET.indent(tree, space="  ")
     tree.write(output, encoding="utf-8", xml_declaration=True)
-    return output, fleet
+    return output
 
 
 def bridge_config(names, world, destination, record_overhead=False, *, camera_enabled=True):

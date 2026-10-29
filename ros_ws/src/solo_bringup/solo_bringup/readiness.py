@@ -27,7 +27,7 @@ def atomic_json(path, payload):
 
 
 class Readiness(Node):
-    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=20.0, simulation=False):
+    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=60.0):
         super().__init__('fleet_readiness')
         self.run_dir = Path(run_dir)
         (self.run_dir / 'status').mkdir(parents=True, exist_ok=True)
@@ -39,7 +39,6 @@ class Readiness(Node):
         self.previous_summary = None
         self.last_report = 0
         self.failed = False
-        self.simulation = simulation
         self.sim_time = None
         self.clock_at = None
         self.clock_samples = deque()
@@ -50,9 +49,8 @@ class Readiness(Node):
             String, '/solo/readiness',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.subscriptions_keepalive = []
-        if simulation:
-            self.subscriptions_keepalive.append(self.create_subscription(
-                Clock, '/clock', self.clock, qos_profile_sensor_data))
+        self.subscriptions_keepalive.append(self.create_subscription(
+            Clock, '/clock', self.clock, qos_profile_sensor_data))
         for uav in config['uavs']:
             name = uav['name']
             self.records[name] = {
@@ -211,8 +209,7 @@ class Readiness(Node):
         payload = {'ready': ready, 'plugin_parameters_applied': configured, 'updated_wall_unix': time.time(),
                    'elapsed_wall_s': now - self.started,
                    'first_ready_elapsed_wall_s': self.first_ready_elapsed, 'uavs': report}
-        if self.simulation:
-            payload['simulation'] = self.simulation_status(now)
+        payload['simulation'] = self.simulation_status(now)
         atomic_json(self.run_dir / 'status/health.json', payload)
         self.publisher.publish(String(data=json.dumps(payload)))
         if ready:
@@ -237,15 +234,13 @@ def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--fleet', required=True)
     parser.add_argument('--run-dir', required=True)
-    parser.add_argument('--hardware', action='store_true')
     parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--max-pose-age', type=float, default=10)
-    parser.add_argument('--state-timeout', type=float, default=20)
+    parser.add_argument('--state-timeout', type=float, default=60)
     options, ros_args = parser.parse_known_args(args)
     rclpy.init(args=ros_args)
-    node = Readiness(load_config(options.fleet, options.hardware), options.run_dir,
-                     options.timeout, options.max_pose_age, options.state_timeout,
-                     simulation=not options.hardware)
+    node = Readiness(load_config(options.fleet), options.run_dir,
+                     options.timeout, options.max_pose_age, options.state_timeout)
     code = 0
     try:
         while rclpy.ok() and not node.failed:

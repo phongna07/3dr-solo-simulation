@@ -53,9 +53,6 @@ COPY locks /opt/solo/locks
 COPY locks/versions.json /opt/solo/versions.json
 COPY docker/entrypoint.sh /usr/local/bin/solo-entrypoint
 
-FROM application_build AS companion_inputs
-COPY . /opt/solo/source-checkout
-
 FROM common_build AS simulation_dependencies
 ARG ARDUPILOT_COMMIT=ee14ff3822161368ec403700bf96d02b84def06c
 ARG GAZEBO_PLUGIN_COMMIT=082a0fe231f6e63bc8d1598f1cba461d9e2ea7f5
@@ -165,19 +162,6 @@ RUN mkdir -p /workspace/runs /workspace/artifacts && \
     chmod 755 /usr/local/bin/solo-entrypoint && \
     cp /opt/solo/locks/geographiclib.sha256 /opt/solo/geoid.sha256
 
-FROM runtime_common AS companion_root
-RUN prune-runtime
-
-# Flatten the prepared root filesystem so removed toolchains occupy no layers.
-FROM scratch AS companion
-COPY --from=companion_root / /
-ENV HOME=/tmp/solo-home RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    ROS_DISTRO=jazzy PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-WORKDIR /workspace
-ENTRYPOINT ["/usr/local/bin/solo-entrypoint"]
-CMD ["ros2", "launch", "solo_bringup", "hardware.launch.py"]
-
 FROM runtime_common AS simulation_root
 RUN --network=none --mount=from=simulation_mpc_dependencies,source=/opt/solo/build-inputs/apt,target=/inputs,ro \
     install-runtime gz-harmonic ros-jazzy-ros-gz-bridge python3-opencv \
@@ -198,7 +182,8 @@ COPY --from=simulation_camera_build /opt/solo_gazebo/lib /opt/solo_gazebo/lib
 RUN strip --strip-unneeded /opt/ardupilot/build/sitl/bin/arducopter \
       /opt/ardupilot_gazebo/build/*.so /opt/solo_gazebo/lib/*.so && prune-runtime
 
-FROM scratch AS simulation
+# Flatten the prepared filesystem so removed toolchains occupy no layers.
+FROM scratch AS simulation_mpc
 COPY --from=simulation_root / /
 ENV HOME=/tmp/solo-home RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
     ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
@@ -207,7 +192,4 @@ ENV HOME=/tmp/solo-home RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1 NUMBA_CACHE_DIR=/tmp/numba-cache
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/solo-entrypoint"]
-CMD ["ros2", "launch", "solo_bringup", "simulation.launch.py"]
-
-FROM simulation AS simulation_mpc
 CMD ["ros2", "launch", "solo_mpc", "mpc.launch.py"]

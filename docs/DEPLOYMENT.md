@@ -36,9 +36,9 @@ new dependency discovery can resolve different patches and needs fresh validatio
 Updating APT inside a pruned runtime is unsupported; rebuild it.
 
 `./scripts/dev lock` exports available manifests/image identity to `artifacts/`.
-The existing `scripts/release-smoke IMAGE sim|companion EVIDENCE_DIR` helper checks
-installed imports, hashes, library availability, filesystem restrictions, and
-simulation readiness without arming. A flight mission remains separate evidence.
+Validate the installed image with `./release doctor --require-renderer` after
+startup, then run a recorded mission as below. Check installed source provenance,
+measured flight, video and landing in that run directory.
 Validate each target platform natively before publishing; emulation does not
 establish ARM64 runtime performance.
 
@@ -57,9 +57,8 @@ cp .env.release.example .env
 mkdir -p runs artifacts
 ```
 
-Set both `SIM_IMAGE` and `COMPANION_IMAGE` to tested registry digests, even when
-starting only one service. Set `RELEASE_PLATFORM` to the image platform and
-`LOCAL_UID`/`LOCAL_GID` to the output-directory owner. Keep release configuration
+Set `SIM_IMAGE` to the tested registry digest and `RELEASE_PLATFORM` to its
+platform. Set `LOCAL_UID`/`LOCAL_GID` to the output-directory owner. Keep release configuration
 paths or place custom YAML under `config/`; do not reuse development paths into
 a checkout. The helper rejects tags and unsupported platforms.
 
@@ -70,6 +69,7 @@ a checkout. The helper rejects tags and unsupported platforms.
 ./release logs -f sim
 ```
 
+Set `MPC_RECORD_VIDEO=true` in the release `.env` before `up` to record.
 After readiness, explicitly fly, evaluate, land, and stop:
 
 ```bash
@@ -81,7 +81,7 @@ After readiness, explicitly fly, evaluate, land, and stop:
 
 Release `stop` calls Compose directly; it does not request LAND. Confirm mission
 cleanup first. Root/configuration filesystems are read-only; `/tmp` is tmpfs and
-output mounts must already exist and be writable. For GPU/display/serial changes,
+output mounts must already exist and be writable. For GPU/display changes,
 use `docker compose --env-file .env -f compose.release.yaml -f OVERRIDE ...`
 consistently. The helper selects the standalone headless base only.
 
@@ -98,33 +98,3 @@ This reuses preserved compiler outputs; it does not promise bit-identical
 upstream recompilation. For exact deployment, pull the tested runtime digest or
 load its checksummed archive. Record runtime/input/base digests with the native
 validation evidence and retain them for the supported release lifetime.
-
-## Companion profile
-
-The optional `companion` service remains a MAVROS/readiness foundation. It does
-not run MPC, start sensor drivers, arm, or send LAND on shutdown. Its image
-excludes Gazebo, SITL, and MPC numerical dependencies. Physical Pi/Solo flight
-has not been validated; simulation mission commands reject hardware runs.
-
-Configure [hardware.yaml](../config/hardware.yaml) only after verifying the real
-firmware, SYSID, link routing, pinout, voltage, serial device, and baud. The
-supplied `/dev/solo-fcu:921600` is a placeholder. Keep LD19/GoPro disabled until
-explicit driver, calibration, and timestamp integration is implemented.
-
-```bash
-./scripts/dev build companion
-export COMPOSE_FILE=compose.yaml:compose.hardware-serial.yaml
-export FCU_DEVICE=/dev/solo-fcu
-export DIALOUT_GID=$(stat -Lc %g "$FCU_DEVICE")
-./scripts/dev companion
-./scripts/dev doctor --service companion
-./scripts/dev companion-stop
-```
-
-Use an actual stable host device and its group. The profile uses host networking;
-readiness needs local pose as well as heartbeat. Logs are under `runs/hardware/`.
-Connecting a Pi to laptop SITL additionally needs reachable MAVLink ports, DDS
-routing, explicit control ownership, and clock/frame adapters; the default
-simulation keeps these links inside one container. Physical control requires
-separate localization, sensor, timing, failsafe, pilot-override, and vehicle-response
-validation before any flight integration.

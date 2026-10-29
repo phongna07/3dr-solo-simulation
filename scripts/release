@@ -7,7 +7,7 @@ TASK_RELEASE_FILE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/compos
 [[ -f "$TASK_RELEASE_FILE" ]] || TASK_RELEASE_FILE="$(dirname -- "${BASH_SOURCE[0]}")/compose.release.yaml"
 dc=(docker compose --project-directory "$PWD" -f "$TASK_RELEASE_FILE")
 # Compose resolves .env and reports missing variables before any mutation.
-"${dc[@]}" --profile hardware config --format json | python3 -c '
+"${dc[@]}" config --format json | python3 -c '
 import json, re, sys
 config = json.load(sys.stdin)
 for name, service in config["services"].items():
@@ -19,7 +19,6 @@ for name, service in config["services"].items():
 case "${1:-help}" in
   up) "${dc[@]}" up -d --no-build "${@:2}" ;;
   pull|ps|logs|exec|stop|down|config) "${dc[@]}" "$@" ;;
-  doctor) python3 "$(dirname -- "${BASH_SOURCE[0]}")/doctor.py" --compose "${dc[@]:1}" ;;
-  companion) "${dc[@]}" --profile hardware up -d --no-build companion ;;
-  *) printf 'Usage: release {pull|up [sim]|ps|logs|exec|stop|down|config|doctor|companion}\n' ;;
+  doctor) python3 "$(dirname -- "${BASH_SOURCE[0]}")/doctor.py" "${@:2}" --compose "${dc[@]:1}" ;;
+  *) printf 'Usage: release {pull|up [sim]|ps|logs|exec|stop|down|config|doctor}\n' ;;
 esac

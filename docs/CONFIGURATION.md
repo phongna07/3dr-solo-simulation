@@ -12,7 +12,6 @@ editing a YAML file does not reconfigure an active experiment.
 | Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names, SITL instances, SYSIDs |
 | Scenario | [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
 | Controller | [controller.yaml](../ros_ws/src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
-| Companion | [config/hardware.yaml](../config/hardware.yaml) | Optional MAVROS-only profile |
 
 Use container paths for CLI overrides:
 
@@ -21,7 +20,7 @@ Use container paths for CLI overrides:
 ```
 
 `.env` supports `FLEET_CONFIG`, `MPC_SCENARIO`, `MPC_SETTINGS`, `MPC_TARGET_MODE`,
-`READINESS_TIMEOUT` (600 wall seconds), `SIM_IMAGE`, `COMPANION_IMAGE`,
+`READINESS_TIMEOUT` (600 wall seconds), `SIM_IMAGE`,
 `ROS_DOMAIN_ID` (42), `BUILD_JOBS` (4), and `LIBGL_ALWAYS_SOFTWARE`.
 The runner supplies host UID/GID and a fresh run ID. Select GPU/display overrides
 as described in [Simulation](SIMULATION.md#gpu-and-display).

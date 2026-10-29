@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the selected Docker service, including its live server renderer."""
+"""Check the simulation container, including its live Gazebo server renderer."""
 import argparse
 import glob
 import json
@@ -58,7 +58,7 @@ def container_checks(require_renderer=False):
     print(f'Container architecture: {platform.machine()}')
     ok = all([writable('/tmp'), writable('/workspace/runs'), writable('/workspace/artifacts')])
     ok &= device_checks(['/dev/dri/card*', '/dev/dri/renderD*', '/dev/nvidia[0-9]*',
-                         '/dev/dxg', '/dev/solo-fcu'])
+                         '/dev/dxg'])
     log = Path('/workspace/runs/latest/gazebo-home/.gz/rendering/ogre2.log')
     # A prior run's log is evidence only while that exact server is alive.
     try:
@@ -85,9 +85,8 @@ def run(args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
 
 
-def host_checks(compose, service, require_renderer=False):
-    if service == 'companion':
-        compose = [*compose, '--profile', 'hardware']
+def host_checks(compose, require_renderer=False):
+    service = 'sim'
     config = json.loads(run(['docker', *compose, 'config', '--format', 'json'],
                             capture_output=True).stdout)
     definition = config['services'][service]
@@ -133,11 +132,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--container', action='store_true')
     parser.add_argument('--require-renderer', action='store_true')
-    parser.add_argument('--service', choices=['sim', 'companion'], default='sim')
     parser.add_argument('--compose', nargs=argparse.REMAINDER, default=['compose', '-f', 'compose.yaml'])
     args = parser.parse_args()
     try:
-        ok = container_checks(args.require_renderer) if args.container else host_checks(args.compose, args.service, args.require_renderer)
+        ok = container_checks(args.require_renderer) if args.container else host_checks(args.compose, args.require_renderer)
     except (OSError, subprocess.CalledProcessError, KeyError, ValueError) as error:
         print(f'FAIL doctor: {error}', file=sys.stderr)
         ok = False

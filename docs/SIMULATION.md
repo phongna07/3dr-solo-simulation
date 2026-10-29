@@ -11,7 +11,7 @@ from `.env.example` only for a new checkout.
 ```bash
 ./scripts/dev build sim
 ./scripts/dev doctor
-./scripts/dev mpc
+./scripts/dev mpc --record-video
 ./scripts/dev mission run --seconds 30
 ./scripts/dev evaluate
 ./scripts/dev stop
@@ -53,7 +53,7 @@ Use `stop --force` only for a crashed simulation when normal landing cannot
 complete. A failed command in an `&&` chain skips later cleanup commands.
 
 Ownership is per UAV. A pilot mode change or disarm releases that UAV, stops
-publishing, and lands remaining companion-owned UAVs; cleanup does not send LAND
+publishing, and lands remaining mission-owned UAVs; cleanup does not send LAND
 to released or unowned aircraft. New missions require a connected, disarmed fleet.
 A timed-out worker is disabled until the controller restarts; extending the
 tracking duration cannot repair it. Preserve the failed run before restarting.

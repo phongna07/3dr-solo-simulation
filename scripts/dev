@@ -39,7 +39,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
-  build [sim|companion]           Build an image (sim by default)
+  build [sim]                     Build the simulation image
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--ground-truth-target]     Track exact timestamped target positions without camera detection
@@ -55,8 +55,6 @@ Usage: ./scripts/dev COMMAND [arguments]
   stop --force                   Stop processes immediately, no LAND
   lock                           Export manifests and image ID to artifacts/
   pull                           Pull images specified in .env (use registry digests)
-  companion                      Start hardware-profile MAVROS (requires config/devices)
-  companion-stop                 Stop companion processes; does NOT land hardware
   help
 EOF
 }
@@ -80,7 +78,8 @@ case "$command" in
     python3 scripts/doctor.py "$@" --compose "${dc[@]:1}"
     ;;
   build)
-    "${dc[@]}" --profile hardware build "${1:-sim}"
+    [[ $# -eq 0 || ( $# -eq 1 && "$1" == sim ) ]] || { usage >&2; exit 2; }
+    "${dc[@]}" build sim
     ;;
   mpc)
     show_gui=false
@@ -152,9 +151,7 @@ case "$command" in
     docker image inspect "$TASK_IMAGE" --format '{{json .}}' > artifacts/simulation-image.json
     printf 'Exported artifacts/. Share a registry digest or docker save image for exact replication.\n'
     ;;
-  pull) "${dc[@]}" --profile hardware pull ;;
-  companion) "${dc[@]}" --profile hardware up -d --no-build companion ;;
-  companion-stop) "${dc[@]}" --profile hardware stop companion ;;
+  pull) "${dc[@]}" pull sim ;;
   help|-h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

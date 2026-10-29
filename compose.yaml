@@ -41,25 +41,3 @@ services:
       options:
         max-size: 20m
         max-file: "3"
-  companion:
-    profiles: [hardware]
-    image: ${COMPANION_IMAGE:-solo-companion:gd0}
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: companion
-    init: true
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    network_mode: host
-    environment:
-      SOLO_DEV: "1"
-      HOME: /tmp/solo-user-home
-      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
-      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-      ROS_AUTOMATIC_DISCOVERY_RANGE: ${HARDWARE_DISCOVERY_RANGE:-LOCALHOST}
-      HARDWARE_CONFIG: /workspace/config/hardware.yaml
-      RUNS_ROOT: /workspace/runs/hardware
-    volumes:
-      - .:/workspace
-    command: ["ros2", "launch", "/workspace/ros_ws/src/solo_bringup/launch/hardware.launch.py"]
-    stop_grace_period: 30s
