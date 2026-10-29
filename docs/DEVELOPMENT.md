@@ -178,6 +178,40 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
 
+The five-UAV `large200_5uav` preset was rebuilt and checked headlessly in camera
+mode with seed `200205`, video enabled and 180 wall seconds of tracking in run
+`20261029T093036Z-28025`. It completed with every UAV landed/disarmed and
+ownership released. All 980 evaluated airborne fleet cycles were ready and all
+4,900 nominal UAV solves succeeded. Sampled Gazebo geometry showed 6.779 m
+minimum body clearance, 1.774 m minimum UAV separation and 1.194 m p95 nearest-UAV
+distance to the target. Camera estimation error p95 was 0.056 m.
+
+The target travelled 57.02 m of the 454.63 m route; this verifies an initial
+portion, not the complete 757.72 simulation-second route. The simulation ran at
+0.528× wall time during evaluated flight. Fleet compute p95 was 191.7 ms and
+every airborne cycle exceeded the 100 ms target; no solver CPU-cap failure or
+worker timeout occurred. Every UAV's 128 retained captures matched upstream pin
+`3f71d4c` and the unchanged local adapter. Normal stop finalized a 131.2 s,
+1920 × 1080 / 20 FPS video; all 2,624 frames decoded and the sampled takeoff,
+tracking and landing frames showed five FOV panels and five complete state rows.
+Evidence, commands, provenance and limits are saved in the run's
+`reports/large200-verification.json`, `evaluation.json`, `mission-final.json`,
+`video.json`, sampled PNGs, telemetry and captures. Build/installed-input checks
+are under `artifacts/large200-5uav/`. A prior launch
+`20261029T092510Z-20856` was interrupted before flight by editing the running
+CLI; its saved report confirms all five FCUs remained disarmed.
+
+The original `small50_3uav` preset also completed a headless camera/video mission
+with 30 wall seconds of tracking in `20261029T093839Z-29754`, using its unchanged
+fleet, scenario and controller. All 241 evaluated airborne cycles were ready,
+all 723 nominal solves succeeded, and the fleet landed/disarmed. Sampled minimum
+body clearance was 0.795 m and UAV separation 1.811 m. Compute p95 was 145.3 ms,
+with 88.8% of cycles over 100 ms. Its 51.2 s video decoded all 1,024 frames and
+the inspected tracking frame retained three complete FOV/state rows. Normal stop
+completed; logs retain the known SITL SIGINT exits and MAVROS SIGTERM escalation
+after disarm. Evidence is in that run's `reports/` and
+`artifacts/large200-5uav/small-*.log`.
+
 The simulation-only refactor was rebuilt and checked with two headless,
 GPU-rendered missions, each with 30 wall seconds of tracking and video enabled.
 Development camera run `20261029T083900Z-12828` completed with all UAVs

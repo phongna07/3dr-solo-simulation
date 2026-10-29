@@ -41,6 +41,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim]                     Build the simulation image
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
+      [--preset small50_3uav|large200_5uav]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--ground-truth-target]     Track exact timestamped target positions without camera detection
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
@@ -89,6 +90,22 @@ case "$command" in
     export RUN_ID
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --preset)
+          case "${2:?preset name required}" in
+            small50_3uav)
+              export FLEET_CONFIG=/workspace/config/fleet.yaml
+              export MPC_SCENARIO=/workspace/ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml
+              export MPC_SETTINGS=/workspace/ros_ws/src/solo_mpc/config/controller.yaml
+              ;;
+            large200_5uav)
+              export FLEET_CONFIG=/workspace/config/fleet-5uav.yaml
+              export MPC_SCENARIO=/workspace/ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml
+              export MPC_SETTINGS=/workspace/ros_ws/src/solo_mpc/config/controller-large200.yaml
+              ;;
+            *) printf 'Unknown MPC preset: %s\n' "$2" >&2; exit 2 ;;
+          esac
+          shift 2
+          ;;
         --fleet) export FLEET_CONFIG="${2:?fleet path required}"; shift 2 ;;
         --scenario) export MPC_SCENARIO="${2:?scenario path required}"; shift 2 ;;
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;

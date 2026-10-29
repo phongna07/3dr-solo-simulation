@@ -1,0 +1,23 @@
+schema_version: 1
+world_name: mpc_large200
+uavs:
+  - name: uav1
+    instance: 0
+    sysid: 1
+    spawn: [16, 16, 0.195, 0, 0, 90]
+  - name: uav2
+    instance: 1
+    sysid: 2
+    spawn: [13.375, 16, 0.195, 0, 0, 90]
+  - name: uav3
+    instance: 2
+    sysid: 3
+    spawn: [18.625, 16, 0.195, 0, 0, 90]
+  - name: uav4
+    instance: 3
+    sysid: 4
+    spawn: [16, 13.375, 0.195, 0, 0, 90]
+  - name: uav5
+    instance: 4
+    sysid: 5
+    spawn: [16, 18.625, 0.195, 0, 0, 90]

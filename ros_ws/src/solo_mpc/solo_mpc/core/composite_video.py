@@ -15,15 +15,21 @@ def overlay_views(background, views):
     """Fit labelled, aspect-preserving FOV panels down the right-hand edge."""
     frame = background.copy()
     height, width = frame.shape[:2]
-    gap = max(1, min(12, height // (3 * len(views) + 1)))
-    side = min(width // 4 - gap, (height - gap * (len(views) + 1)) // len(views))
+    count = len(views)
+    if not count:
+        return frame
+    gap = max(1, min(12, height // (3 * count + 1)))
+    side = min(width // 4 - gap, (height - gap * (count + 1)) // count)
     if side < 8:
         raise ValueError("Overhead resolution is too small for the fleet's FOV panels")
     label_height = max(4, min(28, side // 8))
     x = width - gap - side
+    # Center the stack vertically. Five panels use almost the full height;
+    # smaller fleets retain their larger square panels and readable labels.
+    first_y = (height - count * side - (count - 1) * gap) // 2
     for i, (name, image) in enumerate(views.items()):
         color = vehicle_color(i)
-        y = gap + i * (side + gap)
+        y = first_y + i * (side + gap)
         frame[y:y + side, x:x + side] = (24, 24, 24)
         if image is not None:
             ih, iw = image.shape[:2]
@@ -113,12 +119,19 @@ class CompositeVideo:
                 return
             views = {name: self.current[name] for name in self.vehicles}
             frame = overlay_views(self.current['overhead'], views)
-            if self.occupancy:
-                frame = overlay_occupancy(frame, self.current['occupancy'],
-                                          max_height=0.50 if self.telemetry else 1.0)
+            panel = None
+            state_height = 0.46
             if self.telemetry:
                 states = {name: history.sample(stamp) for name, history in self.telemetry.items()}
-                frame = overlay_states(frame, render_states(states, stamp))
+                panel = render_states(states, stamp)
+                # Share the left column according to its content instead of
+                # shrinking five state rows into the old three-UAV allocation.
+                state_height = min(0.72, max(0.46, panel.shape[0] / (panel.shape[0] + 560)))
+            if self.occupancy:
+                frame = overlay_occupancy(frame, self.current['occupancy'],
+                                          max_height=1.0 - state_height if self.telemetry else 1.0)
+            if panel is not None:
+                frame = overlay_states(frame, panel, max_height=state_height)
             self.video.write(frame, stamp, source_stamps=self.current_stamps)
 
     def close(self):

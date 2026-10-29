@@ -1,9 +1,14 @@
 # Multi-UAV MPC simulation
 
-Three UAVs track a moving target through obstacles using ROS 2 Jazzy, ArduCopter
-4.5.3 SITL, MAVROS 2.15.1, and Gazebo Harmonic in Docker. The default scenario
+Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy, ArduCopter
+4.5.3 SITL, MAVROS 2.15.1, and Gazebo Harmonic in Docker. The default three-UAV scenario
 uses a 50 × 30 m field and a 3 m flight altitude. Vehicle physics runs in 3D;
 MPC plans horizontally, with separate altitude control.
+
+A second preset, `large200_5uav`, uses five UAVs in a 200 × 200 m field with
+seeded random obstacles and a random winding target route. Both presets fly at
+3 m. Select it with `./scripts/dev mpc --preset large200_5uav --record-video`;
+`--preset small50_3uav` explicitly selects the original scenario.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)

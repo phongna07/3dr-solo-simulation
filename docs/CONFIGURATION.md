@@ -25,6 +25,37 @@ Use container paths for CLI overrides:
 The runner supplies host UID/GID and a fresh run ID. Select GPU/display overrides
 as described in [Simulation](SIMULATION.md#gpu-and-display).
 
+### Five UAVs in a 200 × 200 m map
+
+`./scripts/dev mpc --preset large200_5uav --record-video` selects these matching inputs:
+
+- [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five independent SITL/MAVROS instances.
+- [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 80 random rectangles, 80 random circles, and a random smooth route.
+- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 1.5 m/s UAV speed, 6 m LiDAR range and a 0.35 s solver CPU cap. Target speed is 0.6 m/s. Worker deadlines, expiry and supervision remain enabled.
+
+The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
+downward camera footprint. Followers start 2.625 m left, right, behind and ahead.
+The large map uses a 0.3 m grid to bound per-worker mapping cost. Obstacles have
+1.5–4 m rectangle sides or 0.6–1.5 m circle radii and retain 5 m collision height.
+Generation reserves an 8 m band around the waypoint segments and start positions;
+spline bends can reduce this clearance. The controller still learns obstacles
+through LiDAR and receives no future route. This is a tracking scenario with
+obstacles alongside a traversable route, not an obstacle-density stress benchmark.
+
+The checked-in realization uses seed `200205`. It repeats on each launch so
+failures can be reproduced. Generate another realization before starting:
+
+```bash
+./scripts/generate-large-scenario --seed 42 --output config/large200-seed42.yaml
+./scripts/dev mpc --preset large200_5uav --scenario /workspace/config/large200-seed42.yaml --record-video
+```
+
+The generator needs only host Python 3. Omitting `--output` replaces the supplied
+large scenario. Keep generated experiments in `artifacts/` when they should not
+be committed. Different seeds need their own simulator verification. Explicit
+`--fleet`, `--scenario`, and `--settings` arguments after `--preset` override that
+preset; the original no-argument defaults remain unchanged.
+
 ## Fleet and geometry
 
 The supplied three-UAV scenario starts at `[5,2,3]`, `[2.5,2,3]`, `[7.5,2,3]`

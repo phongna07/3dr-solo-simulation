@@ -24,6 +24,22 @@ before enabling target motion and control. Startup can take several minutes
 with slow rendering. `--seconds` limits tracking in wall time, excluding
 startup/takeoff/landing; omit it to attempt the complete route.
 
+For the five-UAV 200 × 200 m random field, use the matching preset:
+
+```bash
+./scripts/dev mpc --preset large200_5uav --record-video
+./scripts/dev mission run --seconds 120
+./scripts/dev evaluate
+./scripts/dev stop
+```
+
+The seeded route takes about 758 simulation seconds (12.6 minutes at real time).
+A time-limited run covers only part of it; rendering five sensors and a large
+obstacle field can make simulation slower than wall time. Use the observed clock
+rate when choosing a verification duration. Select `--preset small50_3uav` to
+return to the original configuration; see [Configuration](CONFIGURATION.md#five-uavs-in-a-200--200-m-map)
+for regeneration and parameter details.
+
 | Command | Purpose |
 |---|---|
 | `mpc --ground-truth-target` | Exact timestamped target input; omit detectors/cameras unless recording |
@@ -94,6 +110,9 @@ do not. Recording starts at takeoff and continues through landing.
 
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.
+The right-hand square panels shrink and stack vertically to fit every UAV;
+the left map/state column gives additional height to larger fleets so all five
+status rows remain visible. Labels and fleet colors follow the configured order.
 Colored coverage rays/outlines appear in the overhead view and GUI, but are
 excluded from UAV images and LiDAR. They show flat-ground camera projections;
 obstacles can occlude the view. Distant UAVs can be outside the overhead frame.

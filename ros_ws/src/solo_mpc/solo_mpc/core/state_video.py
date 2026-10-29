@@ -172,12 +172,12 @@ def render_states(states, stamp_ns):
     return panel
 
 
-def overlay_states(frame, panel):
+def overlay_states(frame, panel, *, max_height=0.46):
     """Anchor below the map; limit height for arbitrary fleet sizes."""
     height, width = frame.shape[:2]
     gap = max(1, min(12, height // 20))
     ih, iw = panel.shape[:2]
-    scale = min((width * 0.30 - gap) / iw, (height * 0.46 - gap) / ih)
+    scale = min((width * 0.30 - gap) / iw, (height * max_height - gap) / ih)
     w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
     top = height - gap - h
     frame[top:top + h, gap:gap + w] = cv2.resize(panel, (w, h), interpolation=cv2.INTER_AREA)
