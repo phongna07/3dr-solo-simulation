@@ -79,10 +79,10 @@ nothing into the submodule. Installed packages bundle the two sources and licens
 under `share/solo_mpc/upstream`; release runtime needs no Git checkout or network.
 
 The adapter subclasses upstream `MPCProblem`. It retains inactive-neighbor
-numerical conditioning and optional measured-overspeed recovery (disabled by
-default), preserving the objective, active constraints, stopping branch, and
-upstream solve routine. It checks constraint structure and fails explicitly if
-an upstream change invalidates the adjustments. Optional SQP/IPOPT fallback also
+numerical conditioning and optional measured-overspeed recovery (enabled by the
+supplied controller), preserving the objective, other active constraints,
+stopping branch, and upstream solve routine. It checks constraint structure and
+fails explicitly if an upstream change invalidates the adjustments. Optional SQP/IPOPT fallback also
 uses the adapter. Do not restore copied solver/dynamics implementations.
 
 ## Edit and rebuild
@@ -206,3 +206,19 @@ escalation after disarm. Evidence is in each run's `reports/evaluation.json`,
 telemetry and logs. Build/installed-runtime diagnostics are under
 `artifacts/simulation-only-refactor/`. Historical experiments remain in their
 saved run directories and Git history.
+
+Local speed recovery was enabled and checked in headless ground-truth run
+`20261029T090233Z-23158`, with 30 wall seconds of tracking, no video, and a
+run-only capture limit of 512. All 328 captured solves per UAV succeeded against
+unchanged upstream pin `3f71d4c` with the original 0.2 s CPU cap. UAV 1 had seven
+overspeed input calls (maximum 1.444 m/s); recovery permits transient overspeed
+and does not remove flight tracking error. All 306 evaluated airborne cycles
+were ready, with 0.855 m minimum sampled body clearance and 1.786 m separation.
+Fleet compute p95 was 122.1 ms; 53.9% of cycles exceeded 100 ms. This single run
+does not establish timing improvement over the video-enabled historical runs;
+simulation advanced at approximately real time here. All UAVs landed/disarmed
+before normal stop, with no worker timeouts or Python tracebacks. Shutdown
+retained the known SITL SIGINT exits and MAVROS SIGTERM escalation. Evidence and
+exact commands are in the run's `reports/speed-recovery.json`, `evaluation.json`,
+`mission-final.json`, optimizer captures, telemetry and logs. Camera perception
+and the full route were outside this check.

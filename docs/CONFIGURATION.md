@@ -70,8 +70,15 @@ file that may have been overridden.
 | `CONTINGENCY` / `BACKUP_HORIZON` | true / 25 | Separate stopping branch ending at rest after 2.5 s |
 | `W_backup` / `TERMINAL_STOP` | 0.1 / false | Backup effort weight / optional nominal terminal stop |
 | `CORRIDOR_BOX` / `CORRIDOR_MAX_FACES` | 1.5 m / 16 | Decomposition half size and initial solver allocation |
-| `SPEED_RECOVERY` | false | Local adapter option for initially overspeed measured states |
+| `SPEED_RECOVERY` | true | Local adapter recovery for initially overspeed measured states |
 | `IPOPT_OPTIONS` | 500 iterations / 0.2 s CPU | Solver limits; worker deadline remains independent |
+
+The supplied controller enables `SPEED_RECOVERY` in the local adapter. It permits
+only the initial predicted overspeed that its maximum-effort braking model cannot
+remove immediately, then restores the nominal speed bound. Measured state,
+corridor and collision constraints, solver CPU cap, and command expiry remain
+in effect; the upstream source is unchanged. Omit the override or set it to
+`false` to use the adapter's default strict speed bounds.
 
 Derived values include inflation radius, world bounds, standoff distance,
 formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`

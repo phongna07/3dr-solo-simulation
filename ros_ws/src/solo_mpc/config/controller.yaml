@@ -44,6 +44,7 @@ params:
   VMAX: 1.2
   UMAX: 2.0
   ACCEL_TAU: 0.2
+  SPEED_RECOVERY: true  # local adapter permits unavoidable initial overspeed while braking
   SENSING_RADIUS: 3.0
   LOCAL_SEARCH: jps  # uniform step costs; dijkstra applies UNKNOWN_COST
   CONTINGENCY: true
