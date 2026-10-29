@@ -30,17 +30,27 @@ as described in [Simulation](SIMULATION.md#gpu-and-display).
 `./scripts/dev mpc --preset large200_5uav --record-video` selects these matching inputs:
 
 - [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five independent SITL/MAVROS instances.
-- [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 80 random rectangles, 80 random circles, and a random smooth route.
+- [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
 - [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 1.5 m/s UAV speed, 6 m LiDAR range and a 0.35 s solver CPU cap. Target speed is 0.6 m/s. Worker deadlines, expiry and supervision remain enabled.
 
 The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
 downward camera footprint. Followers start 2.625 m left, right, behind and ahead.
 The large map uses a 0.3 m grid to bound per-worker mapping cost. Obstacles have
 1.5–4 m rectangle sides or 0.6–1.5 m circle radii and retain 5 m collision height.
-Generation reserves an 8 m band around the waypoint segments and start positions;
-spline bends can reduce this clearance. The controller still learns obstacles
-through LiDAR and receives no future route. This is a tracking scenario with
-obstacles alongside a traversable route, not an obstacle-density stress benchmark.
+The generator uses the same smoothed route as the target and protects every
+sampled route segment with at least 3.2 m clearance from enclosing obstacle discs.
+It places nearby obstacles on both sides about every 5.5 m of route distance,
+then fills the remaining field randomly. Seed `200205` has 147 such nearby
+obstacles among 480 total, with 3.421 m minimum sampled route-to-footprint
+clearance. Starts retain at least 3 m clearance from obstacle discs. This
+replaces the earlier 160-obstacle field and its broad 8 m empty route band.
+The controller still learns obstacles through LiDAR and receives no future route;
+followers may contract formation as they approach obstacles.
+This preset uses `overhead_camera_offset: [-12,-12,40]` for a higher angled
+recording/GUI view: 12 m west, 12 m south and 40 m above the target. The wider
+view shows the five-UAV fleet and surrounding buildings/trees; occasional
+occlusion is expected. It affects the observer camera only; UAVs still fly at
+3 m with their existing cameras and LiDAR.
 
 The checked-in realization uses seed `200205`. It repeats on each launch so
 failures can be reproduced. Generate another realization before starting:
@@ -50,9 +60,12 @@ failures can be reproduced. Generate another realization before starting:
 ./scripts/dev mpc --preset large200_5uav --scenario /workspace/config/large200-seed42.yaml --record-video
 ```
 
-The generator needs only host Python 3. Omitting `--output` replaces the supplied
-large scenario. Keep generated experiments in `artifacts/` when they should not
-be committed. Different seeds need their own simulator verification. Explicit
+The generator needs Python 3 with NumPy and imports this project's target spline.
+Alternatively, run it before starting the stack with
+`docker compose run --rm --no-deps sim python3 /workspace/scripts/generate-large-scenario`.
+Omitting `--output` replaces the supplied large scenario. Keep generated
+experiments in `artifacts/` when they should not be committed. Different seeds
+need their own simulator verification. Explicit
 `--fleet`, `--scenario`, and `--settings` arguments after `--preset` override that
 preset; the original no-argument defaults remain unchanged.
 

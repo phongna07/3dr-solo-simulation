@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Write a reproducible random 200 m, five-UAV scenario (standard library only)."""
+"""Write a dense random 200 m, five-UAV scenario; requires project NumPy."""
 
 import argparse
 import json
 import math
 from pathlib import Path
 import random
+import sys
+
+import numpy as np
+
+# Use the same spline as the simulated target, including its sampled segments.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ros_ws/src/solo_mpc"))
+from solo_mpc.core.target_motion import target_route
 
 
-def segment_distance(point, a, b):
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    t = max(0.0, min(1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy)
-                    / (dx * dx + dy * dy)))
-    return math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy)
+OBSTACLES_PER_KIND = 240
+ROUTE_CLEARANCE = 3.2
 
 
 def generate(seed):
@@ -20,44 +24,88 @@ def generate(seed):
     # The first target point is exactly under uav1's downward optical axis.
     starts = [[16, 16, 3], [13.375, 16, 3], [18.625, 16, 3],
               [16, 13.375, 3], [16, 18.625, 3]]
-    anchors = [(30, 42), (65, 65), (100, 40), (145, 65), (175, 110),
+    # Short early bends are visible in time-limited recordings. Later bends
+    # continue across the large map rather than repeating a local loop.
+    near = [(25, 29), (16, 41), (31, 48), (43, 39), (55, 52)]
+    anchors = [(65, 65), (100, 40), (145, 65), (175, 110),
                (135, 150), (90, 180), (45, 150), (25, 100)]
     waypoints = [[16, 16], [16, 23]] + [
+        [round(x + rng.uniform(-1.5, 1.5), 3), round(y + rng.uniform(-1.5, 1.5), 3)]
+        for x, y in near
+    ] + [
         [round(x + rng.uniform(-7, 7), 3), round(y + rng.uniform(-7, 7), 3)]
         for x, y in anchors
     ]
-    # Reserve an 8 m band around every route segment: room for spline bends,
-    # the four formation slots and body clearance. Obstacles remain unknown
-    # to the controller until LiDAR observes them.
+    path, _ = target_route({"target": {"waypoints": waypoints}, "tar_max_speed": 0.6},
+                           {"TAR_SPLINE_DS": 0.1})
+    if np.any(path < 2) or np.any(path > 198):
+        raise RuntimeError("Smoothed route leaves the map; choose another seed")
+    segments = np.diff(path, axis=0)
+    squared_lengths = np.sum(segments * segments, axis=1)
+    lengths = np.r_[0, np.cumsum(np.sqrt(squared_lengths))]
+
+    def route_distance(point):
+        along = np.clip(np.sum((point - path[:-1]) * segments, axis=1)
+                        / np.maximum(squared_lengths, 1e-12), 0, 1)
+        return float(np.min(np.linalg.norm(point - path[:-1] - along[:, None] * segments, axis=1)))
+
+    def route_point(distance):
+        return np.array([np.interp(distance, lengths, path[:, axis]) for axis in (0, 1)])
+
+    # A bounded disc encloses each rounded footprint. Clearance from every
+    # actual target segment protects the entire interpolated route, not just
+    # its waypoints. UAVs still learn obstacles exclusively through LiDAR.
     rects, circles, bounds = [], [], []
-    for kind, count in (("rects", 80), ("circles", 80)):
-        for _ in range(20000):
-            if len(rects if kind == "rects" else circles) == count:
+
+    def dimensions(kind):
+        return ([round(rng.uniform(1.5, 4), 3) for _ in range(2)] if kind == "rects"
+                else [round(rng.uniform(0.6, 1.5), 3)])
+
+    def place(kind, point, size):
+        x, y = np.round(point, 3)
+        radius = math.hypot(*size) / 2 if kind == "rects" else size[0]
+        if not (radius + 1 < x < 199 - radius and radius + 1 < y < 199 - radius):
+            return False
+        # Include rounding allowance for the rectangle's lower corner.
+        radius += 0.002
+        if route_distance(np.array([x, y])) < ROUTE_CLEARANCE + radius:
+            return False
+        if any(math.hypot(x - p[0], y - p[1]) < 3 + radius for p in starts):
+            return False
+        if any(math.hypot(x - ox, y - oy) < radius + r + 0.8 for ox, oy, r in bounds):
+            return False
+        shape = ([round(x - size[0] / 2, 3), round(y - size[1] / 2, 3), *size]
+                 if kind == "rects" else [float(x), float(y), *size])
+        (rects if kind == "rects" else circles).append(shape)
+        bounds.append((x, y, radius))
+        return True
+
+    # Place nearby scenery first so extra density reaches the recorded action.
+    # Alternating clearances and mixed footprints avoid a uniform roadside wall.
+    for i, distance in enumerate(np.arange(8, lengths[-1] - 3, 5.5)):
+        center = route_point(distance)
+        tangent = route_point(distance + 0.25) - route_point(distance - 0.25)
+        normal = np.array([-tangent[1], tangent[0]]) / np.linalg.norm(tangent)
+        for side in (-1, 1):
+            kind = "rects" if (i + side) % 3 else "circles"
+            size = dimensions(kind)
+            radius = math.hypot(*size) / 2 if kind == "rects" else size[0]
+            point = center + side * normal * (radius + rng.uniform(3.4, 4.8))
+            place(kind, point, size)
+    roadside_count = len(bounds)
+
+    for kind, shapes in (("rects", rects), ("circles", circles)):
+        for _ in range(40000):
+            if len(shapes) >= OBSTACLES_PER_KIND:
                 break
-            x, y = rng.uniform(4, 196), rng.uniform(4, 196)
-            if kind == "rects":
-                w, h = rng.uniform(1.5, 4), rng.uniform(1.5, 4)
-                radius = math.hypot(w, h) / 2
-                shape = [round(x - w / 2, 3), round(y - h / 2, 3),
-                         round(w, 3), round(h, 3)]
-            else:
-                radius = rng.uniform(0.6, 1.5)
-                shape = [round(x, 3), round(y, 3), round(radius, 3)]
-            if min(segment_distance((x, y), a, b)
-                   for a, b in zip(waypoints[:-1], waypoints[1:])) < 8 + radius:
-                continue
-            if any(math.hypot(x - p[0], y - p[1]) < 8 + radius for p in starts):
-                continue
-            if any(math.hypot(x - ox, y - oy) < radius + r + 0.8 for ox, oy, r in bounds):
-                continue
-            (rects if kind == "rects" else circles).append(shape)
-            bounds.append((x, y, radius))
+            place(kind, [rng.uniform(3, 197), rng.uniform(3, 197)], dimensions(kind))
         else:
             raise RuntimeError("Unable to place requested obstacles; choose another seed")
     lines = [
         "# Generated by scripts/generate-large-scenario; change --seed to regenerate.",
-        "description: 200 x 200 m seeded random obstacle field and winding target route",
+        "description: 200 x 200 m dense random obstacle field with early target slalom",
         "world_name: mpc_large200", f"random_seed: {seed}",
+        f"route_clearance: {ROUTE_CLEARANCE}", f"roadside_obstacles: {roadside_count}",
         "xlim: [0, 200]", "ylim: [0, 200]", "viewing_radius: 1.5", "tar_max_speed: 0.6",
         "starts:", *[f"  - {json.dumps(p)}" for p in starts],
         "target:", "  waypoints:", *[f"    - {json.dumps(p)}" for p in waypoints],

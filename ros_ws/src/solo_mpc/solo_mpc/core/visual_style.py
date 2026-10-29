@@ -1,6 +1,7 @@
 """Shared fleet palette and target camera framing for Gazebo and recording."""
 
 import colorsys
+import math
 
 
 # BGR for OpenCV. Preserve the existing occupancy map and state panel colors.
@@ -32,6 +33,12 @@ def follow_offset(settings):
     outside this view until they approach the target.
     """
     altitude = settings.get('flight_altitude', 3.0)
+    if 'overhead_camera_offset' in settings:
+        offset = tuple(float(v) for v in settings['overhead_camera_offset'])
+        if (len(offset) != 3 or not all(math.isfinite(v) for v in offset)
+                or offset[2] <= max(altitude + 1, settings.get('obstacle_height', 5.0) + 10)):
+            raise ValueError('overhead_camera_offset needs finite XYZ above the fleet and scenery')
+        return offset
     height = max(FOLLOW_OFFSET[2], settings.get('obstacle_height', 5.0) + 10,
                  altitude + 70 if altitude > 3 else FOLLOW_OFFSET[2])
     return FOLLOW_OFFSET[:2] + (height,)

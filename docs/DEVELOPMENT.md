@@ -178,28 +178,50 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
 
-The five-UAV `large200_5uav` preset was rebuilt and checked headlessly in camera
-mode with seed `200205`, video enabled and 180 wall seconds of tracking in run
-`20261029T093036Z-28025`. It completed with every UAV landed/disarmed and
-ownership released. All 980 evaluated airborne fleet cycles were ready and all
-4,900 nominal UAV solves succeeded. Sampled Gazebo geometry showed 6.779 m
-minimum body clearance, 1.774 m minimum UAV separation and 1.194 m p95 nearest-UAV
-distance to the target. Camera estimation error p95 was 0.056 m.
+The five-UAV observer was subsequently restored to a higher angled offset
+`[-12,-12,40]` (metres from the target), preserving 3 m UAV flight altitude.
+Headless camera/video run `20261029T104431Z-32569` completed 240 wall seconds of
+tracking with all 746 airborne fleet cycles ready, all 3,730 nominal solves
+successful, and all five UAVs landed/disarmed. The reviewed 101.15 s recording
+decoded all 2,023 frames at 1920 × 1080 / 20 FPS and generally shows the fleet
+and surrounding city, with occasional partial building occlusion as requested.
+All five FOV/state panels fit. Compute p95 was 220.3 ms, above the 100 ms target;
+only the initial slalom was flown. Each UAV's retained captures matched the pin
+and unchanged adapter. Evidence and exact commands are in the run's
+`reports/overhead-verification.json`, evaluation, final mission state and video
+reports; build/renderer diagnostics are under `artifacts/large200-high-angle/`.
 
-The target travelled 57.02 m of the 454.63 m route; this verifies an initial
-portion, not the complete 757.72 simulation-second route. The simulation ran at
-0.528× wall time during evaluated flight. Fleet compute p95 was 191.7 ms and
-every airborne cycle exceeded the 100 ms target; no solver CPU-cap failure or
-worker timeout occurred. Every UAV's 128 retained captures matched upstream pin
-`3f71d4c` and the unchanged local adapter. Normal stop finalized a 131.2 s,
-1920 × 1080 / 20 FPS video; all 2,624 frames decoded and the sampled takeoff,
-tracking and landing frames showed five FOV panels and five complete state rows.
-Evidence, commands, provenance and limits are saved in the run's
-`reports/large200-verification.json`, `evaluation.json`, `mission-final.json`,
-`video.json`, sampled PNGs, telemetry and captures. Build/installed-input checks
-are under `artifacts/large200-5uav/`. A prior launch
-`20261029T092510Z-20856` was interrupted before flight by editing the running
-CLI; its saved report confirms all five FCUs remained disarmed.
+The dense five-UAV `large200_5uav` preset has 480 obstacles, with 147 placed near
+the actual smoothed target route and early slalom bends. Generation protects
+every route segment with a 3.2 m obstacle-disc clearance; the default seed's
+minimum sampled footprint clearance is 3.421 m. Headless camera/video runs
+`20261029T100258Z-21821` and `20261029T101655Z-13125` each completed 300 wall
+seconds of tracking, landing and disarming all five UAVs with ownership released.
+All 902 / 919 airborne fleet cycles were ready; all 4,510 / 4,595 nominal solves
+succeeded. Sampled minimum body clearance was 0.994 / 0.945 m and separation
+1.846 / 1.918 m. No flight limits or solver deadlines were relaxed.
+
+The first recording exposed building occlusion in the angled overhead view.
+That verification used a vertical 24 m observer offset. Its final video decoded
+all 2,324 frames (116.2 s, 1920 × 1080 / 20 FPS); reviewed tracking frames show
+all five UAVs between nearby obstacles through the previously obscured bend,
+with five complete FOV/state panels. Camera estimation error p95 was 0.080 m.
+Fleet compute p95 was 226.4 ms, above the 100 ms target on every airborne cycle,
+and simulation ran at 0.296× wall time. No worker timeouts or CPU-cap failures
+occurred; every UAV's 128 retained captures matched unchanged upstream pin
+`3f71d4c` and the local adapter. Only the initial slalom portion was flown;
+the complete route takes 773.95 simulation seconds. Normal stop retains the
+known SITL SIGINT exits and MAVROS SIGTERM escalation after disarm.
+The final run also logged a marker detector `RuntimeError` in ROS subscription
+teardown after SIGINT, following confirmed fleet disarm; it did not interrupt
+tracking or video finalization and remains visible in the saved container log.
+
+Commands, provenance, limits, evaluation, final mission state and video evidence
+are in each run's `reports/dense-verification.json`, other reports, sampled PNGs,
+telemetry and captures. Build/geometry diagnostics are in
+`artifacts/large200-dense/`. The initial sparse-field evidence remains in
+`20261029T093036Z-28025/reports/large200-verification.json`; its preflight-only
+interrupted launch is preserved in `20261029T092510Z-20856`.
 
 The original `small50_3uav` preset also completed a headless camera/video mission
 with 30 wall seconds of tracking in `20261029T093839Z-29754`, using its unchanged

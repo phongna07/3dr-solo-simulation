@@ -28,12 +28,14 @@ For the five-UAV 200 × 200 m random field, use the matching preset:
 
 ```bash
 ./scripts/dev mpc --preset large200_5uav --record-video
-./scripts/dev mission run --seconds 120
+./scripts/dev mission run --seconds 300
 ./scripts/dev evaluate
 ./scripts/dev stop
 ```
 
-The seeded route takes about 758 simulation seconds (12.6 minutes at real time).
+The dense seeded route takes about 774 simulation seconds (12.9 minutes at real time),
+with several early slalom bends through nearby obstacles. Use 300 wall seconds
+or more to inspect multiple bends when rendering slows the clock.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to
