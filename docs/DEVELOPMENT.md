@@ -178,6 +178,46 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
 
+The faster, tighter five-UAV preset raises target speed from 0.6 to 1.0 m/s
+and MPC `VMAX` from 1.5 to 2.2 m/s. Its regenerated seed `200205` retains 480
+obstacles, with 162 roadside placements, a 2.0 m route-to-disc clearance band,
+and 2.114 m minimum sampled route-to-footprint clearance. Acceleration,
+separation/body margins, sensing, solver CPU cap and supervision are unchanged.
+Headless ground-truth/video run `20261029T123623Z-3955` completed 300 wall
+seconds of tracking and landed/disarmed all five UAVs with ownership released.
+The target traveled 95.3 m at a measured mean moving speed of 0.999 m/s;
+median measured UAV speeds were 0.974–1.013 m/s. Minimum sampled body clearance
+was 0.671 m and separation 1.254 m. Of 983 airborne cycles, 975 were ready,
+six awaited valid scans and two had UAV 4 CPU-cap failures; 4,883/4,885 nominal
+solver calls succeeded. Fleet compute p95 was 179.5 ms, exceeding the 100 ms
+target. UAV 4 briefly reached 2.414 m/s: MPC `VMAX` is a prediction bound, and
+measured flight can overshoot it. Formation slots contracted to 40% of normal.
+All 640 retained captures matched the unchanged upstream pin and adapter.
+The 118.35 s video decoded all 2,367 frames; reviewed 45/85 s frames show all
+five UAVs passing the tighter buildings/trees with complete state/FOV panels.
+Only the first 95 m of the 464 m route was flown. Exact commands, evaluation,
+final disarmed state and provenance are in `reports/fast-tight-verification.json`
+and adjacent reports; diagnostics are under `artifacts/large200-fast-tight/`.
+
+The same inputs then completed 600 wall seconds of headless camera tracking in
+`20261029T124822Z-28878`, followed by fleet landing/disarm and normal stop.
+All 1,796 airborne cycles were ready and all 8,980 nominal solves succeeded,
+with fresh target input throughout. The target traveled 176.6 m at 1.000 m/s;
+median measured UAV speeds were 0.972–1.004 m/s and their maxima ranged from
+1.528 to 2.026 m/s. Minimum sampled body clearance was 0.550 m (UAV 3 at
+`[69.468,68.455]`), separation was 1.201 m and camera-estimation error p95 was
+0.157 m. Slots contracted to 40% of normal. All 640 retained captures matched
+the unchanged pin/adapter. Fleet compute p95 remained 226.0 ms, above the
+100 ms target; simulation advanced at 0.294× wall time, and the full route
+remains unverified. The 204.6 s recording decoded all 4,092 frames, including
+the closest approach at 114.2 s. Reviewed tracking/landing frames retain all
+five FOV/state panels and show the fleet passing between nearby scenery.
+Normal shutdown retains SITL SIGINT exits and MAVROS SIGTERM escalation after
+confirmed disarm; no worker timeouts or Python tracebacks were observed.
+Commands, per-UAV outcomes/speeds, final state and provenance are in this run's
+`reports/fast-tight-verification.json`; `closest-approach.json`, `video.json`,
+sampled PNGs, evaluation, telemetry and container logs preserve the evidence.
+
 The five-UAV observer was subsequently restored to a higher angled offset
 `[-12,-12,40]` (metres from the target), preserving 3 m UAV flight altitude.
 Headless camera/video run `20261029T104431Z-32569` completed 240 wall seconds of

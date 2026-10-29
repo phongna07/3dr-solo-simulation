@@ -31,19 +31,23 @@ as described in [Simulation](SIMULATION.md#gpu-and-display).
 
 - [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five independent SITL/MAVROS instances.
 - [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
-- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 1.5 m/s UAV speed, 6 m LiDAR range and a 0.35 s solver CPU cap. Target speed is 0.6 m/s. Worker deadlines, expiry and supervision remain enabled.
+- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 2.2 m/s MPC speed bound for all UAVs, 6 m LiDAR range and a 0.35 s solver CPU cap. Target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
 
 The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
 downward camera footprint. Followers start 2.625 m left, right, behind and ahead.
 The large map uses a 0.3 m grid to bound per-worker mapping cost. Obstacles have
 1.5–4 m rectangle sides or 0.6–1.5 m circle radii and retain 5 m collision height.
 The generator uses the same smoothed route as the target and protects every
-sampled route segment with at least 3.2 m clearance from enclosing obstacle discs.
-It places nearby obstacles on both sides about every 5.5 m of route distance,
-then fills the remaining field randomly. Seed `200205` has 147 such nearby
-obstacles among 480 total, with 3.421 m minimum sampled route-to-footprint
-clearance. Starts retain at least 3 m clearance from obstacle discs. This
-replaces the earlier 160-obstacle field and its broad 8 m empty route band.
+sampled route segment with at least 2.0 m clearance from enclosing obstacle discs.
+It attempts nearby obstacles on both sides every 4 m of route distance, with
+2.1–3.0 m disc-edge offsets, then fills the remaining field randomly. Enclosing
+discs retain at least 0.5 m between obstacles; these side gaps can be too narrow
+for a UAV and are not designated passages. Seed `200205` has 162 nearby
+obstacles among 480 total, with 2.114 m minimum sampled route-to-footprint
+clearance. Starts retain at least 3 m clearance from obstacle discs. Compared
+with the previous realization, the route band shrinks from 3.2 m per side and
+roadside placement spacing from 5.5 m, while target/UAV speed limits increase
+from 0.6/1.5 m/s. Acceleration remains limited to 2 m/s².
 The controller still learns obstacles through LiDAR and receives no future route;
 followers may contract formation as they approach obstacles.
 This preset uses `overhead_camera_offset: [-12,-12,40]` for a higher angled

@@ -33,7 +33,7 @@ For the five-UAV 200 × 200 m random field, use the matching preset:
 ./scripts/dev stop
 ```
 
-The dense seeded route takes about 774 simulation seconds (12.9 minutes at real time),
+The dense seeded route takes about 464 simulation seconds (7.7 minutes at real time),
 with several early slalom bends through nearby obstacles. Use 300 wall seconds
 or more to inspect multiple bends when rendering slows the clock.
 A time-limited run covers only part of it; rendering five sensors and a large
