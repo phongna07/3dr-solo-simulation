@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Pin an already-fetched upstream revision and refresh solver provenance."""
+
+import argparse
+from datetime import date
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('revision', help='Fetched commit/tag/ref to pin (HEAD keeps the current revision)')
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parent.parent
+    upstream = root / 'external/motion_planning_MPC'
+
+    def git(*arguments):
+        return subprocess.check_output(['git', '-C', str(upstream), *arguments], text=True).strip()
+
+    if not (upstream / 'mpc_problem.py').is_file():
+        parser.error('Initialize the submodule with git submodule update --init --recursive')
+    if git('status', '--porcelain'):
+        parser.error('Upstream submodule has local changes; preserve them before changing its pin')
+    commit = git('rev-parse', '--verify', '--end-of-options', f'{args.revision}^{{commit}}')
+    subprocess.run(['git', '-C', str(upstream), 'checkout', '--detach', commit], check=True)
+    path = root / 'ros_ws/src/solo_mpc/UPSTREAM.json'
+    metadata = json.loads(path.read_text())
+    metadata.update(commit=commit, pinned_on=date.today().isoformat())
+    metadata['sha256'].update({
+        name: hashlib.sha256((upstream / name).read_bytes()).hexdigest()
+        for name in ('mpc_problem.py', 'dynamics.py')
+    })
+    path.write_text(json.dumps(metadata, indent=2) + '\n')
+    print(f'Pinned MPC solver to {commit}. Upstream source is unchanged.')
+    print('Restart development processes; rebuild release images. Validate a mission before committing the pin.')
+    print('Review git diff and git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json')
+
+
+if __name__ == '__main__':
+    main()

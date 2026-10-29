@@ -22,6 +22,7 @@ from .core.parallel_controller import ParallelTeamController
 from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
 from .core.tracking import ExactTargetTracker
+from .core.upstream import provenance
 from .ros_utils import (
     pose_arrays,
     pose_message,
@@ -68,7 +69,8 @@ class Controller(Node):
             ) as source_log:
                 source_log.write(
                     json.dumps(
-                        {"wall": time.time(), "sha256": sources, "config": args.cfg}
+                        {"wall": time.time(), "sha256": sources, "config": args.cfg,
+                         "upstream": provenance()}
                     )
                     + "\n"
                 )

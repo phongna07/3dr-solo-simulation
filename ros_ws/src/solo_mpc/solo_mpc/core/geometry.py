@@ -1,6 +1,5 @@
 """
-geometry.py — Small geometry helpers shared by config.py, map_gen.py and
-target_manual.py (no dependency on config, so config can import it).
+Centripetal target-route interpolation, independent of ROS and configuration.
 """
 
 import numpy as np
@@ -34,13 +33,3 @@ def catmull_rom(points, ds, alpha=0.5):
             out.append((t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2)
         knot_idx.append(len(out) - 1)
     return np.asarray(out), np.asarray(knot_idx)
-
-
-def densify(points, ds):
-    """Resample a polyline so consecutive points are <= ds apart."""
-    P = np.asarray(points, float)
-    out = [P[0]]
-    for a, b in zip(P[:-1], P[1:]):
-        n = max(1, int(np.ceil(np.linalg.norm(b - a) / ds)))
-        out.extend(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
-    return np.asarray(out)

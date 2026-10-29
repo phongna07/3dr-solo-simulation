@@ -20,7 +20,7 @@ def start(context):
             if not Path(device).exists():
                 raise RuntimeError(f'Missing FCU device {device}; verify hardware config/device mapping')
     if config.get('ld19', {}).get('enabled') or config.get('gopro', {}).get('enabled'):
-        raise RuntimeError('Sensor drivers are extension points; see docs/HARDWARE.md before enabling')
+        raise RuntimeError('Sensor drivers are extension points; see docs/DEPLOYMENT.md#companion-profile before enabling')
     run = create_run(config, 'hardware')
     actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs'))]
     for uav in config['uavs']:

@@ -1,6 +1,7 @@
 """Measured-state team NMPC. No ROS imports and no simulated state integration.
 
-The imported solver/dynamics/grid algorithm come from motion_planning_MPC.
+Solver and predictive dynamics load directly from the pinned upstream submodule.
+Grid planning remains a local port of motion_planning_MPC.
 Team leadership, assignment, mapping, reference selection and failures live here
 so they can be modified independently of transport and vehicle operation.
 """

@@ -4,7 +4,7 @@ planner_grid.py — Local-window grid planner (replaces pathfind/JPS for large m
 Why: `pathfind` builds a Python object graph over the WHOLE grid on every
 replan (~40 us per cell -> minutes on a 1000 m map). This planner
 
-  * keeps the persistent log-odds grid from planner_jps.py, but rebuilds the
+  * keeps the persistent log-odds grid from occupancy_grid.py, but rebuilds the
     inflated "blocked" layer only inside the region touched since the last
     rebuild (dirty bounding box) instead of over the whole map;
   * plans only inside a square window of half size LOCAL_PLAN_RADIUS around
@@ -25,7 +25,7 @@ Unknown space (never observed) follows UNKNOWN_POLICY:
                    required on large maps, where the goal is usually far
                    beyond what the UAV has seen
 
-Same interface as planner_jps.JPSPlanner:
+Planner interface:
     initialize(start, goal); observe(pos, points);
     plan(...) -> (success, path, set(), set(), n); .gmap (grid)
 """
@@ -34,7 +34,7 @@ import heapq
 
 import numpy as np
 
-from .planner_jps import PersistentLogOddsGrid, _dilate_disk, _string_pull
+from .occupancy_grid import PersistentLogOddsGrid, _dilate_disk, _string_pull
 
 try:
     from numba import njit

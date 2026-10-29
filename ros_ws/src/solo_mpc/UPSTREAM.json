@@ -1,6 +1,6 @@
 {
   "source": "motion_planning_MPC",
-  "commit": "d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae",
+  "commit": "3f71d4c6af6e385522fd583353c4ece42edca867",
   "sha256": {
     "dynamics.py": "26eefe78f3a9a0ca06499aa71599a72e02f219019b0d1992fdacebbee86b7d81",
     "mpc_problem.py": "e2c54cdb3ed427e983816909cc4301c49cb54fa4cfa3ba120ef56b886391f593",
@@ -16,9 +16,15 @@
     "Fixed-altitude 3D flight, Iris physical limits, ROS perception, mapping, formation and supervision retained.",
     "Corridor margin includes occupied-cell quantization and three standard deviations of the configured Gaussian LiDAR noise.",
     "Stop-plan replay follows simulation time and requires measured position, velocity and acceleration agreement; failures remain visible to mission supervision.",
-    "2026-10-20: Restored upstream distance-gated per-UAV modes, leader/assignment hysteresis, predictive contraction, path carrots, moving slots, travel-time pursuit and target filter covariance; see docs/MPC_PARITY.md.",
+    "2026-10-20: Restored upstream distance-gated per-UAV modes, leader/assignment hysteresis, predictive contraction, path carrots, moving slots, travel-time pursuit and target filter covariance; see docs/DEVELOPMENT.md#verification-and-optimizer-replay.",
     "Coherent elapsed-time/reanchored six-state neighbor snapshots, responsive asynchronous ROS cycles, source-stamped expiry and measured-state fallback validation are intentional physical adaptations.",
-    "Runtime CPU/worker caps retained; direct read-only upstream parity uses iteration-only reference settings. Bounded complete optimizer input and backup-warm-start capture added for future replay."
+    "Runtime CPU/worker caps retained; direct read-only upstream parity uses iteration-only reference settings. Bounded complete optimizer input and backup-warm-start capture added for future replay.",
+    "2026-10-29: Solver and predictive dynamics now execute directly from the unchanged pinned submodule. Inactive-neighbor conditioning and optional speed recovery remain in a local adapter; planning, mapping and coordination remain local ports."
   ],
-  "inspected_on": "2026-10-20"
+  "inspected_on": "2026-10-29",
+  "repository": "https://github.com/thuhangkhuat/motion_planning_MPC.git",
+  "submodule": "external/motion_planning_MPC",
+  "solver_integration": "Unchanged submodule mpc_problem.py and dynamics.py loaded by core/upstream.py; core/mpc_problem.py applies local compatibility adjustments.",
+  "ported_algorithms_commit": "d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae",
+  "pinned_on": "2026-10-29"
 }

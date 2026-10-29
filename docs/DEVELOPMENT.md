@@ -1,269 +1,195 @@
 # Development
 
-[Project overview](../README.md) · [Configuration](CONFIGURATION.md)
+[Overview](../README.md) · [Simulation](SIMULATION.md) · [Configuration](CONFIGURATION.md) · [Deployment](DEPLOYMENT.md)
 
-Use this guide when changing code. For running experiments, see
-[Operations](OPERATIONS.md).
+Read [AGENTS.md](../AGENTS.md) before editing. Keep numerical code independent
+of ROS and preserve measured-state control and independent flight supervision.
 
 ## Architecture
 
-```text
-scripts/dev → Docker Compose → ROS Python launch
-  mpc.launch.py
-    ├─ simulation.launch.py → Gazebo + per-UAV SITL/MAVROS + readiness
-    ├─ ros_gz sensor, ground-truth, and clock bridges
-    ├─ frame adapter + per-UAV camera detectors + simulated target
-    ├─ controller → persistent mapping/planning/MPC worker per UAV
-    ├─ independent setpoint publisher
-    └─ persistent mission supervisor ← mission CLI requests
+`scripts/dev` starts Docker Compose; ROS launch owns Gazebo, one SITL/MAVROS
+pair per UAV, readiness, bridges, frame/perception/target nodes, the controller,
+independent setpoint publisher, and mission supervisor. The GUI is a separate
+client. Each persistent UAV worker owns its map, planner, corridor, solver,
+committed path, warm start, and stopping plan.
 
-  hardware.launch.py → MAVROS + readiness
+| Location | Responsibility |
+|---|---|
+| `external/motion_planning_MPC/` | Colleague-owned, unchanged solver and predictive dynamics |
+| `solo_mpc/core/upstream.py` | Private import of upstream solver/dynamics and source provenance |
+| `solo_mpc/core/mpc_problem.py` | Local solver compatibility adjustments |
+| `core/controller.py`, `coordination.py`, `tracking.py` | Measured-state planning, formation, estimation, retained stopping plans |
+| `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
+| `core/parallel_controller.py`, `cycles.py` | Persistent workers, frozen fleet predictions, deadlines, asynchronous cycles |
+| `controller_node.py`, `frame_node.py`, `perception_node.py` | ROS input/output, alignment, marker detection |
+| `setpoint_node.py` | Trajectory sampling, altitude feedback, command expiry, proximity guard |
+| `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, measured-flight evaluation |
+| `solo_bringup/` | Fleet configuration, generated runtime files, MAVROS bootstrap, readiness |
+| `solo_mpc/gazebo/` | Native world-stabilized camera and coverage plugins |
+
+`TeamController.step(states, scans, stamp, seers)` has no ROS imports and never
+advances a simulated replacement for the measured vehicle. Workers freeze a
+common prediction snapshot before solving. Spawn avoids inheriting DDS/native
+solver state. Late results are rejected; timed-out workers stop until controller
+restart. Independent publishing and supervision remain able to expire references
+and request LAND.
+
+## Upstream submodule
+
+Initialize before building, or clone the parent with `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
 ```
 
-Compose owns containers, networks, and devices; ROS launch owns processes.
-Readiness and mission control use typed ROS APIs. The GUI is an independent
-client of the Gazebo server.
+Do not edit the submodule or the colleague's sibling checkout. To adopt a fetched
+upstream commit, tag, or ref:
 
-`solo_bringup` validates configuration, generates worlds and runtime files,
-creates isolated runs, bootstraps MAVROS parameters, and monitors readiness.
-Its `flight.py` provides internal simulation takeoff/LAND helpers.
+```bash
+git -C external/motion_planning_MPC fetch origin
+./scripts/pin-mpc-upstream COMMIT_OR_REF
+```
 
-`solo_mpc` separates numerical code from ROS adapters:
+The helper refuses a dirty submodule, checks out a detached revision, and updates
+`ros_ws/src/solo_mpc/UPSTREAM.json` with its commit and solver/dynamics hashes.
+It does not fetch, stage, or modify upstream files. Use `HEAD` to refresh metadata
+for an already-selected revision. Inspect the upstream diff and validate a
+mission, then include both the gitlink and metadata in your parent commit:
 
-| Module | Responsibility |
-|---|---|
-| `core/mpc_problem.py`, `core/dynamics.py` | CasADi/IPOPT optimization and acceleration-lag dynamics |
-| `core/planner_grid.py`, `core/planner_jps.py`, `core/geometry.py` | Local planning and geometry |
-| `core/controller.py` | Measured-state coordination, paths, leader/slot assignment, corridors |
-| `core/parallel_controller.py` | Persistent workers, map snapshots, deadlines, shutdown |
-| `core/mapping.py`, `core/sensors.py`, `core/tracking.py` | Occupancy, scan projection, camera geometry, target filtering |
-| `controller_node.py` | ROS inputs, references, predictions, diagnostics, logs |
-| `setpoint_node.py` | Publishing, expiry, altitude feedback, proximity guard |
-| `frame_node.py` | Disarmed alignment and common-world measured state |
-| `perception_node.py`, `target_node.py` | Marker detection and simulated target motion |
-| `world.py`, `settings.py` | World generation and resolved settings |
-| `gazebo/WorldStabilizedCamera.cc` | Ideal camera gimbal applied on the sensor render thread before exposure |
-| `gazebo/CameraCoverage.hh`, `gazebo/CameraCoverageGui.cc` | Shared render-only camera rays and ground outlines in server and GUI scenes |
-| `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, evaluation |
+```bash
+git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json
+```
 
-`TeamController.step(states, scans, stamp, seers)` has no ROS imports. It uses
-measured state rather than integrating a replacement vehicle state. Team state
-and configuration are instance-local. Solver/dynamics provenance and licensing
-are in [UPSTREAM.json](../ros_ws/src/solo_mpc/UPSTREAM.json) and
-[LICENSE-MPC](../ros_ws/src/solo_mpc/LICENSE-MPC); no external upstream checkout
-is required at runtime.
+Only upstream `mpc_problem.py` and `dynamics.py` execute directly. Planning,
+formation, target estimation, and configuration remain local ports; changes in
+upstream `robot_jps.py`, planners, or `config.py` require deliberate integration.
+A remote push or parent `git pull` does not select a newer upstream revision.
 
-The algorithm sync inspected on 19 October 2026 adds upstream contingency MPC,
-optional terminal stopping, local JPS with Dijkstra fallback, LiDAR-aware corridor
-margins, bounded forward corridor seeds, and corridor retention around the last
-stop branch. The ROS controller stores a copy of each successful stop certificate;
-failed solves cannot erase it. Replay checks measured-state agreement and follows
-simulation time. Both serial and parallel execution freeze neighbor predictions
-before solving, already providing upstream's two-phase fleet snapshot behavior.
-Altitude control remains independent of the planar optimization.
+The loader binds upstream's flat `import dynamics` privately, without adding
+upstream to global import paths or importing its simulator/configuration. It
+executes unchanged source bytes, ignoring upstream's tracked bytecode, and writes
+nothing into the submodule. Installed packages bundle the two sources and license
+under `share/solo_mpc/upstream`; release runtime needs no Git checkout or network.
 
-### Parallel execution
-
-`ParallelTeamController` spawns one process per UAV, each owning its map,
-planner, corridor, solver, committed path, and warm start. Workers update maps
-concurrently. The coordinator checks formation slots against all current maps,
-then dispatches local planning/solves using identical measured states, assignments,
-and frozen neighbor predictions. Results become the next cycle's predictions.
-Fleet time includes the slowest job per phase, coordination, and IPC overhead.
-
-Spawn avoids inheriting ROS/DDS state and native solver objects. A timed-out or
-disconnected worker is stopped until controller restart; late replies are not
-reused. Missing map data suppresses the fleet decision; an individual solve
-failure suppresses that UAV's reference. Shutdown closes workers even if stuck
-in native code. Independent publishing and supervision remain able to expire
-commands and request LAND.
-
-Worker initialization warms the grid kernels for both contiguous arrays and
-noncontiguous local map windows. Numba specializes these layouts separately;
-warming only a contiguous test grid leaves compilation on the first flight job,
-which can exceed the one-second worker deadline and permanently disable it.
-The deadline remains active after initialization. A fresh-cache regression
-exercises the first solve with that default deadline.
-
-In camera mode, detection runs in a separate ROS process per UAV. This is local
-multiprocessing; distribution across Pis still needs transport, common frames,
-and synchronized timestamps. Detection currently uses a magenta marker.
-`WorldStabilizedCamera` cancels roll, pitch, and yaw in Gazebo's `PreRender`
-event, after scene poses are updated. It sets the camera's world orientation
-and keeps its optical center vertically below the body origin, avoiding both
-a delayed ROS gimbal loop and a body-rotated mounting offset. The detector uses
-that same fixed optical orientation and the vehicle position at image time.
-Camera TF is dynamic `world` → `uavN/camera_optical_frame`; LiDAR TF remains
-static relative to the body. This ideal mount has no mechanical dynamics.
-The camera plugin updates coverage guides in that same render snapshot. A GUI
-plugin uses the shared geometry helper on the GUI render thread, following its
-own current scene poses, including when attached after startup. The generated
-world includes the installed Harmonic GUI defaults alongside this plugin.
-Guides use visibility bit `0x20`: overhead and GUI views include it, while UAV
-cameras and GPU LiDAR exclude it. The guides have no physics or control role.
-Worker PIDs, phase intervals, and mapping/planning/solve durations are recorded
-in `mpc.jsonl` and `/mpc/status`. Select `controller_execution: sequential` for
-an algorithm comparison with ordered dispatch to the same persistent UAV workers
-and the same shared phase deadline. Sensor callbacks continue while a single
-background fleet cycle runs. See [the parity verification guide](MPC_PARITY.md)
-for offline upstream comparisons and bounded optimizer replay capture.
-
-With `./scripts/dev mpc --ground-truth-target`, the external target process
-publishes timestamped route positions directly to the controller. An
-`ExactTargetTracker` preserves each position while using the same Kalman
-velocity estimator, confidence gate, and filtered lead-pursuit goal as upstream;
-sample intervals follow simulation timestamps. Camera mode uses `TargetTracker`.
-The controller subscribes only to the selected source. World generation, sensor
-bridging, and the startup inventory omit unused cameras and detectors.
-`--record-video` enables the UAV and overhead camera streams and one synchronized
-recorder without enabling detection. The runner passes `MPC_RECORD_VIDEO` through
-Compose to the `record_video` ROS launch argument.
-
-The controller publishes `/mpc/occupancy_grid` (`nav_msgs/OccupancyGrid`, sensor
-QoS, world frame) when subscribed, after a completed fleet cycle. This combines
-the workers' uninflated occupied/free/unknown classifications for visualization;
-the workers retain their independent maps for planning. The combined recorder
-renders the map on the left, uses `/<uav>/mpc/pose` for world-aligned markers,
-and samples map panels on the same simulation-time timeline as camera feeds.
-The bottom-left state instruments also subscribe to world-aligned
-`/<uav>/mpc/velocity` and `/<uav>/mpc/reference`. The recorder buffers each
-stream separately and samples at or before each output tick, expiring values
-after one simulation second. Measured pose quaternions supply heading; a
-low-pass velocity derivative supplies visualization-only acceleration. This
-does not change controller state or flight setpoints.
+The adapter subclasses upstream `MPCProblem`. It retains inactive-neighbor
+numerical conditioning and optional measured-overspeed recovery (disabled by
+default), preserving the objective, active constraints, stopping branch, and
+upstream solve routine. It checks constraint structure and fails explicitly if
+an upstream change invalidates the adjustments. Optional SQP/IPOPT fallback also
+uses the adapter. Do not restore copied solver/dynamics implementations.
 
 ## Edit and rebuild
 
-In development, the checkout is mounted at `/workspace`; the entrypoint places
-live project Python modules ahead of installed copies. Restart to apply edits
-to existing Python modules, launch files, and configuration. New executables,
-package metadata, interfaces, or dependencies require rebuilding:
+Development mounts the checkout at `/workspace` and imports live Python sources.
+Restart the stack for existing Python, launch, configuration, or upstream solver
+edits. Rebuild for dependencies, package metadata, new executables/interfaces,
+renamed modules, or native camera plugins:
 
 ```bash
 ./scripts/dev build sim
 git diff --check
 ```
 
-Changes under `ros_ws/src/solo_mpc/gazebo/` also require this image rebuild.
-The Docker build compiles the Harmonic plugin into `/opt/solo_gazebo/lib`;
-the entrypoint adds that directory to `GZ_SIM_SYSTEM_PLUGIN_PATH`. The companion
-image does not include this simulation plugin.
-It also adds the directory to `GZ_GUI_PLUGIN_PATH` for the coverage GUI plugin.
-
-For an experimental package build inside `./scripts/dev shell`:
-
-```bash
-cd /workspace/ros_ws
-colcon build --symlink-install
-source install/setup.bash
-```
-
-This overlay affects only that shell. Launched processes need explicit entrypoint
-sourcing in the order ROS → `/opt/mavros_ws` → project overlay. Persistent dependency
-changes belong in the Dockerfile and locks; manual container installs disappear
-when replaced. Release mode uses installed code; see [Reproducibility](REPRODUCIBILITY.md).
-
-## ROS interfaces
-
-`uavN` means the configured UAV name, normally `uav1`–`uav3`. Paths are absolute.
-
-| Topic / service | Type and role |
-|---|---|
-| `/uavN/mavros/local_position/pose`, `/uavN/mavros/local_position/velocity_local` | `PoseStamped`, `TwistStamped`: FCU local state |
-| `/uavN/mpc/pose`, `/uavN/mpc/velocity` | `PoseStamped`, `TwistStamped`: common-world measured state |
-| `/uavN/scan` | `sensor_msgs/LaserScan` |
-| `/uavN/camera/image_raw`, `/uavN/camera/camera_info` | `Image`, `CameraInfo` |
-| `/uavN/target/observation` | `PoseStamped`: world-frame camera observation |
-| `/uavN/mpc/reference`, `/uavN/mpc/prediction` | `PositionTarget`, `nav_msgs/Path`: world ENU reference/prediction |
-| `/uavN/mpc/trajectory` | `trajectory_msgs/JointTrajectory`: world ENU XY positions, velocities and interval acceleration commands; original cycle epoch |
-| `/uavN/mavros/setpoint_raw/local` | `PositionTarget`: local ENU, converted to NED by MAVROS |
-| `/mpc/status`, `/mpc/setpoint_status` | `std_msgs/String`: JSON diagnostics |
-| `/mpc/enable`, `/target/run`, `/target/reset` | `SetBool`, `SetBool`, `Trigger`: publisher ownership and target control |
-| `/mission/start` | `solo_mpc_interfaces/StartMission`: tracking duration and run directory |
-| `/mission/stop`, `/mission/reset`, `/mission/status` | `Trigger`: cleanup, idle reset, JSON status |
-| `/target/ground_truth`, `/uavN/ground_truth/pose` | `PoseStamped`: alignment, supervision, evaluation; target also drives control with `--ground-truth-target` |
-| `/solo/readiness`, `/clock` | JSON `String` health, `rosgraph_msgs/Clock` simulation time |
+Dependency changes belong in Docker/locks, not manual container installs or the
+upstream requirements file. Release images require rebuilding for any source
+change. An experimental `colcon build --symlink-install` inside a shell affects
+only an explicitly sourced overlay; it does not update the launch entrypoint.
+Preserve sourcing order: ROS → pinned MAVROS → project overlay.
 
 ## Frames and clocks
 
-MAVROS uses per-UAV frames such as `uav1/map` and `uav1/base_link`; MPC uses
-shared `world` ENU. Namespaces alone do not align FCU origins. While disarmed,
-the frame adapter calibrates translation against Gazebo truth with configured
-`world_from_local_yaw`, then freezes it in `alignment.json`. Subsequent state
-comes from MAVROS. In this world, Gazebo XYZ-to-NED and MAVROS NED-to-ENU
-conversions give matching axes. Hardware needs independent origin/yaw calibration.
-Positions require rotation plus translation; velocity and acceleration require
-rotation only. Verify `PositionTarget` frame, `type_mask`, and ENU/NED conversion
-on the actual firmware.
+MAVROS local origins are per UAV; MPC uses common `world` ENU. While disarmed,
+the frame adapter calibrates translation against Gazebo truth using configured
+yaw, then freezes alignment. Subsequent state comes from MAVROS. Positions need
+rotation plus translation; velocity/acceleration need rotation only. MAVROS
+converts local ENU setpoints to FCU NED.
 
-MPC, perception, target, frame, and setpoint nodes use Gazebo `/clock`; MAVROS
-uses wall/FCU time. The adapter stamps measured state at simulation receipt time
-and projects sensors against nearby poses. Takeoff uses receipt time for vertical
-speed and altitude hold, rejecting repeated samples. Slow simulation stretches
-wall gaps without invalidating a valid simulation-time hold. Receipt stamping
-still has latency error and does not synchronize pose with camera exposure.
-Hardware needs a deliberate synchronization policy. Without `/clock`, nodes
-using `use_sim_time=true` stop their ROS timers.
+MPC, sensors, target, frames, and setpoints use Gazebo `/clock`; MAVROS uses
+wall/FCU time. Measured state is stamped at simulation receipt time and sensors
+project against nearby pose history. This retains latency error. Trajectories
+keep their original source epoch for elapsed-time sampling and expiry. Without
+`/clock`, simulation-time node timers stop. See [timing settings](CONFIGURATION.md#timing-and-expiry).
 
-Simulation allows 60 wall seconds between FCU heartbeats; setpoint expiry also
-checks 2.5 simulation seconds and three wall seconds for poses. MAVLink timesync
-and SYSTEM_TIME transmission are disabled because clocks advance at different
-rates. The FCU parameter plugin is disabled in simulation, where SITL loads
-defaults directly. Hardware retains upstream timing and parameter-plugin defaults.
-See [timing settings](CONFIGURATION.md#timing-and-expiry) before changing watchdogs.
-
-## Control ownership and failure behavior
-
-The mission supervisor lives independently of the CLI. Service callbacks queue
-work; flight operations spin ROS outside callbacks. A steady timer handles stop
-requests during preflight/tracking, and SIGINT/SIGTERM request cleanup before
-exit. Publishing is disabled during takeoff and LAND. Ownership and pilot takeover
-rules are documented in [Operations](OPERATIONS.md#stop-and-recover).
-
-The independent publisher imports no optimizer. It controls connected, armed
-GUIDED UAVs with alignment and measured pose. Expired/invalid references produce
-zero horizontal velocity with altitude feedback when state is fresh. Stale pose
+The independent publisher imports no optimizer. With fresh state, expired
+references produce zero horizontal velocity with altitude feedback. Stale pose
 or FCU status removes altitude feedback; missing connection, armed/GUIDED state,
-pose, or alignment can prevent output entirely.
+pose, or alignment can prevent output. A retained stop plan is used only while
+measured state agrees with it. Do not weaken these checks to pass a mission.
 
-Corridor/solver failure uses a retained stop plan only while measured state agrees
-with it; otherwise it produces no fresh reference. Failed decomposition retains
-a valid previous static corridor or fails closed. A proximity guard stops approaching teammates, but soft
-constraints and sampled checks do not prove collision avoidance. Acceleration
-references describe the lag model, not motor thrust; hardware requires response
-and saturation identification.
+## ROS interfaces
 
-## MAVROS parameter bootstrap
+`uavN` denotes a configured vehicle; sensor topics use sensor-data QoS.
 
-The pinned MAVROS plugin nodes use `use_global_arguments(false)`, ignoring global
-command-line parameter files. Bootstrap uses `ListParameters`, `GetParameters`,
-and `SetParameters`, writing only changed values. Readiness requires completion.
-Undeclared keys warn and are skipped; rejected declared parameters fail
-initialization. UAS frames are configured separately on `mavros_node`.
+| Topic/service | Role |
+|---|---|
+| `/uavN/mavros/local_position/pose`, `/velocity_local` under the same prefix | FCU local pose/velocity |
+| `/uavN/mpc/pose`, `/uavN/mpc/velocity` | World-aligned measured state |
+| `/uavN/scan`, `/uavN/camera/image_raw`, `/uavN/camera/camera_info` | LiDAR and calibrated images |
+| `/uavN/target/observation`, `/target/ground_truth` | Selected target input |
+| `/uavN/mpc/trajectory` | Timestamped XY position/velocity/acceleration horizon |
+| `/uavN/mpc/reference`, `/uavN/mpc/prediction` | Requested reference and predicted path |
+| `/uavN/mavros/setpoint_raw/local` | Guarded FCU setpoint |
+| `/mpc/status`, `/mpc/setpoint_status`, `/mpc/occupancy_grid` | Controller/publisher diagnostics and visualization map |
+| `/mission/start`, `/mission/stop`, `/mission/reset`, `/mission/status` | Persistent mission requests |
+| `/mpc/enable`, `/target/run`, `/target/reset` | Publishing and target ownership |
+| `/solo/readiness`, `/clock` | Health and simulation clock |
 
-The pinned `setpoint_attitude.use_quaternion` callback captures a constructor-local
-QoS object by reference; later writes can cause `invalid allocator` crashes.
-Bootstrap leaves the correct default `false` untouched and rejects mode changes.
-Attitude/quaternion control requires fixing that capture, rebuilding MAVROS, and
-validating a new release.
+### MAVROS bootstrap
 
-## Verification
+Pinned MAVROS plugin nodes ignore global CLI parameter files. The bootstrap
+uses parameter services, writes only changed values, and must finish before
+readiness. The pinned `setpoint_attitude.use_quaternion` callback has a lifetime
+bug; leave its correct default `false` untouched. Enabling quaternion control
+requires fixing/rebuilding MAVROS and validating that change. Simulation disables
+MAVLink timesync/SYSTEM_TIME and the FCU parameter plugin because SITL loads its
+parameters and its clock differs from wall time.
 
-Do not write automated tests. Verify changes with representative simulation
-missions and inspect measured logs, telemetry, evaluation reports, or video:
+## Verification and optimizer replay
+
+Do not write automated tests. Run a representative mission, inspect measured
+telemetry, logs and evaluation, and stop normally; see [Simulation](SIMULATION.md).
+For a solver change, ground-truth target mode isolates optimization from camera
+detection; add recording when visual behavior is relevant. Preserve the specific
+run directory and report limits as well as successful outcomes.
+
+`metadata/controller_sources.jsonl` and optimizer captures identify actual loaded
+source hashes, the pinned commit, and `matches_pinned_sources`. Each UAV retains
+up to `diagnostic_capture_cycles` complete calls under `optimizer-inputs/`.
+Pending records survive worker termination; successful records include nominal
+and backup plans/warm starts. Copy a record before the ring overwrites it.
+
+Inside the simulation container:
 
 ```bash
-./scripts/dev mpc --record-video
-./scripts/dev mission run --seconds 20
-./scripts/dev evaluate
-./scripts/dev stop
-git diff --check
+PYTHONPATH=/workspace/ros_ws/src/solo_mpc OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1   python3 -m solo_mpc.replay_optimizer   /workspace/runs/RUN_ID/optimizer-inputs/uav1/solve-0001.json
 ```
 
-Review the relevant evidence in `runs/<run-id>/`, including `logs/`,
-`telemetry/mpc.jsonl`, `telemetry/truth.jsonl`, `reports/evaluation.json`, and
-`recorded-mission.mp4`. Stop normally to finalize the video. See
-[AGENTS.md](../AGENTS.md) for contributor instructions and
-[Operations](OPERATIONS.md#logs-and-evaluation) for evidence details. Record
-results and limitations in [Validation](VALIDATION.md); hardware follows the
-staged [migration plan](HARDWARE.md).
+Replay uses recorded budgets. `--iteration-only` removes the CPU cap for a
+separate numerical diagnostic; it does not establish flight or timing success.
+`SOLO_MPC_UPSTREAM_PATH` can explicitly select alternative upstream sources for
+diagnostics; hash mismatches remain visible in provenance.
+
+### Recorded verification
+
+Cleanup run `20261029T044343Z-8504` rebuilt the image and repeated a headless
+30-wall-second ground-truth-target mission after removing unused code and the
+standalone hardware workspace. All UAVs landed/disarmed; 301 of 303 airborne
+cycles were fleet-ready, with two CPU-cap failures. Minimum sampled body clearance
+was 0.778 m and separation 1.818 m. Installed imports and live source hashes
+confirmed the renamed occupancy grid, removed legacy modules, and unchanged
+upstream pin. Evidence is in that run's `reports/cleanup.json`, `evaluation.json`,
+mission status, telemetry, and command logs. Documentation links/import references
+and `git diff --check` also passed.
+
+Headless run `20261029T042434Z-29175` used upstream commit `3f71d4c`, measured
+FCU state/LiDAR, and ground-truth target input for 30 wall seconds of tracking.
+All three UAVs landed/disarmed. Of 306 airborne cycles, 304 were fleet-ready;
+UAV 1 hit the unchanged CPU cap twice. Minimum sampled body clearance was
+0.816 m; separation was 1.767 m. Fleet compute median/p95/max was
+100.2/139.7/220.7 ms, so the 100 ms target was not consistently achieved.
+
+The run's `reports/mpc-migration.json`, `evaluation.json`, source metadata,
+optimizer inputs, and telemetry retain the evidence. An archived optimizer call
+also replayed with zero state-trajectory difference from its pre-migration result.
+Camera detections, a complete route, and hardware flight were outside that check.
+Historical experiment details remain in their saved run directories and Git history.

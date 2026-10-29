@@ -1,289 +1,136 @@
 # Configuration
 
-[Project overview](../README.md) · [Operations](OPERATIONS.md)
+[Overview](../README.md) · [Simulation](SIMULATION.md) · [Development](DEVELOPMENT.md)
 
-Stop the simulation before editing inputs, then launch a fresh run. Inputs are
-snapshotted at launch; editing YAML does not change an active experiment.
+Stop the simulation before changing inputs. Launch snapshots configuration;
+editing a YAML file does not reconfigure an active experiment.
 
-## Select input files
+## Input files
 
-| Input | Default file | Purpose |
+| Input | Default | Purpose |
 |---|---|---|
-| Fleet | [fleet.yaml](../config/fleet.yaml) | UAV names, SITL instances, MAVLink system IDs |
-| Scenario | [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml) | Field, starts, obstacles, target route, algorithm parameters |
-| Controller | [controller.yaml](../ros_ws/src/solo_mpc/config/controller.yaml) | Altitude, sensors, timing, frame calibration, parameter overrides |
-| Hardware | [hardware.yaml](../config/hardware.yaml) | Physical FCU links and sensor placeholders |
+| Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names, SITL instances, SYSIDs |
+| Scenario | [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
+| Controller | [controller.yaml](../ros_ws/src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
+| Companion | [config/hardware.yaml](../config/hardware.yaml) | Optional MAVROS-only profile |
 
-Use container paths for CLI overrides. The checkout is mounted at `/workspace`:
-
-```bash
-./scripts/dev mpc \
-  --fleet /workspace/config/fleet-custom.yaml \
-  --scenario /workspace/config/scenario-custom.yaml \
-  --settings /workspace/config/controller-custom.yaml
-```
-
-For persistent selection, edit `.env`:
-
-| Variable | Default or meaning |
-|---|---|
-| `FLEET_CONFIG` | `/workspace/config/fleet.yaml` |
-| `MPC_SCENARIO` | `/workspace/ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml` |
-| `MPC_SETTINGS` | `/workspace/ros_ws/src/solo_mpc/config/controller.yaml` |
-| `MPC_TARGET_MODE` | Empty uses controller settings; override with `camera` or `ground_truth`; `--ground-truth-target` selects `ground_truth` |
-| `READINESS_TIMEOUT` | 600 wall seconds for initial simulation readiness |
-| `SIM_IMAGE`, `COMPANION_IMAGE` | Development tags or registry digests |
-| `BUILD_JOBS` | 4 compiler jobs by default |
-| `ROS_DOMAIN_ID` | 42; simulation discovery is local to the container |
-| `COMPOSE_PROJECT_NAME` | `solo`; also selects the Gazebo partition |
-| `LIBGL_ALWAYS_SOFTWARE` | Empty by default; `1` requests software rendering |
-
-The CLI supplies host UID/GID and a fresh run ID. See [WSL and GPU setup](WSL_GPU.md)
-for Compose overrides and [Hardware migration](HARDWARE.md) for device variables.
-Release deployments use a [separate environment file](REPRODUCIBILITY.md).
-
-## Horizontal launch row, scattered obstacle field
-
-The default [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml)
-uses a 50 m east-west by 30 m north-south field with twelve rectangular and
-twelve circular obstacles at irregular positions with varied sizes. The three
-UAVs start at `[5, 2, 3]`,
-`[2.5, 2, 3]`, and `[7.5, 2, 3]` in fleet order. They share Y = 2 m and altitude
-3 m, forming a horizontal row with 2.5 m spacing. All face north (+Y, yaw 90°),
-perpendicular to the row. The target begins at `[5, 3]`, ahead of the middle
-UAV, initially heading north. Its smooth route sweeps across the field, with
-east/west turns and changes between northward and southward travel, finishing
-at `[47, 23]`.
-
-Gazebo displays the rectangles as varied city towers with window grids, roof
-parapets, and rooftop equipment, and the circles as tall broadleaf trees. The
-same local, generated meshes appear in the GUI, overhead recording, and UAV
-cameras; no online model downloads are needed. Meshes live beside the generated
-world in `runs/<run-id>/config/city_assets/`.
-
-Whenever UAV cameras are enabled, the Gazebo GUI and overhead recording show
-each camera's coverage as four colored rays from its optical center beneath the
-UAV and a matching ground outline. Colors follow fleet order and match the
-recording's UAV FOV labels, map markers, and state panels: cyan for UAV 1,
-yellow for UAV 2, and pink for UAV 3 in the default fleet. The outline uses the
-configured camera FOV and image aspect ratio at the current simulator altitude;
-the default square camera covers approximately 2.96 × 2.96 m at body altitude
-3 m, accounting for its 0.04 m downward mount offset. The world-stabilized camera
-keeps the outline aligned with world axes during body tilt and yaw.
-
-Coverage guides project onto the flat ground plane at Z = 0. Buildings and
-trees can hide parts of the guides; the outline does not subtract occluded areas
-or project onto rooftops. These render-only guides cast no shadows, add no
-collisions, and are excluded from UAV camera images and LiDAR scans. They are
-also available with `--ground-truth-target --record-video`; ground-truth mode
-without recording omits the cameras and their guides.
-
-These are visual appearances only. Footprints, positions, collision geometry,
-and LiDAR returns retain the original boxes and cylinders, extruded to
-`obstacle_height` (5 m by default). GPU LiDAR uses a separate visibility mask
-to scan those original primitives and exclude the decorative meshes; cameras
-and the GUI hide the scan primitives. Proxy shadows are disabled. Building
-visuals are 1.8–2.52 times `obstacle_height` tall (9–12.6 m by default), and
-trees are 1.25–1.49 times that height (6.25–7.45 m). Tree crowns stay inside
-their circular footprints. The taller visual portions do not add physical or
-LiDAR obstacles above the original collision height. Camera images and marker
-occlusion follow the visible buildings and trees. Planning and mapping still
-use the existing measured LiDAR scans and 2D geometry.
-
-Start a fresh simulation with the existing three-UAV fleet and controller:
+Use container paths for CLI overrides:
 
 ```bash
-./scripts/dev mpc
+./scripts/dev mpc --fleet /workspace/config/fleet-custom.yaml   --scenario /workspace/config/scenario-custom.yaml   --settings /workspace/config/controller-custom.yaml
 ```
 
-MPC launch takes the UAV positions from the scenario, so no fleet file
-changes are needed. The row defines the initial formation; the controller can
-adjust UAV positions while following the target and avoiding obstacles.
+`.env` supports `FLEET_CONFIG`, `MPC_SCENARIO`, `MPC_SETTINGS`, `MPC_TARGET_MODE`,
+`READINESS_TIMEOUT` (600 wall seconds), `SIM_IMAGE`, `COMPANION_IMAGE`,
+`ROS_DOMAIN_ID` (42), `BUILD_JOBS` (4), and `LIBGL_ALWAYS_SOFTWARE`.
+The runner supplies host UID/GID and a fresh run ID. Select GPU/display overrides
+as described in [Simulation](SIMULATION.md#gpu-and-display).
 
-The target travels at 0.9 m/s, with a UAV speed limit of 1.8 m/s to leave
-catch-up margin through turns and obstacle detours. Acceleration remains
-2 m/s², and the 2.5 s backup stopping horizon remains enabled.
+## Fleet and geometry
 
-## Three-UAV fleet
+The supplied three-UAV scenario starts at `[5,2,3]`, `[2.5,2,3]`, `[7.5,2,3]`
+in fleet order, facing north (+Y). The target starts at `[5,3]` and follows a
+smooth winding route to `[47,23]` at **0.6 m/s**. Horizontal UAV speed is
+**1.2 m/s** under the supplied controller overrides.
 
-The supplied simulation uses three fleet entries and three finite XYZ rows in
-`scenario.starts`, in fleet order. Start altitudes must match the controller's
-`flight_altitude`, and XY spacing must be at least `UAV_SAFE_DISTANCE`.
-`params.GRID_CELLS` supplies the two unique, nonzero follower offsets.
+Coordinates are metres in common world ENU: east, north, up. `xlim`/`ylim`
+bound the field; rectangles are `[left,bottom,width,height]`, circles
+`[center_x,center_y,radius]`. Obstacles are extruded to `obstacle_height`.
+Decorative towers/trees can extend above their collision/LiDAR primitives;
+planning uses the original footprints. Coverage guides are render-only.
 
-Fleet schema version is `1`. Names match `[a-z][a-z0-9_]*`, system IDs are 1–255,
-and SITL instances are 0–200. The fleet needs a valid `world_name`. Each `spawn`
-contains `[x, y, z, roll, pitch, yaw]`, with finite values and angles in degrees.
-MPC launch uses scenario XY starts, ground height 0.195 m, and orientation
-`[0, 0, 90]`; `flight_altitude` controls flight height.
-Count/slot mismatches fail before launch. Instance `i` uses MAVLink TCP
-`5760 + 10*i` and JSON UDP `9002 + 10*i` internally, giving port pairs
-5760/9002, 5770/9012, and 5780/9022 for the supplied fleet.
+Match fleet entries to finite XYZ `starts` rows and supply one unique, nonzero
+`params.GRID_CELLS` offset per follower. Start altitude must match
+`flight_altitude`; XY starts must meet `UAV_SAFE_DISTANCE`. Fleet schema is `1`,
+names match `[a-z][a-z0-9_]*`, SYSIDs are 1–255, and instances are 0–200.
+Instance `i` uses MAVLink TCP `5760+10*i` and JSON UDP `9002+10*i`, inside the
+container. MPC launch replaces fleet spawn positions with scenario XY and a
+0.195 m ground height; flight altitude is controlled separately.
 
-## Scenario and controller parameters
+Target `waypoints` define the route. Optional `target.speeds` supplies a positive
+speed per leg. `TAR_SMOOTH_ENABLE: false` selects a polyline; otherwise a
+centripetal spline uses `TAR_SPLINE_DS`. The controller predicts from observed
+position/estimated velocity; it does not read the future route.
 
-Coordinates are metres in a shared world ENU frame: east, north, up. `xlim` and
-`ylim` bound the field. Rectangles are `[left, bottom, width, height]`; circles
-are `[center_x, center_y, radius]`. Gazebo extrudes them into boxes/cylinders.
-Target `waypoints` define a smooth route; `tar_max_speed` supplies constant target
-speed unless `target.speeds` provides one positive speed per waypoint leg.
-`TAR_SMOOTH_ENABLE: false` selects a polyline instead. An optional scenario
-`world_name` selects the Gazebo world/service namespace (default `mpc_small50`).
+## Algorithm parameters
 
-Algorithm parameters resolve in this order:
+Resolution order is local `settings.py` defaults → scenario `params` → controller
+`params` → derived values. Upstream `config.py` is never imported. Inspect the
+run's resolved `config/mpc-config.json` rather than inferring values from a YAML
+file that may have been overridden.
 
-```text
-settings.py defaults → scenario.params → controller.params → derived values
-```
-
-Derived values include timestep from `control_period`, viewing radius from the
-scenario, world bounds, inflation from vehicle radius plus margin, and standoff
-distance from viewing radius and target speed. Inspect the final `mpc-config.json`
-in the run directory rather than relying on an overridden YAML value.
-
-`CORRIDOR_MARGIN` is derived after overrides unless explicitly supplied. It adds
-vehicle radius, range-error allowance, half the ray spacing over the longer
-horizon, and the grid-cell half diagonal. `LIDAR_ANGULAR_RES` follows `lidar_samples`, and the
-default range allowance is three times `lidar_noise_stddev` (Gaussian noise is
-unbounded). `CORRIDOR_SEED_MAX` is sensing range minus `sqrt(2)*CORRIDOR_BOX`;
-configurations leaving less than one grid cell for the seed are rejected.
-
-| Setting / parameter | Default | Meaning |
+| Parameter | Supplied value | Meaning |
 |---|---:|---|
-| `flight_altitude` / `obstacle_height` | 3 / 5 m | Flight height / extruded obstacle height |
-| `control_period` / `publish_rate` | 0.1 s / 20 Hz | MPC decisions / independent setpoint publishing, in simulation time |
-| `HORIZON_LENGTH` | 10 steps | MPC prediction horizon |
-| `CONTINGENCY` / `BACKUP_HORIZON` | true / 25 steps | Separate stop branch sharing the nominal first control, ending at rest in the hard corridor |
-| `W_backup` / `TERMINAL_STOP` | 0.1 / false | Relative backup effort weight / optional nominal terminal stop for comparison |
-| `LOCAL_SEARCH` | `jps` | Local JPS with Dijkstra fallback; select `dijkstra` to apply `UNKNOWN_COST` |
-| `ROBOT_RADIUS` / `INFLATE_MARGIN` | 0.36 / 0.15 m | Vehicle footprint / obstacle margin |
-| `UAV_SAFE_DISTANCE` | 1 m | Initial spacing and separation parameter |
-| `VMAX` / `UMAX` | 1.8 m/s / 2 m/s² | Horizontal speed / acceleration limits |
-| `ACCEL_TAU` | 0.2 s | Acceleration-lag time constant |
-| `CORRIDOR_MAX_FACES` | 16 | Initial solver allocation; grows if needed |
-| `CORRIDOR_BOX` / derived `CORRIDOR_MARGIN` | 1.5 / approximately 0.522 m | Decomposition box half size / hard obstacle margin |
-| `MPC_SOLVER` | `ipopt` | Solver backend |
+| `HORIZON_LENGTH` / `TIMESTEP` | 10 / 0.1 s | Nominal prediction horizon; timestep follows `control_period` |
+| `ROBOT_RADIUS` / `INFLATE_MARGIN` | 0.36 / 0.15 m | Body and grid safety margin |
+| `VMAX` / `UMAX` / `ACCEL_TAU` | 1.2 m/s / 2 m/s² / 0.2 s | Prediction limits and acceleration lag |
+| `UAV_SAFE_DISTANCE` / `COLLISION_AVOID_DISTANCE` | 1 / 1.5 m | Soft separation and avoidance cost distance |
+| `GRID_RESOLUTION` / `LOCAL_PLAN_RADIUS` | 0.15 / 10 m | Grid resolution and local window half size |
+| `LOCAL_SEARCH` | `jps` | Local JPS with Dijkstra fallback; `dijkstra` applies unknown-space cost |
+| `UNKNOWN_POLICY` / `UNKNOWN_COST` | `optimistic` / 1.5 | Unknown cells allowed, with higher Dijkstra cost |
+| `CONTINGENCY` / `BACKUP_HORIZON` | true / 25 | Separate stopping branch ending at rest after 2.5 s |
+| `W_backup` / `TERMINAL_STOP` | 0.1 / false | Backup effort weight / optional nominal terminal stop |
+| `CORRIDOR_BOX` / `CORRIDOR_MAX_FACES` | 1.5 m / 16 | Decomposition half size and initial solver allocation |
+| `SPEED_RECOVERY` | false | Local adapter option for initially overspeed measured states |
+| `IPOPT_OPTIONS` | 500 iterations / 0.2 s CPU | Solver limits; worker deadline remains independent |
 
-Keep obstacle height above flight altitude plus vehicle radius. `IPOPT_OPTIONS`
-sets iterations, tolerances, and CPU limits; the default 0.2 s per-solve limit
-does not guarantee a 0.1 s fleet cycle. Planning is planar and separation/visibility
-constraints are soft, so these settings do not establish collision guarantees.
-The 500-iteration limit follows upstream. The CPU allowance was raised from
-60 ms for the additional contingency branch; worker deadlines still apply.
+Derived values include inflation radius, world bounds, standoff distance,
+formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`
+includes body radius, three Gaussian LiDAR-noise standard deviations, ray spacing,
+and the grid-cell half diagonal. Noise is unbounded. The forward corridor seed
+must leave at least one cell of usable range. Keep obstacle collision height
+above flight altitude plus body radius.
 
-On planner, corridor, or solver failure, the controller follows the remaining
-verified stop branch (or nominal tail with `TERMINAL_STOP`) and publishes its
-prediction to teammates. Replay is indexed by elapsed simulation time. Measured
-XY position, velocity and acceleration must agree with that branch within
-`BACKUP_POSITION_TOLERANCE` (0.15 m), `BACKUP_VELOCITY_TOLERANCE` (0.3 m/s), and
-`BACKUP_ACCEL_TOLERANCE` (0.5 m/s²). Otherwise no fresh reference is produced and
-the independent publisher's expiry behavior applies. A completed branch holds
-its terminal position with zero velocity and acceleration. New corridors must
-contain the remaining branch with the margin, or the previous static corridor
-is retained. Fallback results report `nominal_ok: false` and `stop_plan: ...`,
-so persistent failures still trigger mission cleanup. Missing sensors and failed
-workers continue to suppress references.
+After a nominal solve fails, a retained stop branch can be replayed only while
+measured XY position, velocity, and acceleration agree within 0.15 m, 0.3 m/s,
+and 0.5 m/s². Otherwise no fresh reference is produced; independent expiry and
+supervision apply. Failed nominal solves remain visible as `nominal_ok: false`.
+These sampled/soft constraints do not establish collision guarantees.
 
 ## Sensors and target input
 
-Defaults are a 160 × 160 camera at 8 Hz, approximately 53.13° horizontal FOV,
-and horizontal LiDAR with 360 samples at 10 Hz, with 0.01 m Gaussian range-noise
-standard deviation. Each UAV camera uses an ideal three-axis gimbal: it looks
-straight down with a fixed world heading, compensating body roll, pitch, and yaw
-at every rendered exposure. Its virtual optical center remains 0.04 m below the
-vehicle origin in world Z, so tilt does not displace the footprint sideways.
-LiDAR remains rigidly mounted to the body. The camera image must be square.
-At 3 m altitude the nominal footprint is a centered, world-aligned square with
-half-width `(3 - 0.04 - target_plane_z) * tan(camera_hfov / 2)`, approximately
-1.445 m on the marker's top plane (`target_height + 0.02` = 0.07 m).
-The default visibility CBF uses a smaller 0.825 m half-width.
-The gimbal removes attitude vibration; translation and altitude changes still
-move and resize the footprint. It models perfect stabilization without actuator
-limits, mechanical dynamics, or image filtering. Fixed-altitude planar prediction,
-occlusion, soft CBF slack, and measured-pose latency remain limitations.
-Rates follow simulation time. `--record-video` encodes the overhead view and all UAV FOVs into one
-synchronized video, with occupancy and drone state overlays. The state panel
-shows world XYZ values and heading/motion arrows; see
-[recordings](OPERATIONS.md#record-video) for units and interpretation.
+Camera defaults are 160 × 160 at 8 Hz, square images, and approximately 53.13°
+horizontal FOV. The ideal Gazebo gimbal keeps the camera downward and world-aligned,
+with its optical center 0.04 m below the body. It cancels attitude motion without
+mechanical dynamics. The ground footprint is about 2.96 × 2.96 m at 3 m body
+altitude. Projection assumes a known flat target plane; occlusion remains possible.
 
-`camera` mode uses marker detections for target tracking; the controller does
-not subscribe to target truth. Ground truth still supports disarmed frame
-alignment, route-completion checks, and evaluation. Camera mode requires a first
-observation before SEARCH can start and suppresses planning after the bounded
-target coast/search budget. This adapts the paper's external-localization problem;
-camera stabilization does not supply an unseen target position. `ground_truth`
-mode is closer to that external position source. To use truth as controller
-input instead, start a fresh run:
+Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 3 m range, and 0.01 m
+Gaussian range-noise standard deviation. Invalid/missing rays remain unknown;
+observed no-return rays clear space; excessive tilt is rejected. An optimistic
+map is not proof that unobserved space is clear.
 
-```bash
-./scripts/dev mpc --ground-truth-target
-./scripts/dev mission run --seconds 20
-```
+`camera` mode uses magenta-marker detections. During brief loss the estimate
+coasts, then searches; prolonged loss pauses the cooperative simulated target.
+`./scripts/dev mpc --ground-truth-target` instead provides exact timestamped target
+positions, omitting detectors/cameras unless recording. Velocity, confidence,
+and lead pursuit remain estimated. A stale external target fails the mission
+with landing cleanup. The CLI flag overrides environment/YAML target selection.
 
-The target process evaluates the configured route and per-leg speed schedule
-at Gazebo simulation timestamps, including mission pause, resume, and reset.
-It publishes the same position used to move the pink marker on
-`/target/ground_truth`, stamped at the route evaluation time. The controller
-preserves those exact position measurements. Its constant-velocity Kalman
-estimator supplies velocity, velocity confidence, and
-lead pursuit. An external position does not imply perfect knowledge of velocity
-or future motion. Future MPC references still use bounded constant-velocity
-prediction; the controller does not read the future route.
-
-This flag overrides `MPC_TARGET_MODE` and the controller's `target_mode` setting.
-The environment variable and `target_mode:=ground_truth` ROS launch argument
-remain supported. The resolved source is saved in the run's `controller.yaml`
-and reported in `/mpc/status`, `mpc.jsonl`, and evaluation results.
-
-In `ground_truth` mode, marker detector processes are omitted from launch and
-startup readiness. UAV camera sensors and bridges are omitted unless
-`--record-video` is requested. This flag also enables the overhead camera and
-saves one combined video. `--record-video` and `--gui` can be combined with
-`--ground-truth-target`. LiDAR, measured UAV state, frame alignment,
-formation distance gates, and independent setpoint expiry still apply.
-`SEARCH` retains the upstream meaning: actively pursue the supplied target,
-rather than hold position or wait for a detection. Target availability and
-formation membership are separate. A leader must be inside the square viewing
-radius; a distant follower pursues the target until it is close enough to join
-the leader's formation. If no UAV satisfies the viewing gate, all UAVs can be
-in `SEARCH` while the external target input remains fresh. Mission progress
-prints `search (target pursuit)` and `external target: fresh` to distinguish
-this case from a missing input. `/mpc/status` and `mpc.jsonl` also expose
-`target_input_fresh` independently of the controller modes.
-Completion uses the scenario's `viewing_radius` as the nearest-UAV distance
-threshold. Camera occlusion does not pause the target in this mode; an external
-sample older than `target_timeout_sim` suppresses controller output and fails
-the mission with normal landing cleanup.
-
-LiDAR always uses Gazebo returns. Missing rays stay unknown; observed no-return
-rays clear space; strongly tilted rays are discarded. Default `UNKNOWN_POLICY`
-is `optimistic`, so unobserved space is not guaranteed clear. A 2D scan cannot
-represent arbitrary 3D obstacles, and camera projection assumes a known flat
-target plane.
+`SEARCH` means target pursuit; a distant UAV can be in SEARCH even with fresh
+external input. Formation membership still uses viewing-distance gates. The
+resolved source and `target_input_fresh` are reported in logs and status.
 
 ## Timing and expiry
 
-`*_sim` means Gazebo time; `*_wall` means elapsed real time. These budgets differ
-when simulation runs below real time. See [frames and clocks](DEVELOPMENT.md#frames-and-clocks).
+`*_sim` uses Gazebo time; `*_wall` uses elapsed real time. Slow simulation makes
+these budgets differ. Sensor rates also follow simulation time.
 
-| Setting | Default | Purpose |
-|---|---:|---|
-| `controller_execution` | `parallel` | Persistent worker per UAV; `sequential` orders worker solves against the same phase deadline |
-| `controller_worker_timeout_wall` / `controller_worker_startup_timeout_wall` | 1 / 30 s | Shared phase / initialization deadlines |
-| `state_timeout_sim` / `sensor_timeout_sim` | 0.5 / 0.5 s | Input freshness |
-| `target_timeout_sim` / `target_search_timeout_sim` | 1.5 / 8 s | Target loss / reacquisition deadline |
-| `planner_failure_timeout_sim` | 3 s | Persistent planning-failure deadline |
-| `command_timeout_sim` / `command_timeout_wall` | 0.4 / 3 s | Independent reference expiry limits |
-| `pose_timeout_wall` | 3 s | Measured pose freshness |
-| `fcu_timeout_sim` / `fcu_timeout_wall` | 2.5 / 60 s | FCU heartbeat freshness |
-| `arrival_fleet_radius` / `arrival_timeout_sim` | 6 m / 30 s | Fleet arrival after the last target waypoint |
+| Setting | Default |
+|---|---:|
+| `flight_altitude` / `obstacle_height` | 3 / 5 m |
+| `control_period` / `publish_rate` | 0.1 s / 20 Hz |
+| `controller_execution` | `parallel`; `sequential` orders the same persistent workers |
+| Worker phase / startup timeout | 1 / 30 wall seconds |
+| State / sensor freshness | 0.5 / 0.5 simulation seconds |
+| Target freshness / search budget | 1.5 / 8 simulation seconds |
+| Persistent planning failure budget | 3 simulation seconds |
+| Command expiry | 0.4 simulation seconds and 3 wall seconds |
+| Pose wall freshness | 3 seconds |
+| FCU freshness | 2.5 simulation seconds and 60 wall seconds |
+| Final fleet arrival radius / timeout | 6 m / 30 simulation seconds |
+| `diagnostic_capture_cycles` | 128 retained calls per UAV; 0 disables capture |
 
-Worker timeouts bound failures; they are not the 100 ms decision target. Initial
-native solves may take longer than warm solves. Increasing timeouts does not
-restore sensor/control rates.
-Initialization compiles both contiguous and noncontiguous planner kernels before
-workers report ready, using the separate startup timeout rather than a flight job.
-
-Controller semantics, intentional production differences, solver-budget policy,
-and bounded `diagnostic_capture_cycles` optimizer snapshots are documented in
-[the parity verification guide](MPC_PARITY.md).
+Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
+planner kernels warm both contiguous and sliced windows before worker readiness.
+See [Development](DEVELOPMENT.md#frames-and-clocks) before changing clock policy.

@@ -1,105 +1,112 @@
-# Project overview
+# Project and architecture
 
-This project simulates multiple UAVs tracking a moving target through obstacles
-using model predictive control (MPC). The default scenario has three Iris UAVs
-in a 50 × 30 m field flying at 3 m. Docker supplies ROS 2 Jazzy, Gazebo Harmonic,
-ArduCopter SITL, and MAVROS; the host needs Docker Compose and Python 3.
+This project simulates three UAVs tracking a moving target through obstacles at
+3 m altitude. Docker supplies ROS 2 Jazzy, ArduCopter SITL, MAVROS, and Gazebo
+Harmonic. MPC is planar; Gazebo/ArduPilot provide 3D vehicle physics.
 
-Simulation is the primary development environment. The hardware profile and
-standalone `hardware_mpc/` workspace need additional integration before physical
-flight. Successful simulation does not establish hardware flight readiness.
+Read `README.md` first. The four guides are `docs/SIMULATION.md` (run, record,
+inspect, recover, GPU), `docs/CONFIGURATION.md` (inputs and timing),
+`docs/DEVELOPMENT.md` (architecture, submodule, interfaces, replay), and
+`docs/DEPLOYMENT.md` (installed images and optional MAVROS companion support).
+Keep this documentation structure compact; update an existing guide rather
+than adding a separate document for each feature or experiment.
 
 ## Where to work
 
-- `scripts/dev`: primary host CLI for builds, simulation, missions, and inspection.
-- `ros_ws/src/solo_bringup/`: fleet configuration, launch, readiness, and flight helpers.
-- `ros_ws/src/solo_mpc/solo_mpc/core/`: numerical MPC, planning, mapping, tracking,
-  and persistent per-UAV workers; keep this code independent of ROS.
-- `ros_ws/src/solo_mpc/solo_mpc/`: ROS adapters, frames, perception, setpoint
-  publishing, mission supervision, recording, and evaluation.
-- `ros_ws/src/solo_mpc/gazebo/`: native world-stabilized camera plugin.
+- `external/motion_planning_MPC/`: colleague-owned Git submodule. Solver
+  `mpc_problem.py` and predictive `dynamics.py` execute directly from this source.
+- `ros_ws/src/solo_mpc/solo_mpc/core/upstream.py`: isolated upstream imports and
+  actual source provenance; do not import upstream simulator/global config.
+- `core/mpc_problem.py`: local compatibility adapter, retaining inactive-neighbor
+  conditioning and optional speed recovery. Do not restore copied solver code.
+- Other `solo_mpc/core/` modules: local planning, occupancy/mapping, target
+  estimation, coordination, and persistent per-UAV workers; keep ROS imports out.
+  These remain local ports and do not automatically follow upstream changes.
+- `ros_ws/src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
+  mission supervision, recording, and evaluation.
+- `ros_ws/src/solo_mpc/gazebo/`: native camera/gimbal/coverage plugins.
+- `ros_ws/src/solo_bringup/`: fleet launch, readiness, generated files, MAVROS helpers.
 - `ros_ws/src/solo_mpc_interfaces/`: mission service definition.
-- `config/`, `ros_ws/src/solo_mpc/config/`, and
-  `ros_ws/src/solo_mpc/scenarios/`: fleet, controller, and scenario settings.
-- `docker/`, `compose*.yaml`, and `locks/`: runtime, deployment, and pinned inputs.
-- `hardware_mpc/`: standalone hardware integration workspace; consider whether
-  shared controller changes also apply there.
-- `runs/` and `artifacts/`: generated evidence, ignored by Git.
+- `config/`, package `config/` and `scenarios/`: fleet/controller/scenario settings.
+- `docker/`, `compose*.yaml`, `locks/`: runtime, deployment, pinned dependencies.
+- `runs/`, `artifacts/`: generated evidence, ignored by Git; do not delete prior runs.
 
-Read `README.md` and `docs/GETTING_STARTED.md` first. Consult
-`docs/DEVELOPMENT.md` for architecture and ROS interfaces,
-`docs/CONFIGURATION.md` for settings, and `docs/OPERATIONS.md` for recovery and
-recording details.
+The standalone hardware workspace has been removed. The optional companion
+profile starts MAVROS/readiness only; it does not provide physical MPC flight.
 
-## Implementation instructions
+## Submodule workflow
 
-- Keep changes focused and update documentation when commands or behavior change.
+Initialize before building: `git submodule update --init --recursive`.
+Keep the colleague's upstream files and sibling checkout unchanged. Put
+simulation-specific behavior in local adapters. Change upstream source only if
+the user explicitly requests upstream development; do not patch, monkey-patch
+globally, or copy the solver into this project to avoid an interface mismatch.
+
+To update to an authorized revision, fetch in the submodule and run
+`./scripts/pin-mpc-upstream COMMIT_OR_REF`. The helper rejects local submodule
+changes, checks out a detached revision, and refreshes
+`ros_ws/src/solo_mpc/UPSTREAM.json`. Review the upstream diff, validate, and include
+both the gitlink and metadata when committing. Preserve provenance and licenses.
+Do not advance the pin just because a newer remote revision exists.
+
+Development loads the live submodule under `/workspace`. Installed ROS packages
+bundle unchanged solver/dynamics sources and license under
+`share/solo_mpc/upstream`; release runtime must work without Git or a host checkout.
+Keep both paths working. The upstream requirements file includes simulation and
+plotting dependencies; dependency changes belong in Docker and local locks.
+
+## Implementation rules
+
 - Preserve measured-state control, per-UAV isolation, common-world ENU alignment,
-  simulation-time semantics, independent setpoint expiry, and mission cleanup.
-- Do not bypass readiness, watchdogs, ownership checks, or landing to make a run
-  appear successful. Investigate the recorded failure instead.
-- In development, the checkout is mounted at `/workspace` in the container.
-  Restart the simulation to apply existing Python, launch, or configuration edits.
-  Rebuild with `./scripts/dev build sim` for native plugin changes, dependencies,
-  new executables, package metadata, or interfaces.
-- Keep dependency changes in the Dockerfile and locks. Preserve upstream
-  provenance and licenses. Do not commit generated run data or local `.env` files.
+  simulation-time semantics, source-stamped trajectories, independent setpoint
+  expiry, ownership checks, and landing/cleanup. Never bypass them to pass a run.
+- In development, restart the stack for existing Python/config/launch/upstream
+  edits. Rebuild with `./scripts/dev build sim` for dependencies, package metadata,
+  executables/interfaces, renamed modules, and native plugins. Release source
+  changes always need a new image.
+- Remove code only after checking imports, entry points, launch files, and CLI
+  references. Shared grid/planning utilities remain necessary even where their
+  original upstream simulation classes have been removed.
+- Keep changes focused, update the relevant guide, and avoid generated run data,
+  local `.env` files, caches, and dependency copies in commits.
 
-## Verification: run the project and inspect evidence
+## Verification
 
-**Do not write automated tests at all.** Do not add unit, integration, regression,
-or end-to-end tests, test suites, test harnesses, or CI workflows that run tests.
-Verify feature implementations and fixes by running representative simulator
-missions and inspecting logs, telemetry, evaluation reports, or recorded video.
+**Do not write automated tests.** Do not add unit/integration/regression/end-to-end
+suites, test harnesses, or CI workflows that run tests. Verify feature changes
+through representative simulator missions and recorded evidence. Documentation
+and unused-file cleanup also need reference/import checks; run a mission when
+active imports, packaging, or runtime behavior change.
 
-Agents can run commands like this from the repository root without asking for
-additional permission for routine simulation verification:
-
-```bash
-./scripts/dev mpc --record-video && ./scripts/dev mission run --seconds 20 && ./scripts/dev stop
-```
-
-Use similar commands suited to the change, such as adding
-`--ground-truth-target` or selecting a different fleet, scenario, or settings file.
-`--seconds 20` limits tracking in wall-clock seconds; startup, takeoff, and landing
-take additional time. Startup may take several minutes with software rendering.
-Use a longer mission when the feature requires more time to observe.
-
-For numerical evidence, run evaluation after the mission lands and before
-stopping the container:
+Routine simulation verification is authorized without additional confirmation:
 
 ```bash
-./scripts/dev mpc --record-video
-./scripts/dev mission run --seconds 20
+./scripts/dev mpc --ground-truth-target
+./scripts/dev mission run --seconds 30
 ./scripts/dev evaluate
 ./scripts/dev stop
 ```
 
-Inspect the specific `runs/<run-id>/` directory; `runs/latest` changes with each
-launch. Check the evidence relevant to the feature:
+Add `--record-video` when visual behavior is relevant, or use default camera mode
+to check perception. The duration limits tracking wall time, not startup/takeoff/
+landing. Use longer runs when needed. Stop any existing simulation before a new
+one. If a command fails, inspect it and explicitly complete cleanup; commands
+after a failed `&&` are skipped. Confirm landing/disarm. Use `stop --force` only
+for a crashed simulation when normal cleanup cannot complete.
 
-- `logs/`: process errors, warnings, and shutdown behavior.
-- `status/startup.json`, `status/health.json`, `status/ready.json`, and
-  `status/components/`: initialization and readiness.
-- `telemetry/mpc.jsonl` and `telemetry/truth.jsonl`: measured tracking, controller
-  outcomes, timing, and independent vehicle positions.
-- `reports/evaluation.json`: tracking, geometry, compute, and simulation speed.
-- `recorded-mission.mp4`: visually inspect the overhead view, occupancy map,
-  drone state instruments, and UAV camera feeds for the intended behavior.
-  Normal `./scripts/dev stop` finalizes the recording; mission completion alone
-  does not close it.
+Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
 
-While running, use `./scripts/dev status`, `./scripts/dev mission status`,
-`./scripts/dev logs`, `./scripts/dev doctor`, or `./scripts/dev shell` as needed.
-A successful command exit alone is insufficient: confirm the feature's observable
-result and check for relevant failures in the evidence.
+- `metadata/controller_sources.jsonl` and optimizer captures: actual upstream
+  source hashes, pinned commit, `matches_pinned_sources`, and adapter identity.
+- `logs/`, `status/startup.json`, `health.json`, `ready.json`, and component status:
+  initialization, exceptions, readiness, and shutdown.
+- `telemetry/mpc.jsonl`, `telemetry/truth.jsonl`, `reports/evaluation.json`: measured
+  motion, all UAVs' solver outcomes, timing, tracking, geometry, and failures.
+- `recorded-mission.mp4` when requested: visually inspect the relevant result;
+  normal `stop` finalizes it, mission completion alone does not.
 
-If a command in an `&&` chain fails, later commands are skipped. Inspect the
-failure and explicitly run `./scripts/dev mission stop` or `./scripts/dev stop`
-as needed. Confirm landing and disarm; use `stop --force` only for a crashed
-simulation when normal cleanup cannot complete. Stop an existing simulation
-before starting a new one.
-
-Run `git diff --check` before finishing. Report what changed, the commands run,
-the run directory and evidence reviewed, the observed result, and any limitations.
-If simulation could not run, state the blocker and do not claim runtime success.
+Optimizer replay is a numerical diagnostic, not a substitute for flight evidence.
+Successful command exits alone are insufficient. Keep CPU/deadline failures
+visible. Run `git diff --check` before finishing. Report changes, verification
+commands, run directory, observed results, and limitations. If simulation is
+blocked, state the blocker and do not claim runtime success.

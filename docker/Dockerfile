@@ -39,6 +39,7 @@ ENTRYPOINT ["/usr/local/bin/solo-entrypoint"]
 
 # Keep application changes after expensive dependency/compiler layers.
 FROM common_build AS application_build
+COPY external/motion_planning_MPC /opt/external/motion_planning_MPC
 COPY ros_ws/src /opt/solo_ws/src
 RUN source /opt/ros/jazzy/setup.bash && source /opt/mavros_ws/install/setup.bash && cd /opt/solo_ws && \
     colcon build --event-handlers console_direct+

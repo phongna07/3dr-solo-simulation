@@ -1,32 +1,12 @@
+"""Persistent occupancy-grid primitives shared by the local planner."""
 
-import logging
-import time
 import numpy as np
 
 # Defaults are explicit; ROS scenario loading passes every planning parameter.
 _RES_DEFAULT = 0.15
-_ROBOT_R_DEFAULT = 0.36
 _INFLATE_DEFAULT = 0.51
 _SENSING_DEFAULT = 3.0
 
-try:
-    import pathfind
-    PATHFIND_AVAILABLE = True
-except ImportError:
-    PATHFIND_AVAILABLE = False
-
-
-
-def WORLD_BOUNDS_FROM_SCENARIO(scenario):
-    """Tiện ích: lấy (xmin, ymin, xmax, ymax) từ dict scenario có xlim/ylim."""
-    x0, x1 = scenario["xlim"]
-    y0, y1 = scenario["ylim"]
-    return (float(x0), float(y0), float(x1), float(y1))
-
-
-# ============================================================
-# Helpers: shift / dilation nhị phân bằng numpy (không cần scipy)
-# ============================================================
 def _shift(a, dy, dx):
     """Dịch mảng theo (dy,dx), phần trống = 0 (không wrap-around)."""
     out = np.zeros_like(a)
@@ -277,22 +257,6 @@ class PersistentLogOddsGrid:
         return True
 
 
-# ============================================================
-# Goal projection (rút gọn): kẹp goal vào world nếu nằm ngoài
-# ============================================================
-def project_goal_to_grid(start, goal, grid: PersistentLogOddsGrid, margin=2.0):
-    """Clamp a goal outside the world to `margin` metres inside the border."""
-    start = np.asarray(start[:2], float)
-    goal = np.asarray(goal[:2], float)
-    if grid.is_within_world(goal[0], goal[1]):
-        return goal, False
-    xmin = grid.ox + margin
-    ymin = grid.oy + margin
-    xmax = grid.ox + grid.size_x * grid.resolution - margin
-    ymax = grid.oy + grid.size_y * grid.resolution - margin
-    clamped = np.array([np.clip(goal[0], xmin, xmax),
-                        np.clip(goal[1], ymin, ymax)])
-    return clamped, True
 
 
 # ============================================================
@@ -319,171 +283,3 @@ def _string_pull(path_world, grid: PersistentLogOddsGrid):
     if not np.allclose(out[-1], pts[-1]):
         out.append(pts[-1])
     return [list(p) for p in out]
-
-
-def remove_residual_node(path, obstacle_points=None, robot_radius=None):
-    """Passthrough để tương thích code cũ (smoothing đã làm trong plan())."""
-    return np.asarray(path, dtype=float)
-
-
-# ============================================================
-# JPS planner (drop-in)
-# ============================================================
-class JPSPlanner:
-
-    # registry: map bền vững theo agent_id, sống sót dù planner bị tạo lại
-    _MAP_REGISTRY = {}
-
-    def __init__(self, world_bounds=None, agent_id=None,
-                 grid_resolution=_RES_DEFAULT,
-                 inflate_radius=_INFLATE_DEFAULT,
-                 sensing_radius=_SENSING_DEFAULT,
-                 treat_unknown_as_blocked=True,
-                 start_snap_radius=10.0, goal_snap_radius=30.0,
-                 goal_clamp_margin=2.0,
-                 **grid_kwargs):
-        if not PATHFIND_AVAILABLE:
-            raise ImportError("Library 'pathfind' chưa cài. Chạy: pip install pathfind")
-        if world_bounds is None:
-            raise ValueError(
-                "JPSPlanner cần world_bounds=(xmin,ymin,xmax,ymax). "
-                "Dùng WORLD_BOUNDS_FROM_SCENARIO(scenario) để lấy từ xlim/ylim.")
-
-        self.agent_id = agent_id
-        # search radii (m) used to move a blocked start / goal to a free cell
-        self.start_snap_radius = float(start_snap_radius)
-        self.goal_snap_radius = float(goal_snap_radius)
-        self.goal_clamp_margin = float(goal_clamp_margin)
-        self.start = None
-        self.goal = None
-
-        key = (agent_id, tuple(np.round(world_bounds, 3)),
-               round(grid_resolution, 4))
-        if agent_id is not None and key in JPSPlanner._MAP_REGISTRY:
-            self.gmap = JPSPlanner._MAP_REGISTRY[key]
-            self.gmap.set_inflate(inflate_radius)
-        else:
-            self.gmap = PersistentLogOddsGrid(
-                world_bounds, resolution=grid_resolution,
-                inflate_radius=inflate_radius, sensing_radius=sensing_radius,
-                treat_unknown_as_blocked=treat_unknown_as_blocked, **grid_kwargs)
-            if agent_id is not None:
-                JPSPlanner._MAP_REGISTRY[key] = self.gmap
-
-    def _cells(self, metres):
-        """Convert a distance in metres to a whole number of grid cells."""
-        return max(1, int(np.ceil(metres / self.gmap.resolution - 1e-9)))
-
-    # ---- API ----
-    def initialize(self, start, goal):
-        self.start = np.asarray(start[:2], dtype=float)
-        self.goal = np.asarray(goal[:2], dtype=float)
-
-    def observe(self, robot_pos, obstacle_points):
-        """Gọi MỖI control-step để map luôn tươi (kể cả khi không replan)."""
-        self.gmap.observe(robot_pos, obstacle_points)
-
-    @classmethod
-    def reset_map(cls, agent_id=None):
-        """Xoá map (vd khi bắt đầu episode mới)."""
-        if agent_id is None:
-            cls._MAP_REGISTRY.clear()
-        else:
-            for k in [k for k in cls._MAP_REGISTRY if k[0] == agent_id]:
-                del cls._MAP_REGISTRY[k]
-
-    def plan(self, obstacle_points, robot_radius,
-             max_iter=None, time_budget_ms=None, observe=True):
-        if self.start is None or self.goal is None:
-            return False, [], set(), set(), 0
-
-        # 1) cập nhật map từ scan hiện tại
-        if observe:
-            self.gmap.observe(self.start, obstacle_points)
-        self.gmap.set_inflate(max(self.gmap.inflate_radius, robot_radius))
-        self.gmap.rebuild()
-
-        # 2) toạ độ grid
-        sx, sy = self.gmap.world_to_grid(self.start[0], self.start[1])
-        local_goal, _ = project_goal_to_grid(self.start, self.goal, self.gmap,
-                                             margin=self.goal_clamp_margin)
-        gx, gy = self.gmap.world_to_grid(local_goal[0], local_goal[1])
-
-        if not self.gmap.in_bounds(sx, sy) or not self.gmap.in_bounds(gx, gy):
-            return False, [], set(), set(), 0
-
-        # 3) start kẹt -> nhích ra ô free gần nhất
-        if not self.gmap.is_free(sx, sy):
-            r = self.gmap.nearest_free(sx, sy, max_radius=self._cells(self.start_snap_radius))
-            if r[0] is None:
-                return False, [], set(), set(), 0
-            sx, sy = r
-
-        # 4) goal kẹt (trong vật cản HOẶC trong vùng unknown/shadow)
-        #    -> kéo về ô free gần goal nhất = điểm biên (frontier) hướng goal.
-        #    bán kính lớn để vượt qua bóng/khối vật cản to.
-        if not self.gmap.is_free(gx, gy):
-            r = self.gmap.nearest_free(gx, gy, max_radius=self._cells(self.goal_snap_radius))
-            if r[0] is None:
-                return False, [], set(), set(), 0
-            gx, gy = r
-
-        # 5) start == goal: đã ở/đạt vị trí khả thi gần nhất.
-        #    Trả PATH 2 ĐIỂM (không phải 1) để caller KHÔNG đếm là fail.
-        if (sx, sy) == (gx, gy):
-            wx, wy = self.gmap.grid_to_world(sx, sy)
-            return True, [[wx, wy], [wx, wy]], set(), set(), 2
-
-        # 6) JPS qua pathfind
-        matrix = self.gmap.to_matrix()
-        start_str = f"{sy},{sx}"     # pathfind: "row,col" = (y,x)
-        end_str = f"{gy},{gx}"
-        try:
-            graph = pathfind.transform.matrix2graph(matrix, diagonal=True)
-            path_strs = pathfind.find(graph, start=start_str, end=end_str,
-                                      method="jps")
-        except Exception as e:
-            logging.getLogger("planner").warning("JPS library error: %s: %s",
-                                                 type(e).__name__, e)
-            return False, [], set(), set(), 0
-
-        if not path_strs:
-            return False, [], set(), set(), 0
-
-        # 7) về world coords
-        path_world = []
-        for s in path_strs:
-            iy, ix = (int(v) for v in s.split(","))
-            wx, wy = self.gmap.grid_to_world(ix, iy)
-            path_world.append([wx, wy])
-
-        # 8) smoothing (line-of-sight trên CÙNG grid)
-        smoothed = _string_pull(path_world, self.gmap)
-        if len(smoothed) < 2:
-            smoothed = path_world if len(path_world) >= 2 else \
-                [path_world[0], path_world[0]]
-
-        return True, smoothed, set(), set(), len(smoothed)
-
-
-# ============================================================
-# Smoke test (numpy-only, không cần pathfind)
-# ============================================================
-if __name__ == "__main__":
-    g = PersistentLogOddsGrid((0, -2, 120, 32), resolution=0.5,
-                              inflate_radius=1.0, sensing_radius=60.0)
-    robot = (10.0, 15.0)
-    # giả lập LiDAR thấy bề mặt TRƯỚC của 1 rect [32,20,6,8] (x in 32..38, y 20..28)
-    # bề mặt trái (x=32) hướng về robot:
-    surf = np.array([[32.0, y] for y in np.linspace(20, 28, 40)])
-    g.observe(robot, surf)
-    g.rebuild()
-
-    # ô ngay trước bề mặt -> free; lõi (x=35,y=24) -> KHÔNG free (unknown=blocked)
-    ix, iy = g.world_to_grid(25, 24)
-    core_ix, core_iy = g.world_to_grid(35, 24)
-    print("trước bề mặt free? ", g.is_free(ix, iy))        # mong: True
-    print("lõi vật cản free? ", g.is_free(core_ix, core_iy))  # mong: False
-    print("line-of-sight xuyên lõi sạch? ",
-          g.segment_clear((25, 24), (45, 24)))             # mong: False
-    print("grid size:", g.size_x, "x", g.size_y)
