@@ -108,18 +108,24 @@ def render_occupancy(cells, resolution, origin, positions, names, stamp_ns):
     return panel
 
 
-def overlay_occupancy(frame, panel, *, max_height=1.0):
+def waiting_occupancy():
+    panel = np.full((220, 560, 3), PANEL, np.uint8)
+    cv2.putText(panel, 'OCCUPANCY MAP', (20, 36), cv2.FONT_HERSHEY_SIMPLEX,
+                0.72, TEXT, 2, cv2.LINE_AA)
+    cv2.putText(panel, 'Waiting for LiDAR mapping...', (20, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.53, MUTED, 1, cv2.LINE_AA)
+    return panel
+
+
+def overlay_occupancy(frame, panel, *, max_height=1.0, max_width=None):
     """Place a bounded map panel on the left, keeping its aspect ratio."""
     height, width = frame.shape[:2]
     gap = max(1, min(12, height // 20))
     if panel is None:
-        panel = np.full((220, 560, 3), PANEL, np.uint8)
-        cv2.putText(panel, 'OCCUPANCY MAP', (20, 36), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.72, TEXT, 2, cv2.LINE_AA)
-        cv2.putText(panel, 'Waiting for LiDAR mapping...', (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.53, MUTED, 1, cv2.LINE_AA)
+        panel = waiting_occupancy()
     ih, iw = panel.shape[:2]
-    scale = min((width * 0.30 - gap) / iw, (height * max_height - 2 * gap) / ih)
+    available_width = width * 0.30 - gap if max_width is None else max_width
+    scale = min(available_width / iw, (height * max_height - 2 * gap) / ih)
     w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
     frame[gap:gap + h, gap:gap + w] = cv2.resize(panel, (w, h), interpolation=cv2.INTER_AREA)
     return frame

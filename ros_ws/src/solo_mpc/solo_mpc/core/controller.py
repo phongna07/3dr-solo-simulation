@@ -343,7 +343,9 @@ class TeamController(FleetGuidance):
         self.solver_inputs[n] = inputs
         from .diagnostics import SolverCapture
         capture = SolverCapture(cfg, n, self.solvers[n], stamp, inputs)
+        cpu_started = time.process_time()
         ok, X, U = self.solvers[n].solve(**inputs)
+        metrics['solver_cpu_ms'] = (time.process_time() - cpu_started) * 1000
         capture.finish(ok, X, U, self.solvers[n])
         try:
             stats = self.solvers[n].opti.stats()

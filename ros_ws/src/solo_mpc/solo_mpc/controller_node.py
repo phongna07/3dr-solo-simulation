@@ -376,6 +376,7 @@ class Controller(Node):
                       else reported_at - self.team.track.observed_at)
         record = {
             "stamp": stamp,
+            "reported_stamp": reported_at,
             "wall": time.time(),
             "compute_ms": 1000 * (time.perf_counter() - start),
             "execution": self.execution,
@@ -398,6 +399,7 @@ class Controller(Node):
                     "nominal_ok": results.get(n, {}).get("nominal_ok", False),
                     "solver_status": results.get(n, {}).get("solver_status"),
                     "solver_ms": results.get(n, {}).get("solver_ms"),
+                    "solver_cpu_ms": results.get(n, {}).get("solver_cpu_ms"),
                     **{
                         key: results.get(n, {}).get(key)
                         for key in (

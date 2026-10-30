@@ -81,10 +81,35 @@ def vector_tip(center, vector, full_scale, radius):
     return round(center[0] + offset[0]), round(center[1] - offset[1])
 
 
-def render_states(states, stamp_ns):
+class ControllerStatusHistory:
+    """Show a completed cycle only once its report exists on the video timeline."""
+
+    def __init__(self):
+        self.samples = deque(maxlen=256)
+
+    def write(self, record):
+        stamp = record.get('reported_stamp')
+        source = record.get('stamp')
+        if (not isinstance(stamp, (int, float)) or not math.isfinite(stamp)
+                or not isinstance(source, (int, float)) or not math.isfinite(source)
+                or source > stamp):
+            return
+        stamp_ns = round(stamp * 1e9)
+        if not self.samples or stamp_ns > self.samples[-1][0]:
+            self.samples.append((stamp_ns, record))
+
+    def sample(self, stamp_ns):
+        for at, record in reversed(self.samples):
+            if at <= stamp_ns:
+                return dict(record, stale=stamp_ns - at > MAX_AGE_NS,
+                            delay_ms=(stamp_ns / 1e9 - record['stamp']) * 1000)
+        return None
+
+
+def render_states(states, stamp_ns, status=None):
     """One row per UAV: measured nose direction, XY vectors and XYZ values."""
-    row_height, header, footer = 124, 72, 48
-    panel = np.full((header + row_height * len(states) + footer, 560, 3), PANEL, np.uint8)
+    row_height, header, footer = 124, 88, 68
+    panel = np.full((header + row_height * len(states) + footer, 480, 3), PANEL, np.uint8)
 
     def text(label, xy, size=0.43, color=TEXT, thickness=1, max_width=None):
         if max_width:
@@ -94,18 +119,35 @@ def render_states(states, stamp_ns):
                     thickness, cv2.LINE_AA)
 
     text('DRONE STATE', (20, 29), 0.70, thickness=2)
-    text(f't={stamp_ns / 1e9:.1f}s', (420, 28), 0.43, MUTED, max_width=122)
-    text('World axes | +Y up, +X right | nose = heading', (20, 53), color=MUTED)
+    live = status is not None and not status['stale']
+    vehicles = status.get('vehicles', {}) if live else {}
+    cpu = [vehicles.get(name, {}).get('solver_cpu_ms') for name in states]
+    cpu = [value for value in cpu if value is not None and math.isfinite(value)]
+
+    def milliseconds(value):
+        return '--' if value is None or not math.isfinite(value) else f'{value:.1f}'
+
+    cpu_ms = milliseconds(max(cpu) if cpu else None)
+    mpc_ms = milliseconds(status.get('compute_ms') if live else None)
+    text(f'Solve CPU max {cpu_ms} ms | MPC {mpc_ms} ms',
+         (20, 51), 0.43, MUTED, max_width=440)
+    delay = milliseconds(status['delay_ms'] if live else None)
+    nominal = (f"{sum(bool(vehicles.get(name, {}).get('nominal_ok')) for name in states)}"
+               f'/{len(states)}' if live else '--')
+    reason = status.get('reason', 'unknown').replace('_', ' ').upper() if live else (
+        'WAITING' if status is None else 'STALE')
+    text(f'Delay {delay} ms sim | Nominal {nominal} | {reason}',
+         (20, 73), 0.40, MUTED, max_width=440)
     for i, (name, state) in enumerate(states.items()):
         top = header + i * row_height
         color = vehicle_color(i)
-        cv2.rectangle(panel, (12, top), (547, top + row_height - 7), (39, 35, 31), -1)
+        cv2.rectangle(panel, (12, top), (467, top + row_height - 7), (39, 35, 31), -1)
         cv2.line(panel, (12, top), (12, top + row_height - 7), color, 3)
         label = f'{i + 1} {name}'
         text(label, (22, top + 19), 0.46, color, max_width=120)
         if state['status'] != 'LIVE':
-            text(state['status'], (170, top + 18), 0.37, MUTED)
-        for axis, x in zip('XYZ', (282, 382, 482)):
+            text(state['status'], (22, top + 33), 0.30, MUTED)
+        for axis, x in zip('XYZ', (192, 292, 392)):
             text(axis, (x, top + 18), 0.35, MUTED)
 
         center, radius = (78, top + 65), 32
@@ -150,34 +192,37 @@ def render_states(states, stamp_ns):
         heading = '--' if yaw is None else f'{math.degrees(yaw) % 360:.0f} deg'
         text(f'yaw {heading}', (22, top + 111), 0.36, MUTED)
 
-        for j, (field, label, ink) in enumerate((
-            ('position', 'p  m', TEXT), ('velocity', 'v  m/s', VELOCITY),
-            ('acceleration', 'a est', ACCELERATION), ('command', 'cmd a', COMMAND),
+        for j, (field, ink) in enumerate((
+            ('position', TEXT), ('velocity', VELOCITY),
+            ('acceleration', ACCELERATION), ('command', COMMAND),
         )):
             y = top + 39 + 22 * j
-            text(label, (164, y), color=ink)
             vector = state[field]
-            for axis, x in enumerate((268, 368, 468)):
+            for axis, x in enumerate((178, 278, 378)):
                 value = '--' if vector is None else f'{vector[axis]:+.2f}'
                 text(value, (x, y), color=ink, max_width=72)
 
-    y = panel.shape[0] - 31
-    for x, label, color in ((20, 'v', VELOCITY), (103, 'a est', ACCELERATION),
-                             (225, 'MPC cmd a', COMMAND)):
+    y = panel.shape[0] - 51
+    text('p', (20, y), 0.38)
+    for x, label, color in ((58, 'v', VELOCITY), (125, 'a est', ACCELERATION),
+                             (252, 'MPC cmd a', COMMAND)):
         cv2.arrowedLine(panel, (x, y - 4), (x + 20, y - 4), color, 2,
                         cv2.LINE_AA, tipLength=0.35)
         text(label, (x + 27, y), 0.38, color)
-    text('Rim: 2 m/s or 2 m/s^2 | a, cmd a: m/s^2 | -- unavailable',
-         (20, y + 22), 0.37, MUTED)
+    text('Rows: p [m], v [m/s], a est, cmd a [m/s^2]',
+         (20, y + 22), 0.37, MUTED, max_width=440)
+    text('Rim: 2 m/s or 2 m/s^2 | -- unavailable',
+         (20, y + 42), 0.37, MUTED)
     return panel
 
 
-def overlay_states(frame, panel, *, max_height=0.46):
+def overlay_states(frame, panel, *, max_height=0.46, max_width=None):
     """Anchor below the map; limit height for arbitrary fleet sizes."""
     height, width = frame.shape[:2]
     gap = max(1, min(12, height // 20))
     ih, iw = panel.shape[:2]
-    scale = min((width * 0.30 - gap) / iw, (height * max_height - gap) / ih)
+    available_width = width * 0.30 - gap if max_width is None else max_width
+    scale = min(available_width / iw, (height * max_height - gap) / ih)
     w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
     top = height - gap - h
     frame[top:top + h, gap:gap + w] = cv2.resize(panel, (w, h), interpolation=cv2.INTER_AREA)

@@ -124,8 +124,9 @@ do not. Recording starts at takeoff and continues through landing.
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.
 The right-hand square panels shrink and stack vertically to fit every UAV;
-the left map/state column gives additional height to larger fleets so all five
-status rows remain visible. Labels and fleet colors follow the configured order.
+the left map/state panels share the same displayed width and divide the height
+to keep every state row visible for three- and five-UAV fleets. Labels and fleet
+colors follow the configured order.
 Colored coverage rays/outlines appear in the overhead view and GUI, but are
 excluded from UAV images and LiDAR. They show flat-ground camera projections;
 obstacles can occlude the view. Distant UAVs can be outside the overhead frame.
@@ -135,6 +136,20 @@ commanded acceleration (m/s²), and measured yaw. Acceleration estimates are
 smoothed velocity derivatives, excluding gravity. Commands precede publisher
 guards. Arrow scales are 2 m/s or 2 m/s² at the rim. Missing/stale values show
 `--`. Map cells show occupied/free/unknown sensor evidence, not obstacle truth.
+The XYZ rows are position, velocity, estimated acceleration, and commanded
+acceleration, with colors and units in the shared footer instead of a repeated
+label column.
+
+The state header shows `Solve CPU max` (the largest per-UAV process CPU time
+inside the unchanged upstream solve call, including fallback), `MPC` (fleet
+cycle wall time, including input preparation, mapping, planning, solving,
+coordination, and reference publishing), and `Delay` (simulation time from the
+cycle's input timestamp to the displayed video tick). CPU time is distinct from
+solver wall time (`solver_ms` in telemetry). `Nominal` counts successful nominal
+solves out of the configured fleet; failures and the controller reason remain
+visible. Status is sampled only after its `reported_stamp`, so completed solves
+cannot appear on earlier frames. Reports older than one simulation second show
+`STALE` and unavailable metrics; startup shows `WAITING`.
 
 Feeds align by original simulation timestamps; slower feeds hold their last
 frame. `telemetry/recorded-mission.timestamps.jsonl` maps output frames to time.

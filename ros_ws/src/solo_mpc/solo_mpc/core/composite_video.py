@@ -6,8 +6,8 @@ import time
 import cv2
 
 from .video import FrameVideo
-from .occupancy_video import overlay_occupancy
-from .state_video import FlightStateHistory, overlay_states, render_states
+from .occupancy_video import overlay_occupancy, waiting_occupancy
+from .state_video import ControllerStatusHistory, FlightStateHistory, overlay_states, render_states
 from .visual_style import vehicle_color
 
 
@@ -67,6 +67,7 @@ class CompositeVideo:
             raise ValueError("The vehicle names 'overhead' and 'occupancy' are reserved for combined recording")
         self.occupancy = occupancy
         self.telemetry = {name: FlightStateHistory() for name in self.vehicles} if telemetry else {}
+        self.controller_status = ControllerStatusHistory()
         self.video = FrameVideo(path, fps, timestamps_path=timestamps_path)
         # FOV queues are also bounded if the overhead feed never arrives/stalls.
         self.pending = {name: deque(maxlen=256) for name in ('overhead', *self.vehicles)}
@@ -84,6 +85,11 @@ class CompositeVideo:
         if self.video.closed:
             raise RuntimeError("Video is closed")
         self.telemetry[name].write(field, values, stamp_ns)
+
+    def write_status(self, record):
+        if self.video.closed:
+            raise RuntimeError("Video is closed")
+        self.controller_status.write(record)
 
     def write(self, name, frame, stamp_ns):
         if self.video.closed:
@@ -121,17 +127,29 @@ class CompositeVideo:
             frame = overlay_views(self.current['overhead'], views)
             panel = None
             state_height = 0.46
+            column_width = None
+            occupancy_panel = self.current.get('occupancy')
             if self.telemetry:
                 states = {name: history.sample(stamp) for name, history in self.telemetry.items()}
-                panel = render_states(states, stamp)
-                # Share the left column according to its content instead of
-                # shrinking five state rows into the old three-UAV allocation.
-                state_height = min(0.72, max(0.46, panel.shape[0] / (panel.shape[0] + 560)))
+                panel = render_states(states, stamp, self.controller_status.sample(stamp))
+                if self.occupancy:
+                    if occupancy_panel is None:
+                        occupancy_panel = waiting_occupancy()
+                    # Fit both aspect ratios at one displayed width, with equal
+                    # outer margins and a gap between the map and state panels.
+                    height, width = frame.shape[:2]
+                    gap = max(1, min(12, height // 20))
+                    state_aspect = panel.shape[0] / panel.shape[1]
+                    map_aspect = occupancy_panel.shape[0] / occupancy_panel.shape[1]
+                    column_width = min(width * 0.30 - gap,
+                                       (height - 3 * gap) / (state_aspect + map_aspect))
+                    state_height = (column_width * state_aspect + gap) / height
             if self.occupancy:
-                frame = overlay_occupancy(frame, self.current['occupancy'],
-                                          max_height=1.0 - state_height if self.telemetry else 1.0)
+                frame = overlay_occupancy(
+                    frame, occupancy_panel, max_width=column_width,
+                    max_height=1.0 - state_height if self.telemetry else 1.0)
             if panel is not None:
-                frame = overlay_states(frame, panel, max_height=state_height)
+                frame = overlay_states(frame, panel, max_height=state_height, max_width=column_width)
             self.video.write(frame, stamp, source_stamps=self.current_stamps)
 
     def close(self):

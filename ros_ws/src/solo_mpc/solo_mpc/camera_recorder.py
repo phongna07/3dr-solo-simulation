@@ -2,6 +2,7 @@
 
 import argparse
 from collections import deque
+import json
 from pathlib import Path
 import signal
 import time
@@ -18,6 +19,7 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from mavros_msgs.msg import PositionTarget, State
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 from solo_bringup.configuration import load_config
 from solo_bringup.startup import ComponentProgress
 
@@ -56,6 +58,8 @@ class CameraRecorder(Node):
         self.image_subscriptions = {}
         self.map_positions = {name: deque(maxlen=256) for name in self.vehicle_names}
         if combined:
+            self.subscriptions_keep.append(self.create_subscription(
+                String, '/mpc/status', self.controller_status, 10))
             self.subscriptions_keep.append(self.create_subscription(
                 OccupancyGrid, OCCUPANCY_TOPIC, self.occupancy, qos_profile_sensor_data))
             for name in self.vehicle_names:
@@ -140,6 +144,14 @@ class CameraRecorder(Node):
         a = msg.acceleration_or_force
         stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
         self.composite.write_state(name, 'command', (a.x, a.y, a.z), stamp)
+
+    def controller_status(self, msg):
+        try:
+            record = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(record, dict):
+            self.composite.write_status(record)
 
     def occupancy(self, msg):
         stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
