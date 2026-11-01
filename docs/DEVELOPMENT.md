@@ -41,6 +41,15 @@ solver state. Late results are rejected; timed-out workers stop until controller
 restart. Independent publishing and supervision remain able to expire references
 and request LAND.
 
+Each worker integrates its UAV's valid projected rays independently, once per
+new scan timestamp, before formation checks and MPC use the latest accumulated
+maps. No fleet-wide ray-count gate applies. Empty scans are a map no-op; scan
+freshness and pose validation still gate control. `telemetry/mpc.jsonl` records
+`scan_stamp`, `scan_usable_rays`, `scan_hits`, and `map_updated` per UAV so sparse
+and empty scan cycles can be inspected alongside solver outcomes. Repeated scan
+timestamps do not integrate the same evidence twice. See
+[sensor geometry and projection limits](CONFIGURATION.md#sensors-and-target-input).
+
 ## Upstream submodule
 
 Initialize before building, or clone the parent with `--recurse-submodules`:
@@ -177,6 +186,55 @@ separate numerical diagnostic; it does not establish flight or timing success.
 diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
+
+Independent LiDAR integration was checked with unchanged upstream pin `3f71d4c`
+and unchanged solver constraints/expiry/supervision. Ground-truth/video run
+`20261101T095243Z-13427` used `mpc --ground-truth-target --record-video`,
+`mission run --seconds 30`, `evaluate`, and normal `stop`: all 240 airborne
+cycles were ready and all 720 nominal solves succeeded. All UAVs landed/disarmed
+and released ownership. Compute p95 was 144.2 ms, above the 100 ms target.
+
+Camera/video run `20261101T095852Z-19425` used
+`mpc --preset large200_5uav_separated --record-video`,
+`mission run --seconds 180`, `evaluate`, and normal cleanup. All five UAVs joined,
+landed/disarmed and released ownership. Of 514 airborne cycles, 508 were ready,
+four had visible solver CPU-cap failures, and two rejected stale manually
+republished snapshots. Recorded native scans and measured poses showed up to
+14.2 degrees of tilt and 1.47 m endpoint height displacement. In 31 airborne
+cycles the former height band would have retained fewer than 70% of a UAV's
+rays; the new path retained these rays and continued mapping/MPC. Sampled minimum
+body clearance/separation were 0.402/1.458 m; compute p95 was 335.9 ms. The later
+camera restart could not reacquire the displaced target and timed out; explicit
+cleanup confirmed disarm before normal stop. The auxiliary scan recorder stopped
+on SQLite locking during concurrent analysis; its saved database passed integrity
+inspection and `ros2 bag reindex`. This limits the recorded sensor interval, not
+the complete mission telemetry. See `reports/tilt-evidence.json`,
+`solver-evidence.json`, `evaluation-180.json`, and the saved scan bag.
+
+Fresh partial/empty scans were checked in ground-truth/video run
+`20261101T101149Z-13454`, using `mission start --seconds 45` after launch.
+Stock `ros2 topic pub` commands used simulation timestamps and reliable QoS at
+100 Hz for 2,000 messages per UAV: UAV 2 received 90 no-return rays out of 360
+with 1 m range and NaNs elsewhere; UAV 3 received only invalid ranges (NaN,
+zero, negative infinity, below minimum and above maximum). Native scans continued
+at 10 Hz. All 129 partial-scan cycles updated UAV 2's map. All 123 empty-scan
+cycles left UAV 3's map unchanged, while the other UAVs mapped and all three
+nominal solves succeeded. All 349 airborne cycles were ready, with 1,047/1,047
+nominal successes, 0.691 m sampled body clearance, 1.797 m separation and
+128.2 ms compute p95. Evaluation and normal stop followed confirmed landing,
+disarm and ownership release. Exact publication inputs and outcomes are in
+`reports/partial-uav2.yaml`, `empty-uav3.yaml`, `scan-evidence.json`,
+`solver-evidence.json`, and `mission-final.json`.
+
+All retained captures (384/640/384 respectively) matched the unchanged upstream
+pin and local adapter. The recordings decoded completely and sampled frames
+were inspected. These runs cover interleaved dropouts and short no-return partial
+scans, not permanent sensor loss, arbitrary sparse obstacle returns, or the full
+routes. Native scans in the recorded tilt interval did not reach the ground;
+no noisy ground-hit rejection claim follows from this evidence. The 2D height
+ambiguity and unbounded Gaussian noise remain as described in
+[Configuration](CONFIGURATION.md#sensors-and-target-input). Normal shutdown
+retained the known SITL SIGINT exits and MAVROS SIGTERM escalation after disarm.
 
 The slower separated preset sets scenario `VMAX` to 1.2 m/s (previously 2.2),
 with target speeds 0.4 m/s on the first two legs and 0.6 m/s thereafter.

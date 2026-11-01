@@ -41,6 +41,9 @@ def warmup_scan_integration():
 
 class SensorGrid(IncrementalLogOddsGrid):
     def integrate(self, scan):
+        # A fresh but empty scan contributes no evidence, including free space.
+        if not len(scan.endpoints):
+            return
         free, occupied = ray_cells(
             np.ascontiguousarray(scan.origin[:2], dtype=float),
             np.ascontiguousarray(scan.endpoints[:, :2], dtype=float),

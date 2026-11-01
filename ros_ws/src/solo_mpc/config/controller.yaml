@@ -34,7 +34,6 @@ vertical_speed_limit: 0.5
 calibration_samples: 10
 world_from_local_yaw: 0.0  # Gazebo XYZ->NED and MAVROS NED->ENU cancel in this world
 frame_history_tolerance: 0.3
-scan_height_tolerance: 1.0   # tall extruded obstacles; reject larger tilt/height shifts
 marker_min_pixels: 4
 params:
   ROBOT_RADIUS: 0.36

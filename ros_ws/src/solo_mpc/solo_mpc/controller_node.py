@@ -281,13 +281,9 @@ class Controller(Node):
                         neighbors=[self.histories[k].at(seconds(scan.header.stamp))[0]
                                    for k in names if k != n],
                         neighbor_radius=cfg["ROBOT_RADIUS"] + 0.15,
-                        height_tolerance=settings["scan_height_tolerance"],
                     )
                 except ValueError:
                     reason = "scan_pose_unavailable"
-                    break
-                if len(scans[n].endpoints) < len(scan.ranges) * 0.7:
-                    reason = "insufficient_valid_scan"
                     break
             if reason == "ready":
                 seers = {
@@ -404,6 +400,7 @@ class Controller(Node):
                         key: results.get(n, {}).get(key)
                         for key in (
                             "worker_pid", "cycle", "mapping_ms", "path_ms", "corridor_ms",
+                            "scan_stamp", "scan_usable_rays", "scan_hits", "map_updated",
                             "solver_iterations", "planning_and_solve_ms",
                             "map_started_wall", "map_finished_wall",
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",

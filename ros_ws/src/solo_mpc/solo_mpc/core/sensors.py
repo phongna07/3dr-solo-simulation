@@ -37,15 +37,21 @@ def project_scan(
     stamp,
     neighbors=(),
     neighbor_radius=0.5,
-    height_tolerance=1.0,
+    ground_z=0.0,
+    ground_tolerance=1e-3,
 ):
     """Only observed rays carve free space. NaN/zero/too-short rays remain unknown.
 
-    Positive infinity is an observed no-return ray. Rays ending on teammates
-    retain their free prefix but never permanently mark the teammate occupied.
+    Positive infinity and range_max are observed no-return rays. Rays ending on
+    teammates retain their free prefix but never mark the teammate occupied.
+    Reject an entire ray reaching the world ground plane (within 1 mm), including
+    its free prefix. All other rays retain the full measured body attitude before
+    the mapper projects them into XY; there is no flight-height band.
     """
     ranges = np.asarray(ranges, float)
-    valid = np.isposinf(ranges) | (np.isfinite(ranges) & (ranges >= range_min))
+    valid = np.isposinf(ranges) | (
+        np.isfinite(ranges) & (ranges > 0) & (ranges >= range_min) & (ranges <= range_max)
+    )
     angles = angle_min + np.arange(len(ranges)) * angle_increment
     lengths = np.minimum(ranges[valid], range_max)
     local = np.column_stack(
@@ -58,11 +64,8 @@ def project_scan(
     origin = np.asarray(position, float)
     endpoints = Rotation.from_quat(quaternion).apply(local) + origin
     hits = np.isfinite(ranges[valid]) & (ranges[valid] < range_max - 1e-3)
-    # Ground hits and strongly tilted rays do not establish traversable XY space.
-    plane = (np.abs(endpoints[:, 2] - origin[2]) < height_tolerance) & (
-        endpoints[:, 2] > 0.3
-    )
-    endpoints, hits = endpoints[plane], hits[plane]
+    above_ground = endpoints[:, 2] > ground_z + ground_tolerance
+    endpoints, hits = endpoints[above_ground], hits[above_ground]
     for p in neighbors:
         hits &= np.linalg.norm(endpoints - np.asarray(p), axis=1) > neighbor_radius
     return ScanRays(origin, endpoints, hits, stamp)

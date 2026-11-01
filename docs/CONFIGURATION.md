@@ -188,9 +188,28 @@ mechanical dynamics. The ground footprint is about 2.96 × 2.96 m at 3 m body
 altitude. Projection assumes a known flat target plane; occlusion remains possible.
 
 Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 3 m range, and 0.01 m
-Gaussian range-noise standard deviation. Invalid/missing rays remain unknown;
-observed no-return rays clear space; excessive tilt is rejected. An optimistic
-map is not proof that unobserved space is clear.
+Gaussian range-noise standard deviation. Each UAV integrates its own remaining
+valid rays into its persistent occupancy grid before MPC uses the accumulated
+maps. There is no minimum valid-ray fraction. A fresh scan with no usable rays
+leaves that UAV's map unchanged and does not block MPC or another UAV's mapping.
+Scan age and timestamp-matched measured poses are still required.
+
+Projection uses full measured roll, pitch and yaw, including the rotated 0.08 m
+LiDAR mount offset. There is no endpoint-height band around the sensor. Rays
+ending at or below the known world ground plane (Z=0, with a 1 mm tolerance)
+are discarded entirely, so they cannot clear cells. NaN, negative infinity,
+zero, below-minimum and finite above-maximum ranges are also discarded.
+Positive infinity and maximum-range no-returns clear only their observed XY
+prefix; finite in-range hits mark their projected endpoint occupied. Teammate
+returns retain their free prefix without marking the teammate occupied.
+
+This remains a 2D projection: upward/downward rays observe different heights
+from the planned 3 m flight plane. A ray can pass above a low obstacle and clear
+its XY footprint, or project an overhang/upper surface into the flight corridor.
+The numerical ground tolerance does not bound Gaussian range noise; a noisy
+ground return reconstructed above it can remain as a false occupied cell.
+Sparse/empty scans add no evidence in unseen directions, and persistent maps can
+retain old evidence. An optimistic map is not proof that unobserved space is clear.
 
 `camera` mode uses magenta-marker detections. During brief loss the estimate
 coasts, then searches; prolonged loss pauses the cooperative simulated target.

@@ -51,11 +51,15 @@ def vehicle_worker(connection, name, names, cfg):
             started = time.perf_counter()
             try:
                 if phase == "map":
-                    controller.integrate_scans({name: job["scan"]})
+                    scan = job["scan"]
+                    updated = scan.stamp > controller.last_scans[name] and bool(len(scan.endpoints))
+                    controller.integrate_scans({name: scan})
                     # Inflation belongs to the worker as well as ray integration.
                     grid._ensure()
                     payload = {"blocked": grid.blocked, "occupied": grid.L >= grid.occ_logit,
-                               "unknown": grid.unknown}
+                               "unknown": grid.unknown, "scan_stamp": scan.stamp,
+                               "scan_usable_rays": len(scan.endpoints),
+                               "scan_hits": int(scan.hits.sum()), "map_updated": updated}
                 elif phase == "solve":
                     payload = {"result": controller.solve_vehicle(
                         name, job["states"], job["predictions"], job["guidance"], job["stamp"],
@@ -223,6 +227,8 @@ class ParallelTeamController(TeamController):
             result = message["result"]
             self.vehicle_metrics[n] = {
                 "worker_pid": message["pid"], "cycle": self.cycle,
+                **{key: mapped[n][key] for key in (
+                    "scan_stamp", "scan_usable_rays", "scan_hits", "map_updated")},
                 "mapping_ms": (mapped[n]["finished_wall"]-mapped[n]["started_wall"])*1000,
                 "planning_and_solve_ms": (message["finished_wall"]-message["started_wall"])*1000,
                 "map_started_wall": mapped[n]["started_wall"],
