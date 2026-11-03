@@ -60,14 +60,11 @@ Usage: ./scripts/dev COMMAND [arguments]
 EOF
 }
 
-cleanup_failed_simulation() {
+report_failed_simulation() {
   local status=$?
   trap - EXIT
   if (( status != 0 )); then
-    printf 'Command failed (exit %s); stopping simulation container.\n' "$status" >&2
-    # The mission service may be unavailable after a failure. Use the same
-    # process shutdown as stop --force, preserving the original exit status.
-    "${dc[@]}" stop sim || printf 'Failed to stop simulation container; retry ./scripts/dev stop --force.\n' >&2
+    printf 'Command failed (exit %s); simulation left running for inspection and cleanup. Use ./scripts/dev stop; use stop --force only if the simulation has crashed.\n' "$status" >&2
   fi
   exit "$status"
 }
@@ -121,7 +118,7 @@ case "$command" in
       exit 1
     fi
     mkdir -p runs
-    trap cleanup_failed_simulation EXIT
+    trap report_failed_simulation EXIT
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
@@ -147,10 +144,15 @@ case "$command" in
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py ;;
   mission)
-    if [[ "${1:-}" == run ]]; then
-      trap cleanup_failed_simulation EXIT
+    # A failed client does not prove flight cleanup finished. Leave the
+    # supervisor and FCUs alive so landing can finish or be retried.
+    if "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"; then
+      :
+    else
+      TASK_MISSION_STATUS=$?
+      printf 'Mission command failed (exit %s); simulation left running. Inspect ./scripts/dev mission status, then retry ./scripts/dev mission stop. Use ./scripts/dev stop after confirmed cleanup.\n' "$TASK_MISSION_STATUS" >&2
+      exit "$TASK_MISSION_STATUS"
     fi
-    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"
     ;;
   evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)

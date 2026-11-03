@@ -29,6 +29,7 @@ class Flight(Node):
         self.timeout = timeout
         self.states, self.poses, self.state_at, self.pose_at = {}, {}, {}, {}
         self.pose_sim_at = {}
+        self.landing_status = {}
         self.subscriptions_keepalive = []
         self.command_clients = {}
         self.ownership = {u['name']: Ownership.UNOWNED for u in uavs}
@@ -217,8 +218,9 @@ class Flight(Node):
 
         self.wait(settled, f'fleet stable at {altitude} m')
 
-    def land(self, names, *, poll=lambda: None, command_timeout=5.0, landing_timeout=240.0):
-        """Dispatch independently, with fleet-wide wall deadlines and no takeover.
+    def land(self, names, *, poll=lambda: None, command_timeout=5.0,
+             landing_timeout_sim=60.0, stall_timeout_wall=60.0):
+        """Dispatch independently; allow slow physics, but detect stalled inputs.
 
         poll lets mission cleanup progress its helper services concurrently.
         Neither an unavailable FCU nor a missing reply delays another LAND.
@@ -228,10 +230,18 @@ class Flight(Node):
         pending, sent = set(names), {}
         started = time.monotonic()
         command_deadline = started + command_timeout
-        landing_deadline = started + landing_timeout
+        sim_started = last_sim = self.get_clock().now().nanoseconds * 1e-9
+        clock_progress_at = started
         while rclpy.ok():
             poll()
             now = time.monotonic()
+            sim = self.get_clock().now().nanoseconds * 1e-9
+            if sim > last_sim:
+                clock_progress_at = now
+            elif sim < last_sim:
+                errors.append('Simulation clock moved backwards during landing')
+                break
+            last_sim = sim
             for name in tuple(pending):
                 self.observe_ownership(name)
                 if self.ownership[name] in (Ownership.UNOWNED, Ownership.RELEASED):
@@ -245,6 +255,10 @@ class Flight(Node):
                 if self.connected(name) and client.service_is_ready():
                     if not self.states[name].armed:
                         self.ownership[name] = Ownership.UNOWNED
+                        pending.remove(name)
+                        continue
+                    if self.states[name].mode == 'LAND':
+                        self.ownership[name] = Ownership.LANDING
                         pending.remove(name)
                         continue
                     # Recheck ownership immediately before dispatch; no spin or
@@ -275,12 +289,37 @@ class Flight(Node):
                 self.observe_ownership(name)
                 if self.ownership[name] not in (Ownership.UNOWNED, Ownership.RELEASED):
                     airborne.append(name)
-            if now >= landing_deadline:
-                errors.extend(f'Timeout: {name}: landed/disarmed' for name in airborne)
-                break
+            self.landing_status = {
+                'elapsed_sim': sim - sim_started, 'elapsed_wall': now - started,
+                'timeout_sim': landing_timeout_sim,
+                'clock_stalled_wall': now - clock_progress_at,
+                'vehicles': {
+                    name: {
+                        'ownership': self.ownership[name].value,
+                        'armed': self.states[name].armed if name in self.states else None,
+                        'mode': self.states[name].mode if name in self.states else None,
+                        'state_age_wall': now - self.state_at.get(name, started),
+                        'altitude': (self.poses[name].pose.position.z
+                                     if name in self.poses else None),
+                    } for name in names
+                },
+            }
             if not pending and not sent and not airborne:
                 break
-            rclpy.spin_once(self, timeout_sec=min(0.1, max(0.0, landing_deadline - now)))
+            if sim - sim_started >= landing_timeout_sim:
+                errors.extend(f'Timeout: {name}: landed/disarmed after '
+                              f'{sim - sim_started:.1f} simulation seconds' for name in airborne)
+                break
+            if now - clock_progress_at >= stall_timeout_wall:
+                errors.append(f'Timeout: simulation clock stalled for {stall_timeout_wall:g} wall seconds')
+                break
+            stale = [name for name in airborne
+                     if now - self.state_at.get(name, started) >= stall_timeout_wall]
+            if stale:
+                errors.extend(f'Timeout: {name}: FCU state stale for '
+                              f'{stall_timeout_wall:g} wall seconds' for name in stale)
+                break
+            rclpy.spin_once(self, timeout_sec=0.1)
         else:
             errors.append('ROS stopped during landing')
         for future in sent.values():

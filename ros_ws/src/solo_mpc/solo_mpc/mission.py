@@ -119,15 +119,26 @@ def main(args=None):
             if args.command != "status" and (state != last_state or now >= next_progress):
                 controller = snapshot.get("controller", {})
                 details = []
-                if controller.get("reason"):
+                landing = snapshot.get('landing', {})
+                if state == 'landing' and landing:
+                    details.append(f"landing: {landing['elapsed_sim']:.1f}/{landing['timeout_sim']:g}s sim, "
+                                   f"{landing['elapsed_wall']:.0f}s wall")
+                    for name, vehicle in sorted(landing['vehicles'].items()):
+                        altitude = vehicle.get('altitude')
+                        height = f", z={altitude:.2f}m" if altitude is not None else ''
+                        details.append(f"{name}: {vehicle['ownership']}, mode={vehicle['mode']}, "
+                                       f"armed={vehicle['armed']}{height}, "
+                                       f"state age={vehicle['state_age_wall']:.1f}s")
+                elif controller.get("reason"):
                     details.append(f"controller: {controller['reason']}")
-                for name, vehicle in sorted(controller.get("vehicles", {}).items()):
+                vehicles = {} if state == 'landing' else controller.get('vehicles', {})
+                for name, vehicle in sorted(vehicles.items()):
                     if vehicle.get("result"):
                         result = vehicle['result']
                         if result == 'search' and controller.get('target_mode') == 'ground_truth':
                             result = 'search (target pursuit)'
                         details.append(f"{name}: {result}")
-                if controller.get('target_mode') == 'ground_truth' and 'target_input_fresh' in controller:
+                if state != 'landing' and controller.get('target_mode') == 'ground_truth' and 'target_input_fresh' in controller:
                     details.append('external target: ' + ('fresh' if controller['target_input_fresh'] else 'stale'))
                 suffix = f"; {'; '.join(details)}" if details else ""
                 progress(f"Mission {state} ({now - begin:.0f}s elapsed){suffix}")

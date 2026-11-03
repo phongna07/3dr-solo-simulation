@@ -245,8 +245,16 @@ these budgets differ. Sensor rates also follow simulation time.
 | Pose wall freshness | 3 seconds |
 | FCU freshness | 2.5 simulation seconds and 60 wall seconds |
 | Final fleet arrival radius / timeout | 6 m / 30 simulation seconds |
+| `landing_timeout_sim` | 60 simulation seconds to confirm disarm |
+| `landing_stall_timeout_wall` | 60 wall seconds without clock progress or FCU state |
 | `diagnostic_capture_cycles` | 128 retained calls per UAV; 0 disables capture |
 
 Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
 planner kernels warm both contiguous and sliced windows before worker readiness.
 See [Development](DEVELOPMENT.md#frames-and-clocks) before changing clock policy.
+
+Resolved `sitl_params` default to `PLND_ENABLED: 0`: this simulation uses normal
+LAND and supplies no IRLOCK precision-landing observations. Local overrides are
+written to `config/sitl-overrides.parm` after the unchanged Iris defaults;
+explicit `sitl_params` entries take precedence. Restart the stack after changing
+these settings. A release deployment requires a new image for source changes.

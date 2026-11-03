@@ -78,6 +78,16 @@ violations trigger cleanup.
 
 Normal `./scripts/dev stop` requests mission cleanup before stopping the container.
 If landing fails, inspect FCU state and service errors and retry `mission stop`.
+Failed mission commands leave the container running so the supervisor and FCUs
+can finish landing. They do not automatically force-stop flight. Landing progress
+shows simulation/wall elapsed time, per-UAV mode, armed state, altitude, and state
+age. Cleanup requires observed disarm; low altitude alone is insufficient.
+Landing allows 60 simulation seconds, with separate 60-wall-second watchdogs
+for a stalled clock or missing FCU state. A slow but progressing simulation can
+therefore take longer than four wall minutes. Final mission and landing status
+is preserved in `status/mission.json`.
+Startup/GUI command failures also leave the stack available for inspection;
+clean up with `stop` before starting another simulation.
 Use `stop --force` only for a crashed simulation when normal landing cannot
 complete. A failed command in an `&&` chain skips later cleanup commands.
 

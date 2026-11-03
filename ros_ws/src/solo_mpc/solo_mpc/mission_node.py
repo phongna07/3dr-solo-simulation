@@ -157,7 +157,9 @@ class MissionSupervisor(Flight):
                     del pending[name]
 
         try:
-            self.land(self.names, poll=poll)
+            self.land(self.names, poll=poll,
+                      landing_timeout_sim=self.settings.get('landing_timeout_sim', 60.0),
+                      stall_timeout_wall=self.settings.get('landing_stall_timeout_wall', 60.0))
         except Exception as exc:
             errors.append(str(exc))
         while pending and rclpy.ok():
@@ -176,6 +178,7 @@ class MissionSupervisor(Flight):
         return {"state": self.mission_state, "mission_id": self.mission_id,
                 "error": self.error, "run_dir": str(self.run_dir),
                 "ownership": {n: owner.value for n, owner in self.ownership.items()},
+                "landing": self.landing_status,
                 "controller": self.snapshots}
 
     def request_status(self, request, response):
@@ -291,9 +294,11 @@ class MissionSupervisor(Flight):
                 self.truth_log.close()
                 self.truth_log = None
             self.mission_state = result
+            (self.run_dir / 'status/mission.json').write_text(json.dumps(self.status(), indent=2) + '\n')
             print(json.dumps(self.status()), flush=True)
 
     def prepare_flight(self):
+        self.landing_status = {}
         # Freeze target and flight publisher during takeoff so velocity references
         # cannot override ArduPilot's takeoff controller.
         self.service_call("/mpc/enable", False)

@@ -100,6 +100,17 @@ DEFAULTS = dict(
 def load_settings(scenario_path, settings_path):
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
+    settings.setdefault('landing_timeout_sim', 60.0)
+    settings.setdefault('landing_stall_timeout_wall', 60.0)
+    # Iris enables IRLOCK precision landing, which this simulation does not feed.
+    sitl_params = settings.get('sitl_params', {})
+    if not isinstance(sitl_params, dict):
+        raise ValueError('sitl_params must be a mapping of FCU parameter names to numbers')
+    settings['sitl_params'] = {'PLND_ENABLED': 0, **sitl_params}
+    for key in ('landing_timeout_sim', 'landing_stall_timeout_wall'):
+        value = settings[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f'{key} must be finite and positive')
     cfg = {**DEFAULTS, **scenario.get("params", {}), **settings.get("params", {})}
     overrides = {**scenario.get("params", {}), **settings.get("params", {})}
     cfg["TIMESTEP"] = float(settings["control_period"])
