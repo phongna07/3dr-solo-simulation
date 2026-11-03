@@ -10,6 +10,8 @@ class CycleRunner:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='fleet-cycle')
         self.future = None
         self.started = None
+        self.completed = None
+        self.collected = None
         self.closed = False
 
     def submit(self, function, *args, **kwargs):
@@ -18,19 +20,38 @@ class CycleRunner:
         # Callbacks can replace/mutate live messages immediately after submission.
         args, kwargs = copy.deepcopy((args, kwargs))
         self.started = time.monotonic()
-        self.future = self.executor.submit(function, *args, **kwargs)
+        self.completed = self.collected = None
+
+        def compute():
+            try:
+                return function(*args, **kwargs)
+            finally:
+                # Record before the future becomes done, including exceptions.
+                self.completed = time.monotonic()
+
+        self.future = self.executor.submit(compute)
 
     def take(self):
         if self.future is None or not self.future.done():
             return None
         future, self.future = self.future, None
+        self.collected = time.monotonic()
         return future.result()
+
+    def timing(self):
+        return {
+            'fleet_started_wall': self.started,
+            'fleet_completed_wall': self.completed,
+            'fleet_collected_wall': self.collected,
+            'completion_to_collection_ms': 1000 * (self.collected - self.completed),
+        }
 
     def close(self):
         self.closed = True
         # ParallelTeamController enforces phase deadlines and kills stalled
         # native workers, so the coordinator is joined before its pipes close.
         self.executor.shutdown(wait=True, cancel_futures=True)
+        self.future = None
 
 
 def result_is_current(source_stamp, now, started_wall, settings):

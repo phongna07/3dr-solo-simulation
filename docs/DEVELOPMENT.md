@@ -41,6 +41,36 @@ solver state. Late results are rejected; timed-out workers stop until controller
 restart. Independent publishing and supervision remain able to expire references
 and request LAND.
 
+One controller owns at most one outstanding fleet future. A simulation-time
+timer checks when the next `control_period` is due; it never polls completed
+computations. The future's done callback only triggers a ROS guard condition.
+The guard callback collects the fleet barrier's result on the ROS executor,
+revalidates age, flight state and retained stopping plans, then publishes.
+Timer, input and guard callbacks share the default mutually exclusive callback
+group. A ready completion can start the next cycle immediately if its simulation
+period has elapsed; an early completion waits for the scheduling timer.
+
+Submission still deep-copies measured states, scans, seers and the tracker.
+Every worker solves against the same frozen fleet predictions and guidance;
+completion never feeds one UAV's new plan into another UAV's current solve.
+References and trajectories retain the common input timestamp, regardless of
+notification or delivery time. Independent setpoint sampling, expiry, ownership
+and landing checks are unchanged. The collector consumes its context and future
+before publishing, including exceptional futures, so stale/coalesced guard
+notifications cannot process a cycle twice. Shutdown disables notification,
+joins the bounded computation and discards its result before destroying the guard.
+
+Completed-cycle records in `telemetry/mpc.jsonl` include monotonic wall-clock
+`fleet_started_wall`, `fleet_completed_wall` and `fleet_collected_wall` in seconds.
+Completion is stamped just before the fleet callable returns or raises;
+collection is stamped when the executor takes the done future, before result
+validation. `completion_to_collection_ms` measures that interval, including
+future notification and executor dispatch. `compute_ms` remains total wall time
+from input preparation through reference/trajectory publication; optional map
+publication follows it. Idle/input-rejected records have no completion fields.
+Compare complete airborne, armed/GUIDED records using identical resolved inputs
+and recording settings; solver work and host load can vary between flights.
+
 Each worker integrates its UAV's valid projected rays independently, once per
 new scan timestamp, before formation checks and MPC use the latest accumulated
 maps. No fleet-wide ray-count gate applies. Empty scans are a map no-op; scan
@@ -209,6 +239,71 @@ separate numerical diagnostic; it does not establish flight or timing success.
 diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
+
+Fleet completion notification was compared with instrumented polling baseline
+`20261103T135411Z-4686` and guard-condition run `20261103T135845Z-31238`.
+Both used `mpc --preset small50_3uav --ground-truth-target`,
+`mission run --seconds 60`, `evaluate --run-dir /workspace/runs/RUN_ID`, mission
+status and normal `stop`, without video. Image, resolved fleet/scenario/settings,
+MPC configuration and unchanged upstream pin `3f71d4c` matched. The baseline had
+the same timing instrumentation; only controller completion handling and cycle
+shutdown differed between loaded Python sources.
+
+| Complete airborne armed/GUIDED cycles | Polling | Guard condition |
+|---|---:|---:|
+| Fleet cycles / successful nominal calls | 611 / 1,833 | 617 / 1,851 |
+| Completion-to-collection median / p95 | 9.69 / 18.76 ms | 0.32 / 0.74 ms |
+| Total cycle median / p95 | 99.83 / 120.34 ms | 87.64 / 107.26 ms |
+| Fleet cycles over 100 ms | 41.1% | 13.1% |
+| Per-call solver CPU median / p95 | 58.77 / 79.12 ms | 58.82 / 76.44 ms |
+| Sampled minimum body clearance / separation | 0.756 / 1.771 m | 0.766 / 1.777 m |
+
+Median notification/dispatch delay fell 96.7%; cycle median/p95 fell
+12.2%/10.9%. These were separate flights with approximately real-time clocks,
+not identical physical/solver trajectories. The 100 ms fleet deadline remains
+unmet. Each run rejected one completed cycle after flight mode changed during
+landing; every UAV landed/disarmed and released ownership. Across all 659/668
+completed cycles there were no duplicate source epochs or overlapping cycles.
+Each run retained 384 captures matching upstream and the local adapter; all
+128 complete captured fleet epochs had identical common targets and named
+neighbor predictions. Independent publisher, worker barrier, numerical control
+and mission supervision sources were unchanged. The event run had no Python
+traceback, notification error or worker timeout; shutdown retained the known
+SITL SIGINT exits and MAVROS SIGTERM escalation after disarm.
+
+Evidence is in each run's `reports/completion-latency.json`, evaluation, source
+metadata, optimizer captures, telemetry and mission status; the event run also
+has `reports/completion-comparison.json`, `mission-final.json`, `compose.log`,
+and the recorded implementation patch. No automated tests were added or run.
+Future exceptions, a paused clock and shutdown during a solve were reviewed in
+code, without injected flight faults. Installed-image behavior and full-route
+coverage were outside this check.
+
+Camera run `20261103T140241Z-23997` used
+`mpc --preset large200_5uav_separated`, `mission run --seconds 60`, evaluation,
+mission status and normal stop, with GPU rendering and no video. At 0.279
+simulation seconds per wall second, 197 airborne cycles had completion delay
+median/p95/max 0.26/1.00/1.48 ms and total cycle median/p95/max
+163.31/305.73/388.74 ms. All five landed/disarmed and released ownership.
+UAV 5 reached the preset's unchanged 0.35 s CPU cap ten times and recovered:
+975/985 nominal calls succeeded; all ten failed captures were preserved under
+`reports/cpu-limit-captures/`. Minimum sampled body clearance/separation was
+0.423/1.715 m. This short, slow-clock run did not bring all distant followers
+into TRACK and does not establish the five-UAV latency target.
+
+Its `command-bag/` records a 120-wall-second window from takeoff through part of
+landing. All 252 published source epochs matched completed-cycle telemetry;
+242 had all five reference/trajectory pairs with their common source epoch,
+and ten omitted the failed UAV 5 plan. There were no duplicate plan messages.
+The independent publisher emitted 1,665 setpoints with application timestamps
+distinct from plan epochs; its unchanged guards reported 149 command-limit
+and seven expiry samples, retaining their guarded output. Bag receipt time uses
+simulation time and is not FCU actuation latency. All 128 complete retained
+optimizer epochs shared targets and named neighbor predictions, and all 640
+captures matched upstream/adapter sources. No cycles overlapped. See
+`reports/completion-latency.json`, `command-source-epochs.json`,
+`solver-failures.json`, `mission-final.json`, and the bag. The recorder's
+timeout exit 124 was expected; SIGINT finalized its data before normal stop.
 
 Solver caching was compared with the same small preset, configuration, image
 and upstream pin `3f71d4c`: baseline `20261103T051741Z-536` and cache run

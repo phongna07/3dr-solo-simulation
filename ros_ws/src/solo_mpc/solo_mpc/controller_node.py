@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 import time
 from array import array
 from pathlib import Path
@@ -10,6 +11,7 @@ import numpy as np
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from mavros_msgs.msg import PositionTarget, State
 from nav_msgs.msg import OccupancyGrid, Path as RosPath
+from rclpy.exceptions import InvalidHandle
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
@@ -122,12 +124,21 @@ class Controller(Node):
         self.cycles = CycleRunner()
         self.cycle_context = None
         self.last_cycle_stamp = -np.inf
+        self._completion_lock = threading.Lock()
+        self._closing = False
+        self.completion_guard = None
         try:
-            # Poll completed work promptly. A start-only 10 Hz timer plus a separate
-            # completion tick inserted two idle periods into every fleet cycle.
+            # Both callbacks use the default mutually exclusive callback group.
+            # The timer only schedules starts against simulation time; completed
+            # work wakes the executor without waiting for another /clock tick.
+            self.completion_guard = self.create_guard_condition(self._collect_cycle)
             self.create_timer(min(0.02, args.settings_data["control_period"]), self.tick)
         except BaseException:
+            with self._completion_lock:
+                self._closing = True
             self.cycles.close()
+            if self.completion_guard is not None:
+                self.destroy_guard_condition(self.completion_guard)
             if isinstance(self.team, ParallelTeamController):
                 self.team.close()
             raise
@@ -187,36 +198,57 @@ class Controller(Node):
         if self.team.track.observe(position, stamp):
             self.last_observation = stamp
 
-    def tick(self):
-        if self.cycles.future is not None:
-            if not self.cycles.future.done():
+    def _notify_cycle_done(self, _future):
+        # Future callbacks can run on the fleet thread (or inline when already
+        # done). Never collect results, read live inputs or publish from here.
+        with self._completion_lock:
+            if self._closing or not self.context.ok():
                 return
-            start, now, stamp = self.cycle_context
             try:
-                results = self.cycles.take()
-                reason = ('partial_solver_failure' if any(
-                    not out.get('nominal_ok', out['ok']) for out in results.values()) else 'ready')
-            except Exception as exc:
-                results, reason = {}, f'controller_error: {exc}'
-                self.get_logger().error(reason)
-            current = self.get_clock().now().nanoseconds * 1e-9
-            if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
-                results, reason = {}, 'obsolete_cycle'
-            elif not all(n in self.fcu and self.fcu[n].connected and self.fcu[n].armed
-                         and self.fcu[n].mode == 'GUIDED' for n in self.args.names):
-                results, reason = {}, 'flight_state_changed'
-            for n, out in results.items():
-                if out['ok'] and not out.get('nominal_ok', True):
-                    p, q, at = self.poses[n]
-                    v, vt = self.velocities[n]
-                    measured = VehicleState(p, v, self.accelerations.get(n, np.zeros(3)), q, at)
-                    if not stopping_result_matches(measured, out, stamp, self.args.cfg, velocity_stamp=vt):
-                        results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
-                        reason = 'partial_solver_failure'
-            self._publish_cycle(start, now, stamp, reason, results)
-            self._publish_occupancy(now)
-            if reason != 'ready':
-                return
+                self.completion_guard.trigger()
+            except (InvalidHandle, RuntimeError):
+                # SIGINT may invalidate the ROS context before destroy_node.
+                # Keep unexpected trigger failures visible while ROS is alive.
+                if self.context.ok():
+                    raise
+
+    def _collect_cycle(self):
+        # Guard notifications can coalesce or be stale. The outstanding future
+        # and context, consumed before publishing, are the single source of truth.
+        if (self._closing or self.cycles.future is None
+                or not self.cycles.future.done() or self.cycle_context is None):
+            return
+        start, now, stamp = self.cycle_context
+        self.cycle_context = None
+        try:
+            results = self.cycles.take()
+            reason = ('partial_solver_failure' if any(
+                not out.get('nominal_ok', out['ok']) for out in results.values()) else 'ready')
+        except Exception as exc:
+            results, reason = {}, f'controller_error: {exc}'
+            self.get_logger().error(reason)
+        current = self.get_clock().now().nanoseconds * 1e-9
+        if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
+            results, reason = {}, 'obsolete_cycle'
+        elif not all(n in self.fcu and self.fcu[n].connected and self.fcu[n].armed
+                     and self.fcu[n].mode == 'GUIDED' for n in self.args.names):
+            results, reason = {}, 'flight_state_changed'
+        for n, out in results.items():
+            if out['ok'] and not out.get('nominal_ok', True):
+                p, q, at = self.poses[n]
+                v, vt = self.velocities[n]
+                measured = VehicleState(p, v, self.accelerations.get(n, np.zeros(3)), q, at)
+                if not stopping_result_matches(measured, out, stamp, self.args.cfg, velocity_stamp=vt):
+                    results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
+                    reason = 'partial_solver_failure'
+        self._publish_cycle(start, now, stamp, reason, results, self.cycles.timing())
+        self._publish_occupancy(now)
+        if reason == 'ready':
+            self.tick()
+
+    def tick(self):
+        if self._closing or self.cycles.future is not None:
+            return
         start = time.perf_counter()
         now = self.get_clock().now()
         stamp = now.nanoseconds * 1e-9
@@ -301,8 +333,17 @@ class Controller(Node):
                         <= cfg["VIEWING_RADIUS"]
                     }
                 self.cycle_context = start, now, stamp
-                self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
-                return
+                try:
+                    self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
+                except Exception as exc:
+                    self.cycle_context = None
+                    reason = f'controller_error: {exc}'
+                    self.get_logger().error(reason)
+                else:
+                    # Register after submit has stored the future and its frozen
+                    # context, including when computation finishes immediately.
+                    self.cycles.future.add_done_callback(self._notify_cycle_done)
+                    return
         self._publish_cycle(start, now, stamp, reason, results)
 
     def _publish_occupancy(self, now):
@@ -326,7 +367,7 @@ class Controller(Node):
         msg.data = array('b', cells.tobytes())
         self.occupancy_pub.publish(msg)
 
-    def _publish_cycle(self, start, now, stamp, reason, results):
+    def _publish_cycle(self, start, now, stamp, reason, results, timing=None):
         settings = self.args.settings_data
         # A completed solve may already be obsolete. Publisher checks age too.
         for n, out in results.items():
@@ -375,6 +416,7 @@ class Controller(Node):
             "reported_stamp": reported_at,
             "wall": time.time(),
             "compute_ms": 1000 * (time.perf_counter() - start),
+            **(timing or {}),
             "execution": self.execution,
             "reason": reason,
             "leader": self.team.leader,
@@ -418,7 +460,12 @@ class Controller(Node):
             self.log.write(text + "\n")
 
     def destroy_node(self):
+        # Suppress notification before joining the bounded fleet computation.
+        # Its callback has finished before super() destroys the guard condition.
+        with self._completion_lock:
+            self._closing = True
         self.cycles.close()
+        self.cycle_context = None
         if isinstance(self.team, ParallelTeamController):
             self.team.close()
         if self.log:
