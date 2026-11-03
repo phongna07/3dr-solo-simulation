@@ -253,6 +253,12 @@ Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
 planner kernels warm both contiguous and sliced windows before worker readiness.
 See [Development](DEVELOPMENT.md#frames-and-clocks) before changing clock policy.
 
+The mission supervisor imposes no wall-time timeout on target simulator updates.
+Target publication follows Gazebo time and successful pose requests, so a slow
+CPU can delay updates without aborting the mission. Target freshness and camera
+SEARCH limits use simulation time. Pose wall freshness still guards vehicle
+setpoint publishing; command expiry, controller health, and FCU checks also apply.
+
 Resolved `sitl_params` default to `PLND_ENABLED: 0`: this simulation uses normal
 LAND and supplies no IRLOCK precision-landing observations. Local overrides are
 written to `config/sitl-overrides.parm` after the unchanged Iris defaults;

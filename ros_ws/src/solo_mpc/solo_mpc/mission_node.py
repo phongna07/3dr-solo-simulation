@@ -74,7 +74,7 @@ class MissionSupervisor(Flight):
             self.create_subscription(
                 PoseStamped,
                 "/target/ground_truth",
-                lambda msg: self.target.update(pose=msg, wall=time.monotonic()),
+                lambda msg: self.target.update(pose=msg),
                 10,
             ),
             self.create_subscription(
@@ -381,11 +381,9 @@ class MissionSupervisor(Flight):
                     )
             if self.duration > 0 and time.monotonic() - begin >= self.duration:
                 break
-            if (
-                time.monotonic() - self.target.get("wall", begin)
-                > self.settings["pose_timeout_wall"]
-            ):
-                raise RuntimeError("Target simulator stopped reporting")
+            # Target publication follows Gazebo time and successful pose requests.
+            # Slow simulation can leave long wall-time gaps; target freshness is
+            # supervised below using simulation-time observation ages instead.
             if (
                 time.monotonic() - self.delivery.get("wall", begin)
                 > self.settings["command_timeout_wall"]
