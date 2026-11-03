@@ -10,7 +10,7 @@ of ROS and preserve measured-state control and independent flight supervision.
 `scripts/dev` starts Docker Compose; `solo_mpc/launch/mpc.launch.py` owns Gazebo, one SITL/MAVROS
 pair per UAV, readiness, bridges, frame/perception/target nodes, the controller,
 independent setpoint publisher, and mission supervisor. The GUI is a separate
-client. Each persistent UAV worker owns its map, planner, corridor, solver,
+client. Each persistent UAV worker owns its map, planner, corridor, solver cache,
 committed path, warm start, and stopping plan.
 
 | Location | Responsibility |
@@ -93,6 +93,29 @@ supplied controller), preserving the objective, other active constraints,
 stopping branch, and upstream solve routine. It checks constraint structure and
 fails explicitly if an upstream change invalidates the adjustments. Optional SQP/IPOPT fallback also
 uses the adapter. Do not restore copied solver/dynamics implementations.
+
+Each local UAV now owns a bounded `SolverCache` of unchanged upstream problems.
+Selection uses exactly `max(1, hard face count, cost face count)`; neither
+polytope is truncated or simplified, and both nominal and full backup horizons
+remain enabled. Sizes 4–8 and the configured `CORRIDOR_MAX_FACES` (normally 16)
+are constructed and solved with synthetic stationary inputs before worker
+readiness, including any SQP/IPOPT fallback. Initialization failure prevents
+readiness. That configured size is a preinitialized capacity, not a minimum for
+every solve. Anticipated instances stay resident; two additional LRU slots hold
+other exact counts (eight instances per UAV with the supplied configuration).
+An unexpected size is built inside the existing worker deadline; a miss can
+still be slow or time out. Cache size does not limit actual corridor geometry.
+
+The controller carries its current shifted nominal X/U guess across sizes;
+those dimensions do not depend on face count. On every instance switch, backup
+initial guesses and cached backup outputs are reset on the selected solver and
+its fallback, preventing reuse of guesses from an earlier visit. Consecutive
+calls to the same instance retain upstream backup warming. The separately
+validated stopping plan is retained with its original simulation timestamp.
+This changes only local solver ownership/selection: one fleet cycle still uses
+one frozen state/prediction/guidance snapshot, completed trajectories retain its
+source epoch, and the independent publisher retains expiry and application
+checks. Smaller solves do not establish a 100 ms fleet deadline.
 
 ## Edit and rebuild
 
@@ -186,6 +209,60 @@ separate numerical diagnostic; it does not establish flight or timing success.
 diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
+
+Solver caching was compared with the same small preset, configuration, image
+and upstream pin `3f71d4c`: baseline `20261103T051741Z-536` and cache run
+`20261103T052649Z-94` both used `mpc --ground-truth-target --record-video`,
+`mission run --seconds 30`, `evaluate`, mission status and normal `stop`.
+
+| Airborne armed/GUIDED samples | Fixed 16 faces | Cached exact sizes |
+|---|---:|---:|
+| Successful nominal calls | 726/726 | 732/732 |
+| Per-call solver CPU median / p95 | 71.9 / 98.6 ms | 47.5 / 68.1 ms |
+| Fleet cycle median / p95 | 110.2 / 147.9 ms | 85.8 / 106.5 ms |
+| Fleet cycles over 100 ms | 79.3% | 7.4% |
+| Sampled minimum body clearance / separation | 0.828 / 1.766 m | 0.782 / 1.834 m |
+
+Median solver CPU fell 34.0% and fleet p95 fell 28.0%; the 100 ms fleet goal
+remains unmet. These are separate flights with similar clock rates (0.706/0.710
+simulation seconds per wall second), not identical physical trajectories.
+All UAVs landed/disarmed and released ownership. The cache run used 4–7 faces;
+all 384 retained captures matched upstream, and all 128 complete fleet epochs
+had identical shared target/neighbor inputs. All 16 retained instance switches
+reset backup guesses. Publisher, coordination, cycle and supervision sources
+were unchanged. Both recordings decoded fully and sampled tracking/landing
+frames were inspected.
+
+Paired replay of 36 frozen baseline inputs, with recorded CPU caps and identical
+nominal/backup guesses, succeeded for both sizes: CPU median 63.4 → 41.8 ms,
+p95 77.8 → 55.8 ms, maximum state/control difference below `7e-9`, and maximum
+constraint violation `1.35e-7`. Native preinitialization of six sizes took 0.99 s
+in a separate diagnostic. Synthetic replay with repeated cost faces exercised
+9/10/11/17-face selection and LRU eviction, stayed within eight resident sizes,
+and retained the 25-step backup. This covers cache behavior numerically, not
+flight through unusually complex corridors. See the cache run's
+`reports/solver-cache-comparison.json`, `paired-replay.json`,
+`cache-overflow-replay.json`, `cache-flight-evidence.json`, `replay-exact.txt`,
+and the baseline's `reports/replay-original.txt` and `cache-preflight.json`.
+
+Camera/video run `20261103T054228Z-3847` used the separated five-UAV preset,
+`mission run --seconds 180`, evaluation and normal stop. All five joined TRACK,
+landed/disarmed and released ownership. Of 565 airborne cycles, 564 were ready;
+2,824/2,825 nominal calls succeeded. UAV 5 reached the unchanged CPU cap once
+at cycle 183, then recovered; its capture had already been overwritten by the
+bounded ring, so that failure is supported by telemetry rather than replay.
+Solver CPU median/p95 was 62.5/116.8 ms; fleet median/p95/max was
+151.6/225.1/393.9 ms. The first unanticipated nine-face instance took 156.4 ms
+to construct/select and produced a 359.7 ms fleet cycle; subsequent nine-face
+cycles reused it. Minimum sampled body clearance/separation was 0.429/1.273 m.
+All 640 retained captures matched upstream, all 128 complete fleet epochs had
+coherent shared inputs, all 25 retained switches reset backup guesses, and all
+captured backups retained 25 controls. Its recording decoded fully; sampled
+joining, tracking and landing frames were inspected, and a retained capture
+replayed exactly under its recorded CPU cap. See `reports/cache-flight-evidence.json`,
+`solver-failures.json`, `nine-face-cycles.json`, `mission-final.json` and video
+frames. This partial route has no matched fresh five-UAV baseline; neither
+replay nor sampled geometry proves continuous safety or the 100 ms goal.
 
 Independent LiDAR integration was checked with unchanged upstream pin `3f71d4c`
 and unchanged solver constraints/expiry/supervision. Ground-truth/video run

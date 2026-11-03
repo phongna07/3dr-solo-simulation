@@ -1,9 +1,11 @@
 """ROS-side compatibility adapter over the unchanged upstream MPCProblem.
 
 The objective, dynamics, contingency branch, solver selection and solve routine
-come directly from the submodule. Only the existing ROS-specific conditioning
-of inactive neighbors and optional measured overspeed recovery are applied here.
+come directly from the submodule. Local conditioning and a bounded, per-vehicle
+cache avoid paying for unused corridor rows without changing actual faces.
 """
+
+from collections import OrderedDict
 
 import casadi as ca
 import numpy as np
@@ -11,6 +13,81 @@ import numpy as np
 from .upstream import dynamics, solver as upstream
 
 BIG = upstream.BIG
+
+
+class SolverCache:
+    """Worker-owned exact face counts; no solver or warm start is fleet-shared.
+
+    Keep anticipated sizes resident and reserve two LRU slots for unusual
+    corridors. Cache misses retain every face and pay construction cost within
+    the existing worker deadline, rather than silently simplifying geometry.
+    """
+
+    def __init__(self, n_others, cfg):
+        self.n_others, self.cfg = n_others, dict(cfg)
+        self.anticipated = frozenset((*range(4, 9), int(cfg['CORRIDOR_MAX_FACES'])))
+        if min(self.anticipated) < 1:
+            raise ValueError('Corridor solver capacities must be positive')
+        self.limit = len(self.anticipated) + 2
+        self.instances = OrderedDict()
+        self.active = None
+        # Opti defers expansion and native solver initialization until solve().
+        # Do that before the worker announces readiness, including fallback.
+        for faces in sorted(self.anticipated):
+            solver = MPCProblem(n_others, faces, self.cfg)
+            self._initialize(solver)
+            self.instances[faces] = solver
+
+    @staticmethod
+    def _reset(solver):
+        # Nominal X/U guesses belong to the controller and have size independent
+        # of face count. Backup guesses belong to an instance and may be old.
+        solver._bk_init = None
+        solver.last_backup = None
+        if solver.fallback is not None:
+            SolverCache._reset(solver.fallback)
+
+    def _initialize(self, solver):
+        cfg = self.cfg
+        H = cfg['HORIZON_LENGTH']
+        bounds = np.asarray(cfg['WORLD_BOUNDS'], float)
+        center = (bounds[:2] + bounds[2:]) / 2
+        x0 = np.r_[center, np.zeros(4)]
+        inputs = dict(
+            x0=x0, A_hard=None, b_hard=None, A_cost=None, b_cost=None,
+            use_corr_cost=False,
+            others=[np.tile(center + (j + 1) * (2 * cfg['COLLISION_AVOID_DISTANCE'] + 1),
+                            (H + 1, 1)) for j in range(self.n_others)],
+            nb_flags=np.zeros(self.n_others), tgt=center, w_search=0.,
+            slot=center, w_slot=0., leader=False, ref=center, trk_goal=center,
+            s_ref=0., X_init=np.tile(x0, (H + 1, 1)), U_init=np.zeros((H, 2)), w_tra=0.,
+        )
+        current = solver
+        while current is not None:
+            # Use _solve so SQP success cannot leave its IPOPT fallback cold.
+            ok, X, U = current._solve(**inputs)
+            if not ok or not np.isfinite(X).all() or not np.isfinite(U).all():
+                raise RuntimeError(f'Preflight initialization failed for {solver.n_faces} faces')
+            current = current.fallback
+        self._reset(solver)
+
+    def select(self, hard_faces, cost_faces):
+        faces = max(1, hard_faces, cost_faces)
+        solver = self.instances.get(faces)
+        if solver is None:
+            if len(self.instances) >= self.limit:
+                victim = next(size for size in self.instances if size not in self.anticipated)
+                del self.instances[victim]
+                # Drop the active reference too if its instance was evicted.
+                if self.active is not None and self.active.n_faces == victim:
+                    self.active = None
+            solver = MPCProblem(self.n_others, faces, self.cfg)
+            self.instances[faces] = solver
+        self.instances.move_to_end(faces)
+        if solver is not self.active:
+            self._reset(solver)
+        self.active = solver
+        return solver
 
 
 def speed_recovery_limits(x0, cfg, steps):

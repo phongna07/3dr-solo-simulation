@@ -14,7 +14,7 @@ import numpy as np
 from .coordination import FleetGuidance, path_carrot
 
 from .mapping import SensorGrid, warmup_scan_integration
-from .mpc_problem import MPCProblem
+from .mpc_problem import SolverCache
 from .planner_grid import LocalGridPlanner, warmup
 from .tracking import TargetTracker
 
@@ -50,6 +50,7 @@ class TeamController(FleetGuidance):
         self.plan_failures = dict.fromkeys(names, 0)
         self.solver_inputs = {}
         self.planners, self.solvers, self.warm, self.paths = {}, {}, {}, {}
+        self.solver_caches = {}
         self.path_goals, self.path_age = {}, {}
         self.stop_plans, self.active_corridors = {}, {}
         self.corridor_cost = {}
@@ -75,7 +76,8 @@ class TeamController(FleetGuidance):
                 treat_unknown_as_blocked=cfg["UNKNOWN_POLICY"] == "blocked",
             )
             self.planners[n] = planner
-            self.solvers[n] = MPCProblem(len(names) - 1, cfg["CORRIDOR_MAX_FACES"], cfg)
+            self.solver_caches[n] = SolverCache(len(names) - 1, cfg)
+            self.solvers[n] = self.solver_caches[n].select(4, 4)
         self.predictions = {n: None for n in names}
         self.prediction_stamps = {n: -np.inf for n in names}
         if self.local_names:
@@ -312,10 +314,9 @@ class TeamController(FleetGuidance):
         started = time.perf_counter()
         try:
             A, b = self._corridor(n, state, path, stamp)
-            faces = max(len(b), 0 if self.corridor_cost[n][1] is None else len(self.corridor_cost[n][1]))
-            if faces > self.solvers[n].n_faces:
-                self.solvers[n] = MPCProblem(len(self.names) - 1, max(cfg["CORRIDOR_MAX_FACES"], 16 * int(np.ceil(faces / 16))), cfg)
-                self.warm.pop(n, None)
+            cost_b = self.corridor_cost[n][1]
+            self.solvers[n] = self.solver_caches[n].select(
+                len(b), 0 if cost_b is None else len(cost_b))
         except Exception as exc:
             return self._fallback(n, state, stamp, f"corridor_failed: {exc}", **metrics)
         metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
