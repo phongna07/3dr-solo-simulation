@@ -47,7 +47,7 @@ Usage: ./scripts/dev COMMAND [arguments]
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
   mission run|start|stop|status|reset [--seconds WALL_SECONDS]
   evaluate                       Evaluate the latest MPC flight log
-  wait [TIMEOUT]                 Wait for current simulation readiness
+  wait                           Wait indefinitely for current simulation readiness
   status                         Show Docker state and live readiness
   logs                           Follow process logs (Ctrl+C only stops tail)
   shell                          Bash inside simulation container
@@ -126,8 +126,7 @@ case "$command" in
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
     if "$wait_ready"; then
-      TASK_TIMEOUT="$("${dc[@]}" exec -T sim printenv READINESS_TIMEOUT)"
-      python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --timeout "$TASK_TIMEOUT" --all-processes
+      python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --all-processes
     fi
     if "$show_gui"; then
       printf 'Starting Gazebo GUI.\n'
@@ -135,9 +134,10 @@ case "$command" in
     fi
     ;;
   wait)
+    [[ $# -eq 0 ]] || { usage >&2; exit 2; }
     TASK_CONTAINER="$("${dc[@]}" ps -a -q sim)"
     [[ -n "$TASK_CONTAINER" ]] || { printf 'No simulation container. Start with ./scripts/dev mpc.\n' >&2; exit 1; }
-    python3 scripts/wait_ready.py --container "$TASK_CONTAINER" --timeout "${1:-600}"
+    python3 scripts/wait_ready.py --container "$TASK_CONTAINER"
     ;;
   status)
     "${dc[@]}" ps

@@ -58,7 +58,7 @@ for regeneration and parameter details.
 | `mpc --ground-truth-target` | Exact timestamped target input; omit detectors/cameras unless recording |
 | `mpc --record-video` | Record overhead, map, state instruments, and all UAV FOVs |
 | `mpc --gui` / `gui` | Attach Gazebo viewer; closing it leaves simulation running |
-| `mpc --no-wait` / `wait 600` | Start asynchronously / wait for readiness |
+| `mpc --no-wait` / `wait` | Start asynchronously / wait indefinitely for readiness |
 | `mission start --seconds 30` | Return after tracking starts; supervisor continues |
 | `mission status` | Mission state, ownership, errors, and controller diagnostics |
 | `mission stop` | Pause target, disable publishing, LAND eligible UAVs, await disarm |

@@ -18,7 +18,6 @@ services:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
       GZ_PARTITION: ${COMPOSE_PROJECT_NAME:-solo}
       FLEET_CONFIG: ${FLEET_CONFIG:-/workspace/config/fleet.yaml}
-      READINESS_TIMEOUT: ${READINESS_TIMEOUT:-600}
       LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-}
       RUN_ID: ${RUN_ID:-}
       MPC_SCENARIO: ${MPC_SCENARIO:-/workspace/ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml}

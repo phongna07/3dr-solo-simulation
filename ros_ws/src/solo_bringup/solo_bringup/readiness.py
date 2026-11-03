@@ -27,18 +27,16 @@ def atomic_json(path, payload):
 
 
 class Readiness(Node):
-    def __init__(self, config, run_dir, timeout, max_pose_age, state_timeout=60.0):
+    def __init__(self, config, run_dir, max_pose_age, state_timeout=60.0):
         super().__init__('fleet_readiness')
         self.run_dir = Path(run_dir)
         (self.run_dir / 'status').mkdir(parents=True, exist_ok=True)
-        self.timeout, self.max_pose_age = timeout, max_pose_age
+        self.max_pose_age = max_pose_age
         self.state_timeout = state_timeout
         self.started = time.monotonic()
-        self.ever_ready = False
         self.previous_ready = None
         self.previous_summary = None
         self.last_report = 0
-        self.failed = False
         self.sim_time = None
         self.clock_at = None
         self.clock_samples = deque()
@@ -213,7 +211,6 @@ class Readiness(Node):
         atomic_json(self.run_dir / 'status/health.json', payload)
         self.publisher.publish(String(data=json.dumps(payload)))
         if ready:
-            self.ever_ready = True
             atomic_json(self.run_dir / 'status/ready.json', payload)
         status_summary = json.dumps({name: {'checks': item['checks'], 'plugins': item['plugins']}
                                      for name, item in report.items()}, sort_keys=True)
@@ -225,31 +222,24 @@ class Readiness(Node):
             self.get_logger().info(f"Fleet {'READY' if ready else 'NOT READY'} — {summary}")
             self.previous_ready, self.last_report = ready, now
             self.previous_summary = status_summary
-        if not self.ever_ready and now - self.started > self.timeout:
-            self.get_logger().error('Readiness deadline exceeded. Check logs, JSON ports, EKF and RTF.')
-            self.failed = True
 
 
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--fleet', required=True)
     parser.add_argument('--run-dir', required=True)
-    parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--max-pose-age', type=float, default=10)
     parser.add_argument('--state-timeout', type=float, default=60)
     options, ros_args = parser.parse_known_args(args)
     rclpy.init(args=ros_args)
     node = Readiness(load_config(options.fleet), options.run_dir,
-                     options.timeout, options.max_pose_age, options.state_timeout)
-    code = 0
+                     options.max_pose_age, options.state_timeout)
     try:
-        while rclpy.ok() and not node.failed:
+        while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0.5)
-        code = 1 if node.failed else 0
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-    raise SystemExit(code)

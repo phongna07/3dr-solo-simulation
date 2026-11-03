@@ -83,7 +83,7 @@ def start(context):
     monitor = Node(
         package='solo_bringup', executable='readiness', name='fleet_readiness',
         output='both', arguments=['--fleet', str(run / 'config/fleet.yaml'), '--run-dir', str(run),
-                                  '--timeout', get('readiness_timeout'), '--state-timeout', '60'],
+                                  '--state-timeout', '60'],
     )
     actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
     progress.stage('Preparing MPC nodes and sensor bridges')
@@ -207,10 +207,6 @@ def generate_launch_description():
                 "target_mode", default_value=os.environ.get("MPC_TARGET_MODE", "")
             ),
             DeclareLaunchArgument("run_id", default_value=os.environ.get("RUN_ID", "")),
-            DeclareLaunchArgument(
-                "readiness_timeout",
-                default_value=os.environ.get("READINESS_TIMEOUT", "600"),
-            ),
             OpaqueFunction(function=start),
         ]
     )

@@ -144,19 +144,17 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--run-id')
     parser.add_argument('--container', help='Docker container ID; detect stopped stack immediately')
-    parser.add_argument('--timeout', type=float, default=600)
     parser.add_argument('--all-processes', action='store_true',
                         help='Also require all launched nodes to finish initialization')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent.parent / 'runs'
     run = root / (args.run_id or 'latest')
     started = time.monotonic()
-    deadline = started + args.timeout
     last_report, last_inspect, container_started = None, None, 0
     previous = None
-    print(f'Waiting for simulation readiness (timeout {args.timeout:g}s). '
+    print('Waiting for simulation readiness (no timeout). '
           'Full logs: ./scripts/dev logs', flush=True)
-    while time.monotonic() < deadline:
+    while True:
         now = time.monotonic()
         if args.container and (last_inspect is None or now - last_inspect >= 2):
             try:
@@ -191,7 +189,6 @@ def main(argv=None):
             print(f'Simulation ready in {now - started:.1f}s ({detail}): {run.resolve()}', flush=True)
             return
         time.sleep(1)
-    raise SystemExit('Readiness timeout. Stack left running for inspection: ./scripts/dev logs')
 
 
 if __name__ == '__main__':
