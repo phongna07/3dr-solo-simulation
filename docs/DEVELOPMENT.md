@@ -179,6 +179,14 @@ project against nearby pose history. This retains latency error. Trajectories
 keep their original source epoch for elapsed-time sampling and expiry. Without
 `/clock`, simulation-time node timers stop. See [timing settings](CONFIGURATION.md#timing-and-expiry).
 
+The default requested physics rate is 0.2× wall time. Gazebo retains the original
+integration step; each vehicle's JSON plugin explicitly enables `lock_step` and
+`no_time_sync`, making FCU time follow physics without a second SITL wall pacer.
+Control and sensor rates, prediction horizons, and video sampling stay in
+simulation seconds. Worker/CPU deadlines and wall freshness remain independent.
+Evaluation reports both wall computation time and simulation input-to-result
+delay; the former can exceed 100 ms while the latter meets a 0.1 s control period.
+
 The independent publisher imports no optimizer. With fresh state, expired
 references produce zero horizontal velocity with altitude feedback. Stale pose
 or FCU status removes altitude feedback; missing connection, armed/GUIDED state,
@@ -239,6 +247,27 @@ separate numerical diagnostic; it does not establish flight or timing success.
 diagnostics; hash mismatches remain visible in provenance.
 
 ### Recorded verification
+
+The 0.2× physics configuration was checked in ground-truth/video run
+`20261104T103307Z-9632` and five-UAV camera/video run `20261104T104137Z-10688`.
+Commands were `./scripts/dev mpc --ground-truth-target --record-video` and
+`./scripts/dev mpc --preset large200_5uav --record-video`, each followed by
+`mission run --seconds 150`, `evaluate`, and normal `stop`. All 313 / 271 airborne
+cycles were ready and all 939 / 1,355 nominal solves succeeded. Observed rates
+were 0.188× / 0.159×; simulation input-to-result delay p95 was 13 / 25 ms and
+maxima were 16 / 31 ms, below the unchanged 100 ms simulation period. Wall
+compute p95 remained 85.9 / 135.2 ms. Minimum sampled obstacle body clearance
+was 0.787 / 0.827 m and UAV separation was 1.889 / 1.330 m. All vehicles landed
+and disarmed before shutdown. All 384 / 640 retained captures matched unchanged
+upstream pin `3f71d4c` and adapter. Neither run logged worker timeouts or Python
+tracebacks; known SITL SIGINT exits and MAVROS SIGTERM escalation remain visible
+after disarm. Both finalized recordings decoded fully at 1920 × 1080 / 20 FPS
+(905 / 804 frames), with exactly 50 ms of simulation time per frame and unique
+overhead frames. Reviewed takeoff, tracking and landing images retain all
+state/FOV panels. Evidence is in each run's `reports/slow-physics-verification.json`,
+evaluation, video report, sampled PNGs and telemetry; command/container logs are
+in `artifacts/slow-physics/`. These are partial-route flights without artificial
+CPU saturation; finite slowdown cannot guarantee deadlines under arbitrary load.
 
 Fleet completion notification was compared with instrumented polling baseline
 `20261103T135411Z-4686` and guard-condition run `20261103T135845Z-31238`.

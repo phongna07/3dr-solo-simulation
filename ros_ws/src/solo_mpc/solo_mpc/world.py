@@ -50,6 +50,14 @@ def fleet_world(config, source):
         if plugin is None or plugin.find('fdm_port_in') is None:
             raise ValueError('ArduPilot plugin/JSON port missing')
         plugin.find('fdm_port_in').text = str(uav['json_port'])
+        # Gazebo owns pacing and sends its simulation timestamp to each FCU.
+        # Lockstep waits for FCU motor output on every physics step; suppress
+        # SITL's independent wall-rate synchronization when Gazebo runs slowly.
+        for tag in ('lock_step', 'no_time_sync'):
+            node = plugin.find(tag)
+            if node is None:
+                node = element(plugin, tag)
+            node.text = '1'
         for include in list(model.findall('include')):
             if include.findtext('name') == 'gimbal':
                 model.remove(include)
@@ -262,8 +270,8 @@ def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
     output.parent.mkdir(parents=True, exist_ok=True)
     tree = fleet_world(fleet, source)
     world = tree.getroot().find("world")
-    # The 2D experiment advances only after solving; the physical simulator
-    # otherwise advances at wall rate even when a fleet solve takes longer.
+    # Throttle wall pacing, retaining the original integration step and all
+    # simulation-time rates. This gives MPC more CPU time per physical second.
     physics = world.find('physics')
     if physics is None:
         physics = element(world, 'physics', name='1ms', type='ignore')
@@ -271,7 +279,7 @@ def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
     factor = physics.find('real_time_factor')
     if factor is None:
         factor = element(physics, 'real_time_factor')
-    factor.text = str(settings.get('simulation_real_time_factor', 1.0))
+    factor.text = str(settings['simulation_real_time_factor'])
     for include in list(world.findall("include")):
         world.remove(include)
     render = element(

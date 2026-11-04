@@ -24,6 +24,14 @@ before enabling target motion and control. Startup can take several minutes
 with slow rendering. `--seconds` limits tracking in wall time, excluding
 startup/takeoff/landing; omit it to attempt the complete route.
 
+Physics defaults to **0.2× real time** to give MPC more wall time between
+simulation steps. A 30-wall-second tracking limit covers at most six simulation
+seconds; use `--seconds 150` for about 30 simulation seconds at the requested
+rate, and allow extra time for takeoff and landing. Rendering or CPU load can
+slow it further. Configure `simulation_real_time_factor` in the controller YAML;
+see [timing and expiry](CONFIGURATION.md#timing-and-expiry). Recorded playback
+retains normal target/UAV speeds at the existing 1920 × 1080 / 20 FPS.
+
 For the five-UAV 200 × 200 m random field, use the matching preset:
 
 ```bash
@@ -38,15 +46,16 @@ select `--preset large200_5uav_separated` in the same commands. Keep camera mode
 (the default) to check that UAV 1 retains the pink target while the other four
 approach from about 9–37 m away. UAV 3 starts southwest of the leader to reduce
 crossing during joining. Its UAV speed bound is 1.2 m/s; the target uses 0.4 m/s
-on its first two legs, then 0.6 m/s. Allow at least 450 wall seconds for joining
+on its first two legs, then 0.6 m/s. Allow at least 2,250 wall seconds for joining
 and subsequent tracking, and inspect the recorded modes and measured separations; wall time
 is longer than simulation time on a loaded renderer.
 
 The original fast large preset takes about 464 simulation seconds (7.7 minutes
 at real time) to complete its route, with several early slalom bends through
 nearby obstacles. The slower separated preset takes about 786 simulation seconds
-(13.1 minutes at real time). Use 450 wall seconds or more to inspect joining
-and multiple bends when rendering slows the clock.
+(13.1 minutes at real time). At the default 0.2× rate these routes need at least
+39 / 66 wall minutes respectively. Use 2,250 wall seconds or more to inspect
+joining and multiple bends; consult the actual clock rate.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to
@@ -163,6 +172,8 @@ cannot appear on earlier frames. Reports older than one simulation second show
 
 Feeds align by original simulation timestamps; slower feeds hold their last
 frame. `telemetry/recorded-mission.timestamps.jsonl` maps output frames to time.
+Every output frame advances 0.05 simulation seconds, including when physics
+runs slower than wall time. FPS and playback speed need no slowdown multiplier.
 Each combined-frame record also includes `source_stamps_ns` for the overhead,
 UAV images, and occupancy map; repeated source stamps identify held feeds.
 The Full HD overhead bridge and recorder use reliable ROS delivery with a

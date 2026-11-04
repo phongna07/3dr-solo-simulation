@@ -42,6 +42,12 @@ def main():
     if not airborne:
         raise SystemExit("No complete airborne fleet records")
     computation = np.asarray([r["compute_ms"] for r in airborne])
+    # Report simulation latency separately from CPU/wall cost. A slow clock
+    # gives the solver more wall time, without making its computation cheaper.
+    delivery_delay = np.asarray([
+        r['reported_stamp'] - r['stamp'] for r in airborne if 'reported_stamp' in r
+    ])
+    settings = yaml.safe_load((run / 'config/controller.yaml').read_text())
     separation = []
     margins = []
     target_distances = []
@@ -81,6 +87,16 @@ def main():
             computation, [50, 95, 99, 100]
         ).tolist(),
         "over_100ms_fraction": float(np.mean(computation > 100.0)),
+        "configured_simulation_real_time_factor": settings.get('simulation_real_time_factor', 1.0),
+        "control_period_sim_s": settings['control_period'],
+        "delivery_delay_sim_p50_p95_p99_max_ms": (
+            (1000 * np.percentile(delivery_delay, [50, 95, 99, 100])).tolist()
+            if len(delivery_delay) else None
+        ),
+        "delivery_over_control_period_fraction": (
+            float(np.mean(delivery_delay > settings['control_period']))
+            if len(delivery_delay) else None
+        ),
         "controller_ready_fraction": float(
             np.mean([r["reason"] == "ready" for r in airborne])
         ),

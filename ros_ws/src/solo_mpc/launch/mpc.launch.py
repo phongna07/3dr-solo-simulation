@@ -71,6 +71,8 @@ def start(context):
     for uav in fleet['uavs']:
         cwd = run / 'sitl' / str(uav['instance'])
         cwd.mkdir(parents=True)
+        # JSON physics timestamps drive FCU time. Gazebo alone throttles the
+        # rate; the plugin's no_time_sync avoids another wall pacing loop.
         sitl = ExecuteProcess(
             cmd=['/opt/ardupilot/build/sitl/bin/arducopter', '-S', '--model', 'JSON',
                  '--speedup', '1', '--sim-address=127.0.0.1', '-I', str(uav['instance']),

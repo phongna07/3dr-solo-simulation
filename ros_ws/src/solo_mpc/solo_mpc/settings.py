@@ -100,6 +100,7 @@ DEFAULTS = dict(
 def load_settings(scenario_path, settings_path):
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
+    settings.setdefault('simulation_real_time_factor', 0.2)
     settings.setdefault('landing_timeout_sim', 60.0)
     settings.setdefault('landing_stall_timeout_wall', 60.0)
     # Iris enables IRLOCK precision landing, which this simulation does not feed.
@@ -209,8 +210,9 @@ def validate(scenario, settings, cfg):
     if not 0 <= cfg["LEAD_GAIN_MIN"] <= cfg["LEAD_GAIN_MAX"] <= 1:
         raise ValueError("LEAD_GAIN_MIN/MAX must be ordered in [0, 1]")
     capture_cycles = settings.get('diagnostic_capture_cycles', 128)
-    factor = settings.get('simulation_real_time_factor', 1.0)
-    if isinstance(factor, bool) or not math.isfinite(factor) or factor <= 0:
+    factor = settings['simulation_real_time_factor']
+    if (isinstance(factor, bool) or not isinstance(factor, (int, float))
+            or not math.isfinite(factor) or factor <= 0):
         raise ValueError('simulation_real_time_factor must be finite and positive')
     if isinstance(capture_cycles, bool) or not isinstance(capture_cycles, int) or capture_cycles < 0:
         raise ValueError('diagnostic_capture_cycles must be a nonnegative integer')

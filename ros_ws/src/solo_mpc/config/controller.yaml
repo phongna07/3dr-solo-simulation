@@ -1,5 +1,6 @@
 # Restart the mission after changing geometry, solver or dynamics parameters.
 # The original scenario is preserved; these overrides account for Iris physics.
+simulation_real_time_factor: 0.2  # 5 wall seconds per sim second; video stays 20 FPS in sim time
 flight_altitude: 3.0
 obstacle_height: 5.0
 target_height: 0.05

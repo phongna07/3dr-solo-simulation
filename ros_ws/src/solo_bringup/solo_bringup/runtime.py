@@ -44,7 +44,7 @@ def create_run(config, run_id=''):
         'created_utc': datetime.now(timezone.utc).isoformat(),
         'ros_domain_id': os.environ.get('ROS_DOMAIN_ID', '0'),
         'rmw': os.environ.get('RMW_IMPLEMENTATION', ''),
-        'clock_policy': 'wall; FCU physics follows Gazebo in simulation',
+        'clock_policy': 'Gazebo /clock for control/sensors/video; FCU JSON lockstep; MAVROS wall time with timesync disabled',
         'application_mode': 'development' if os.environ.get('SOLO_DEV') == '1' else 'release',
         'versions': json.loads(versions_path.read_text()) if versions_path.exists() else {},
     }

@@ -232,8 +232,33 @@ resolved source and `target_input_fresh` are reported in logs and status.
 `*_sim` uses Gazebo time; `*_wall` uses elapsed real time. Slow simulation makes
 these budgets differ. Sensor rates also follow simulation time.
 
+`simulation_real_time_factor` defaults to **0.2** in both supplied controllers
+and when omitted from custom settings: one simulation second takes at least five
+wall seconds. Set it in the controller YAML selected by `--settings`, then restart
+the stack. Use `0.1` for more compute headroom or `1.0` for real-time pacing.
+The value must be finite and positive. Gazebo caps the requested rate; CPU/GPU
+load can make the observed rate lower. Inspect `status/health.json`'s
+`simulation.real_time_factor` and the evaluation report for the actual rate.
+
+This changes wall pacing, preserving the 1 ms physics step, vehicle/target
+speeds in m/s, prediction timestep, sensor rates, and 20 FPS video timeline.
+At 0.2×, the 0.1 s control period allows about 0.5 wall seconds per cycle;
+a 250 ms solve consumes about 50 ms of simulation time. It does not reduce solver
+CPU cost or guarantee collision avoidance under arbitrary load. Choose a rate
+below `control_period / observed cycle wall time`, allowing scheduling headroom.
+
+Gazebo is the clock authority. Each FCU receives Gazebo timestamps through the
+JSON plugin with `lock_step: 1` and `no_time_sync: 1`; SITL stays at `--speedup 1`
+because it must not apply a second wall-rate pacing loop. ROS planning, target,
+frames, sensors, mission supervision, and setpoints use `/clock`. MAVROS keeps
+wall time with MAVLink timesync and SYSTEM_TIME disabled; the frame adapter
+stamps FCU measurements at simulation receipt time. The recorder samples original
+simulation timestamps at 20 FPS, so saved playback retains normal physical speed.
+Live GUI motion is slower and collecting the same video duration takes longer.
+
 | Setting | Default |
 |---|---:|
+| `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |
 | `controller_execution` | `parallel`; `sequential` orders the same persistent workers |
@@ -252,6 +277,15 @@ these budgets differ. Sensor rates also follow simulation time.
 Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
 planner kernels warm both contiguous and sliced windows before worker readiness.
 See [Development](DEVELOPMENT.md#frames-and-clocks) before changing clock policy.
+
+Worker deadlines, IPOPT CPU caps, pose/FCU wall freshness, command wall expiry,
+and landing stall watchdogs remain independent wall/CPU limits; they are not
+multiplied by the slowdown. Source timestamps and simulation expiry remain
+unchanged. Extreme slowdowns can therefore trip a wall freshness guard; inspect
+the recorded reason rather than disabling protection. Evaluation retains wall
+`compute_*` and `over_100ms_fraction` and separately reports
+`delivery_delay_sim_p50_p95_p99_max_ms` (input-to-result delay on `/clock`) and
+`delivery_over_control_period_fraction` against the configured simulation period.
 
 The mission supervisor imposes no wall-time timeout on target simulator updates.
 Target publication follows Gazebo time and successful pose requests, so a slow
