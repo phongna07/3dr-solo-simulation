@@ -256,6 +256,16 @@ stamps FCU measurements at simulation receipt time. The recorder samples origina
 simulation timestamps at 20 FPS, so saved playback retains normal physical speed.
 Live GUI motion is slower and collecting the same video duration takes longer.
 
+`mission run --seconds N` and `mission start --seconds N` limit tracking to `N`
+simulation seconds on Gazebo's `/clock`, independently of the requested or
+observed real-time factor. The limit starts after takeoff when control and target
+motion are enabled. Omit `--seconds` or set it to zero for the complete route;
+goal arrival or safety handling can end tracking sooner. Startup, takeoff, and
+landing are outside this limit. Recording continues until the stack stops, so
+takeoff/landing and any post-mission wait can make the final 20 FPS video longer
+than `N` seconds. CLI elapsed progress uses wall seconds;
+safety watchdogs keep their independent wall-time budgets.
+
 | Setting | Default |
 |---|---:|
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |

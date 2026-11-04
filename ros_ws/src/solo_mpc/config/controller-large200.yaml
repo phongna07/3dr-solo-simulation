@@ -1,6 +1,6 @@
 # Select with large200_5uav.yaml and config/fleet-5uav.yaml.
 # Keep expiry/ownership/landing guards; allocate more sensing and solver CPU.
-simulation_real_time_factor: 0.1  # 5 wall seconds per sim second; video stays 20 FPS in sim time
+simulation_real_time_factor: 1  # 5 wall seconds per sim second; video stays 20 FPS in sim time
 flight_altitude: 3.0
 obstacle_height: 5.0
 target_height: 0.05

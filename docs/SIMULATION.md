@@ -21,16 +21,22 @@ from `.env.example` only for a new checkout.
 connections, telemetry acknowledgements, and local poses. It does not arm.
 Takeoff waits for aligned frames, fresh inputs, and a stable fleet altitude
 before enabling target motion and control. Startup can take several minutes
-with slow rendering. `--seconds` limits tracking in wall time, excluding
-startup/takeoff/landing; omit it to attempt the complete route.
+with slow rendering. `--seconds` limits tracking using Gazebo's simulation clock,
+excluding startup/takeoff/landing; omit it or use `--seconds 0` to attempt the
+complete route. Reaching the route goal or a safety stop can end tracking earlier.
 
 Physics defaults to **0.2× real time** to give MPC more wall time between
-simulation steps. A 30-wall-second tracking limit covers at most six simulation
-seconds; use `--seconds 150` for about 30 simulation seconds at the requested
-rate, and allow extra time for takeoff and landing. Rendering or CPU load can
-slow it further. Configure `simulation_real_time_factor` in the controller YAML;
+simulation steps. `--seconds 30` requests 30 simulation seconds of tracking,
+requiring at least 150 wall seconds at that rate, plus takeoff and landing.
+Rendering or CPU load can increase the wall duration without shortening the
+requested simulation duration. CLI elapsed progress remains labeled in wall
+seconds. Configure `simulation_real_time_factor` in the controller YAML;
 see [timing and expiry](CONFIGURATION.md#timing-and-expiry). Recorded playback
 retains normal target/UAV speeds at the existing 1920 × 1080 / 20 FPS.
+The exported video also includes recorded takeoff/landing and keeps recording
+until the stack stops, so its total duration can exceed `--seconds`. Compare its
+timestamp sidecar and tracking interval, not the host command's elapsed time.
+Normal `stop` finalizes the video.
 
 For the five-UAV 200 × 200 m random field, use the matching preset:
 

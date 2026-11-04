@@ -39,11 +39,13 @@ test -e .env || cp .env.example .env
 
 Keep an existing `.env` rather than overwriting it. `mpc` waits for readiness and
 leaves UAVs disarmed; `mission run` takes off, tracks, lands, and waits for disarm.
-The time limit covers tracking in wall seconds, excluding startup and landing.
+The time limit covers tracking in simulation seconds, excluding startup, takeoff,
+and landing; omit it or use `--seconds 0` to attempt the complete route.
 If a command fails, inspect it and run cleanup explicitly.
 Physics defaults to 0.2× real time to give MPC more compute time per simulation
-second; recorded video retains normal motion at 20 FPS. Use `--seconds 150`
-for about 30 simulation seconds of tracking at that rate. See the configuration
+second; recorded video retains normal motion at 20 FPS. `--seconds 30` requests
+30 simulation seconds of tracking (at least 150 wall seconds at 0.2×), regardless
+of the actual simulation rate. See the configuration
 guide for `simulation_real_time_factor`.
 
 The default uses camera detections and LiDAR. Add `--ground-truth-target` to

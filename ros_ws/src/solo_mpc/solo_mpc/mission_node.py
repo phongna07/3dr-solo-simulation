@@ -340,7 +340,8 @@ class MissionSupervisor(Flight):
 
     def supervise(self):
         goal = np.asarray(self.scenario["target"]["waypoints"][-1])[:2]
-        begin = time.monotonic()
+        begin_wall = time.monotonic()
+        begin_sim = self.get_clock().now()
         target_paused = False
         failure_since = None
         arrival_since = None
@@ -379,13 +380,15 @@ class MissionSupervisor(Flight):
                     raise RuntimeError(
                         "Target reached its goal but the fleet did not arrive"
                     )
-            if self.duration > 0 and time.monotonic() - begin >= self.duration:
+            if self.duration > 0 and (
+                self.get_clock().now() - begin_sim
+            ).nanoseconds * 1e-9 >= self.duration:
                 break
             # Target publication follows Gazebo time and successful pose requests.
             # Slow simulation can leave long wall-time gaps; target freshness is
             # supervised below using simulation-time observation ages instead.
             if (
-                time.monotonic() - self.delivery.get("wall", begin)
+                time.monotonic() - self.delivery.get("wall", begin_wall)
                 > self.settings["command_timeout_wall"]
             ):
                 raise RuntimeError("Independent setpoint publisher stopped reporting")

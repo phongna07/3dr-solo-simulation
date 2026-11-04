@@ -90,9 +90,9 @@ Routine simulation verification is authorized without additional confirmation:
 ```
 
 Add `--record-video` when visual behavior is relevant, or use default camera mode
-to check perception. The duration limits tracking wall time, not startup/takeoff/
-landing. Use longer runs when needed. Stop any existing simulation before a new
-one. If a command fails, inspect it and explicitly complete cleanup; commands
+to check perception. The duration limits tracking simulation time, not startup,
+takeoff, or landing. Use longer runs when needed. Stop any existing simulation
+before a new one. If a command fails, inspect it and explicitly complete cleanup; commands
 after a failed `&&` are skipped. Confirm landing/disarm. Use `stop --force` only
 for a crashed simulation when normal cleanup cannot complete.
 

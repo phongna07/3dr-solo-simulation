@@ -29,7 +29,7 @@ def main(args=None):
     parser.add_argument('--cancel-file', type=Path,
                         help='Host cancellation request, polled while ROS is spinning')
     parser.add_argument(
-        "--seconds", type=float, default=0.0, help="optional tracking wall-time limit for run/start"
+        "--seconds", type=float, default=0.0, help="optional tracking simulation-time limit for run/start (0: full route)"
     )
     args = parser.parse_args(args)
     if not math.isfinite(args.seconds) or args.seconds < 0:
@@ -141,7 +141,7 @@ def main(args=None):
                 if state != 'landing' and controller.get('target_mode') == 'ground_truth' and 'target_input_fresh' in controller:
                     details.append('external target: ' + ('fresh' if controller['target_input_fresh'] else 'stale'))
                 suffix = f"; {'; '.join(details)}" if details else ""
-                progress(f"Mission {state} ({now - begin:.0f}s elapsed){suffix}")
+                progress(f"Mission {state} ({now - begin:.0f}s wall elapsed){suffix}")
                 last_state = state
                 next_progress = now + PROGRESS_INTERVAL
             if snapshot["state"] == "failed":
