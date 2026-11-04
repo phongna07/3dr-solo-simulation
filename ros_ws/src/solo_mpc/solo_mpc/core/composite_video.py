@@ -59,7 +59,7 @@ class CompositeVideo:
     """
 
     def __init__(self, path, fps, vehicles, *, occupancy=False, telemetry=False,
-                 timestamps_path=None):
+                 timestamps_path=None, logger=None):
         self.vehicles = tuple(vehicles)
         if not self.vehicles or len(set(self.vehicles)) != len(self.vehicles):
             raise ValueError("A composite video needs unique vehicle names")
@@ -68,7 +68,7 @@ class CompositeVideo:
         self.occupancy = occupancy
         self.telemetry = {name: FlightStateHistory() for name in self.vehicles} if telemetry else {}
         self.controller_status = ControllerStatusHistory()
-        self.video = FrameVideo(path, fps, timestamps_path=timestamps_path)
+        self.video = FrameVideo(path, fps, timestamps_path=timestamps_path, logger=logger)
         # FOV queues are also bounded if the overhead feed never arrives/stalls.
         self.pending = {name: deque(maxlen=256) for name in ('overhead', *self.vehicles)}
         if occupancy:

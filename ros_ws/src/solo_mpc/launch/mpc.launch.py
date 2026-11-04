@@ -167,6 +167,8 @@ def start(context):
                 "--ros-args", "-p", "use_sim_time:=true",
             ],
             name="mpc-combined-recorder", output="both",
+            # Allow journal replay and decoded-frame verification on shutdown.
+            sigterm_timeout='120.0', sigkill_timeout='5.0',
         )
         actions += observed(recorder, progress, 'combined-recorder', initializes=True)
     progress.stage('Starting processes; waiting for fleet telemetry')

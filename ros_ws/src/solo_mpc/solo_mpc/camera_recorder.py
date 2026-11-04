@@ -43,9 +43,11 @@ class CameraRecorder(Node):
                 Path(output_dir) / 'recorded-mission.mp4', fps, self.vehicle_names,
                 occupancy=True, telemetry=True,
                 timestamps_path=Path(output_dir) / 'telemetry/recorded-mission.timestamps.jsonl',
+                logger=self.get_logger(),
             )
         self.videos = ({'combined': self.composite.video} if combined else {
-            name: FrameVideo(Path(output_dir) / f"{name}.avi", fps) for name in names
+            name: FrameVideo(Path(output_dir) / f"{name}.avi", fps, logger=self.get_logger())
+            for name in names
         })
         self.flush_timer = (self.create_timer(
             0.1, self.flush_composite, clock=Clock(clock_type=ClockType.STEADY_TIME),
@@ -269,12 +271,18 @@ def main():
             progress.update('failed', f'{type(exc).__name__}: {exc}')
         raise
     finally:
-        if node is not None:
-            node.destroy_node()
-        for sig, handler in previous_signals.items():
-            signal.signal(sig, handler)
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            if node is not None:
+                node.destroy_node()
+        except BaseException as exc:
+            if progress:
+                progress.update('failed', f'Video finalization: {type(exc).__name__}: {exc}')
+            raise
+        finally:
+            for sig, handler in previous_signals.items():
+                signal.signal(sig, handler)
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":

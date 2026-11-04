@@ -140,6 +140,50 @@ Select `--record-video` at launch, optionally with `--ground-truth-target`.
 Normal `stop` finalizes `recorded-mission.mp4`; mission completion and GUI closure
 do not. Recording starts at takeoff and continues through landing.
 
+MP4 encoding automatically tries FFmpeg `h264_nvenc` by encoding a frame at the
+actual recording resolution. This checks the encoder, device and driver at
+runtime; an NVIDIA GPU or an encoder listing alone is insufficient. If the
+probe fails, recording uses CPU `mpeg4`. No encoder setting is required on
+NVIDIA, Intel/AMD or software-rendered machines. NVIDIA containers need the
+`video` driver capability, included in `compose.nvidia.yaml`. GPU/display setup
+below still governs Gazebo rendering independently of video encoding. Rebuild
+with `./scripts/dev build sim` for the FFmpeg dependency; release images must
+also be rebuilt.
+
+Both encoders receive the same composed BGR frames at the same FPS. Encoder
+selection changes compression only. The recorder logs the selected encoder,
+fallback reasons and verified frame count to the process log and
+`telemetry/recorded-mission.timestamps.encoder.log`.
+An encoder pipe accepting a frame does not guarantee that it reached the MP4:
+the recorder keeps an exact, uncompressed frame journal in
+`recorded-mission.mp4.encoding/` until finalization. An NVENC failure during
+writing, flushing or output verification replays the entire journal on CPU,
+including any partially submitted frame. Finalization decodes/counts frames
+and checks resolution/FPS before publishing the MP4 and removing the journal.
+The journal needs about 7.5 GB per simulation minute at 1080p/20 FPS, in addition
+to the compressed video. Keep enough free space for the whole recording.
+
+Normal stop allows up to two minutes for recorder finalization. CPU/disk errors,
+forced termination or exhausted finalization time are reported as failures;
+an unfinished video is not published as `recorded-mission.mp4`. Retained
+`frames.bgr`, `input.json`, timestamps and encoder logs permit recovery without
+discarding earlier frames. Do not delete them before recovery. For example,
+for a journal whose `input.json` specifies 1920×1080 at 20 FPS, encode to a new
+path with:
+
+```bash
+ffmpeg -f rawvideo -pixel_format bgr24 -video_size 1920x1080 -framerate 20 \
+  -i runs/RUN_ID/recorded-mission.mp4.encoding/frames.bgr \
+  -c:v mpeg4 -q:v 2 -pix_fmt yuv420p -movflags +faststart \
+  runs/RUN_ID/recovered-mission.mp4
+```
+
+Use the journal's actual dimensions/FPS and compare the decoded frame count
+(`ffprobe -v error -count_frames -show_streams VIDEO`) with the timestamp journal
+before accepting a recovered file. Run recovery in the simulation image if the
+host lacks FFmpeg. A disk-write failure can leave a partial trailing raw frame;
+the error and journals must be inspected rather than claiming a complete video.
+
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.
 The right-hand square panels shrink and stack vertically to fit every UAV;

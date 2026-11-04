@@ -2,7 +2,7 @@
 services:
   sim:
     environment:
-      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute,video
     deploy:
       resources:
         reservations:

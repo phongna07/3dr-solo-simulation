@@ -118,6 +118,9 @@ RUN python3 -m venv --system-site-packages /opt/venvs/mpc && \
     uv pip install --python /opt/venvs/mpc/bin/python --require-hashes -r /opt/solo/mpc-py312.lock
 ENV PYTHONPATH=/opt/venvs/mpc/lib/python3.12/site-packages \
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 NUMBA_NUM_THREADS=1
+# Keep encoder tools after the pinned numerical environment so adding them does
+# not invalidate the solver dependency layers. Preserve debs for offline release.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && preserve-apt
 FROM simulation_dependencies AS simulation_camera_build
 COPY ros_ws/src/solo_mpc/gazebo /opt/solo_gazebo/src
 RUN cmake -S /opt/solo_gazebo/src -B /opt/solo_gazebo/build \
@@ -164,7 +167,7 @@ RUN mkdir -p /workspace/runs /workspace/artifacts && \
 
 FROM runtime_common AS simulation_root
 RUN --network=none --mount=from=simulation_mpc_dependencies,source=/opt/solo/build-inputs/apt,target=/inputs,ro \
-    install-runtime gz-harmonic ros-jazzy-ros-gz-bridge python3-opencv \
+    install-runtime gz-harmonic ros-jazzy-ros-gz-bridge python3-opencv ffmpeg \
       gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
       libgl1-mesa-dri libegl1 mesa-utils libqt5svg5
 COPY --from=simulation_dependencies /opt/ardupilot/build/sitl/bin/arducopter /opt/ardupilot/build/sitl/bin/arducopter
