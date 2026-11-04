@@ -11,9 +11,9 @@ seeded random obstacles and a random winding target route. Select it with
 `large200_5uav_separated` keeps that field and shifts the first target waypoint
 northeast. Its four followers start about 9–37 m from UAV 1, which starts directly
 above the target. UAV 3 starts southwest of the leader to reduce crossing during
-formation joining. This preset uses a 1.2 m/s UAV prediction bound and a target
-speed up to 0.6 m/s. All presets fly at 3 m; `--preset small50_3uav` explicitly
-selects the original scenario.
+formation joining. This preset uses a 2.2 m/s UAV prediction bound, a 3 m/s²
+acceleration/braking bound, and a target speed up to 1.0 m/s. All presets fly at
+3 m; `--preset small50_3uav` explicitly selects the original scenario.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)

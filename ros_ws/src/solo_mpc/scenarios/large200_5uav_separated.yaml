@@ -10,7 +10,7 @@ roadside_spacing: 4.0
 xlim: [0, 200]
 ylim: [0, 200]
 viewing_radius: 1.5
-tar_max_speed: 0.6
+tar_max_speed: 1.0
 starts:
   - [18, 18, 3]  # 2 m northeast on each axis from the original leader start
   - [38, 2, 3]   # 25.61 m from UAV 1; approach west of the first building
@@ -18,8 +18,8 @@ starts:
   - [8, 50, 3]   # 33.53 m from UAV 1
   - [48, 40, 3]  # 37.20 m from UAV 1
 target:
-  # Slower rendezvous on the first two legs, then 0.6 m/s tracking.
-  speeds: [0.4, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
+  # Slower rendezvous on the first two legs, then 1.0 m/s tracking.
+  speeds: [0.6, 0.6, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
   waypoints:
     - [18, 18]  # directly below UAV 1 at takeoff
     - [16, 23]
@@ -520,7 +520,8 @@ obstacles:
     - [106.754, 126.297, 1.101]
     - [140.007, 103.336, 0.774]
 params:
-  VMAX: 1.2  # lower travel per planning cycle; retain the existing braking limit
+  VMAX: 2.2
+  UMAX: 3.0
   GRID_RESOLUTION: 0.3
   LOCAL_PLAN_RADIUS: 10
   UNKNOWN_POLICY: optimistic

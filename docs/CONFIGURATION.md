@@ -85,13 +85,15 @@ preset; the original no-argument defaults remain unchanged.
 with the same five-UAV fleet and large-map controller. It preserves the original
 200 × 200 m obstacle field, later route waypoints and 3 m flight altitude.
 UAV 1 and the first target waypoint shift 2 m northeast on each axis to `[18,18]`.
-The scenario sets `params.VMAX: 1.2` m/s, reduced from 2.2 m/s, while retaining
-the 2 m/s² acceleration/braking limit. The target moves at 0.4 m/s on its first
-two legs to allow rendezvous, then 0.6 m/s. The shared large-map controller
-leaves `VMAX` to the scenario; the original `large200_5uav` scenario and generator
-explicitly retain 2.2 m/s. Controller overrides still take precedence.
-Lower speeds reduce travel while a plan is being computed; they do not guarantee
-shorter solve times or strict measured-speed limits. The four follower starts are:
+The scenario sets `params.VMAX: 2.2` m/s and `params.UMAX: 3.0` m/s², increased
+from 1.2 m/s and 2 m/s². The target moves at 0.6 m/s on its first two legs to
+allow rendezvous, then 1.0 m/s (previously 0.4/0.6 m/s). The shared large-map
+controller leaves both bounds to the scenario/defaults; the original
+`large200_5uav` scenario and generator retain 2.2 m/s and the default 2 m/s².
+Controller overrides still take precedence. The target follows a time-sampled
+spline with per-leg speeds; it has no configurable acceleration bound.
+These prediction bounds do not guarantee strict measured-speed limits or shorter
+solve times. The four follower starts are:
 
 | UAV | Start XYZ (m) | Initial distance from UAV 1 |
 |---|---|---:|
@@ -115,6 +117,31 @@ slots. Leadership remains selected by observed visibility; it is not forced to
 UAV 1. Run long enough for the distant followers to rendezvous before assessing
 team tracking. The scenario is a separate checked-in snapshot: regenerating
 `large200_5uav.yaml` does not update its obstacle field or route automatically.
+
+Verified on November 4, 2026 with the default camera/LiDAR inputs:
+
+```bash
+./scripts/dev mpc --preset large200_5uav_separated --record-video
+./scripts/dev mission run --seconds 90
+./scripts/dev evaluate
+./scripts/dev stop
+```
+
+Run `runs/20261104T155857Z-2649/` completed 90 simulation seconds of target
+motion; all five UAVs entered TRACK within 17.53 s, then landed and disarmed.
+Sampled minimum obstacle-body clearance was 0.429 m and inter-UAV separation
+1.219 m; nearest-UAV target distance was 1.237 m at p95. One UAV 4 solve hit
+the unchanged 0.35 s CPU cap and recovered on the next cycle (4,664 successful
+solves of 4,665). Maximum source-to-delivery delay was 96 ms in simulation
+time, below the 100 ms control period. Wall-time compute p95 was 165.7 ms;
+the host achieved 0.274× real time despite the controller requesting 1×.
+Measured horizontal speed peaked at 2.875 m/s, exceeding the prediction bound;
+the existing measured-state speed recovery remained enabled. Upstream source
+hashes matched the pin. See `reports/evaluation.json`, `reports/speed-tuning.json`,
+`reports/mission-completed.json`, and the finalized `recorded-mission.mp4` in
+that run. The first increased-limit configuration completed without further
+tuning; this bounded mission does not establish full-route or repeatability
+success, hard physical limits, or collision guarantees.
 
 ## Fleet and geometry
 
