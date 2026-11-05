@@ -178,7 +178,7 @@ def main(args=None):
         if snapshot["state"] == "tracking":
             print("MPC mission started; persistent supervisor is monitoring flight.", flush=True)
         elif snapshot["state"] == "released":
-            print("Mission released to pilot/FCU; mission control stopped.", flush=True)
+            print("Flight ownership released; mission control stopped.", flush=True)
         else:
             print("Mission completed and fleet landed.", flush=True)
     except KeyboardInterrupt:

@@ -23,21 +23,10 @@ COVERAGE_VISUAL_FLAGS = 0x20
 
 def fleet_world(config, source):
     source = Path(source)
-    tree = ET.parse(source / 'worlds/iris_runway.sdf')
+    tree = ET.parse(source / 'scenery.sdf')
     world = tree.getroot().find('world')
-    template = ET.parse(source / 'models/iris_with_gimbal/model.sdf').getroot().find('model')
-    if world is None or template is None:
-        raise ValueError('Official Iris world/model missing')
-    originals = [i for i in world.findall('include')
-                 if i.findtext('uri') == 'model://iris_with_gimbal']
-    if len(originals) != 1:
-        raise ValueError('Expected exactly one Iris include in official world')
-    world.remove(originals[0])
     world.set('name', config['world_name'])
-    # Replace the official rendering sensors with our LiDAR/camera system.
-    for plugin in list(world.findall('plugin')):
-        if plugin.get('name') == 'gz::sim::systems::Sensors':
-            world.remove(plugin)
+    template = ET.parse(source / 'iris_with_standoffs/model.sdf').getroot().find('model')
     for uav in config['uavs']:
         model = copy.deepcopy(template)
         model.set('name', uav['name'])
@@ -46,30 +35,7 @@ def fleet_world(config, source):
             pose = ET.SubElement(model, 'pose')
         pose.set('degrees', 'true')
         pose.text = ' '.join(map(str, uav['spawn']))
-        plugin = model.find("plugin[@name='ArduPilotPlugin']")
-        if plugin is None or plugin.find('fdm_port_in') is None:
-            raise ValueError('ArduPilot plugin/JSON port missing')
-        plugin.find('fdm_port_in').text = str(uav['json_port'])
-        # Gazebo owns pacing and sends its simulation timestamp to each FCU.
-        # Lockstep waits for FCU motor output on every physics step; suppress
-        # SITL's independent wall-rate synchronization when Gazebo runs slowly.
-        for tag in ('lock_step', 'no_time_sync'):
-            node = plugin.find(tag)
-            if node is None:
-                node = element(plugin, tag)
-            node.text = '1'
-        for include in list(model.findall('include')):
-            if include.findtext('name') == 'gimbal':
-                model.remove(include)
-        for joint in list(model.findall('joint')):
-            if joint.get('name') == 'gimbal_joint':
-                model.remove(joint)
-        for control in list(plugin.findall('control')):
-            if int(control.get('channel')) >= 8:
-                plugin.remove(control)
-        for system in list(model.findall('plugin')):
-            if system.get('name') == 'gz::sim::systems::JointPositionController':
-                model.remove(system)
+        native_multicopter(model, uav['name'])
         world.append(model)
     return tree
 
@@ -79,6 +45,47 @@ def element(parent, tag, text=None, **attrs):
     if text is not None:
         node.text = str(text)
     return node
+
+
+def native_multicopter(model, name):
+    safety = element(model, 'plugin', filename='SoloFlightSafety', name='solo::FlightSafety')
+    element(safety, 'namespace', name)
+    control = element(model, 'plugin', filename='gz-sim-multicopter-control-system',
+                      name='gz::sim::systems::MulticopterVelocityControl')
+    for tag, value in [('robotNamespace', name), ('commandSubTopic', 'control/twist'),
+                       ('enableSubTopic', 'control/enable'), ('comLinkName', 'base_link'),
+                       ('velocityGain', '8 8 10'), ('attitudeGain', '0.8 0.8 0.4'),
+                       ('angularRateGain', '0.15 0.15 0.1'),
+                       ('maximumLinearAcceleration', '4 4 3'),
+                       ('maximumLinearVelocity', '12 12 5'),
+                       ('maximumAngularVelocity', '2 2 1')]:
+        element(control, tag, value)
+    rotors = element(control, 'rotorConfiguration')
+    for index, direction in enumerate([-1, -1, 1, 1]):
+        rotor = element(rotors, 'rotor')
+        for tag, value in [('jointName', f'rotor_{index}_joint'),
+                           ('forceConstant', 8.54858e-6), ('momentConstant', 0.016),
+                           ('direction', direction)]:
+            element(rotor, tag, value)
+        motor = element(model, 'plugin', filename='gz-sim-multicopter-motor-model-system',
+                        name='gz::sim::systems::MulticopterMotorModel')
+        for tag, value in [('robotNamespace', name), ('jointName', f'rotor_{index}_joint'),
+                           ('linkName', f'rotor_{index}'),
+                           ('turningDirection', 'ccw' if direction == 1 else 'cw'),
+                           ('timeConstantUp', 0.0125), ('timeConstantDown', 0.025),
+                           ('maxRotVelocity', 1100), ('motorConstant', 8.54858e-6),
+                           ('momentConstant', 0.016), ('commandSubTopic', 'motor_command'),
+                           ('actuator_number', index), ('rotorDragCoefficient', 8.06428e-5),
+                           ('rollingMomentCoefficient', 1e-6), ('rotorVelocitySlowdownSim', 10),
+                           ('motorType', 'velocity')]:
+            element(motor, tag, value)
+    odometry = element(model, 'plugin', filename='gz-sim-odometry-publisher-system',
+                       name='gz::sim::systems::OdometryPublisher')
+    for tag, value in [('dimensions', 3), ('odom_frame', 'world'),
+                       ('robot_base_frame', f'{name}/base_link'),
+                       ('odom_publish_frequency', 50),
+                       ('odom_topic', f'/{name}/ground_truth/odometry')]:
+        element(odometry, tag, value)
 
 
 def solid(world, name, position, shape, size, color):
@@ -123,14 +130,14 @@ def city_visual(model, mesh_path, obstacle_height):
 
 def sensors(model, name, settings, cfg, camera_enabled=True, color_index=0):
     link = element(model, "link", name="perception_link")
-    element(link, "pose", "0 0 0 0 0 0", relative_to="iris_with_standoffs::base_link")
+    element(link, "pose", "0 0 0 0 0 0", relative_to="base_link")
     inertial = element(link, "inertial")
     element(inertial, "mass", 0.01)
     inertia = element(inertial, "inertia")
     for axis in ("ixx", "iyy", "izz"):
         element(inertia, axis, 0.00001)
     joint = element(model, "joint", name="perception_joint", type="fixed")
-    element(joint, "parent", "iris_with_standoffs::base_link")
+    element(joint, "parent", "base_link")
     element(joint, "child", "perception_link")
     laser = element(link, "sensor", name="laser", type="gpu_lidar")
     element(laser, "pose", "0 0 0.08 0 0 0")
@@ -358,6 +365,9 @@ def bridge_config(names, world, destination, record_overhead=False, *, camera_en
             ("camera/image_raw", "sensor_msgs/msg/Image", "gz.msgs.Image"),
             ("camera/camera_info", "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo"),
             ("ground_truth/pose", "geometry_msgs/msg/PoseStamped", "gz.msgs.Pose"),
+            ("ground_truth/odometry", "nav_msgs/msg/Odometry", "gz.msgs.Odometry"),
+            ("motor_speed", "actuator_msgs/msg/Actuators", "gz.msgs.Actuators"),
+            ("safety_active", "std_msgs/msg/Bool", "gz.msgs.Boolean"),
         ]:
             if suffix.startswith("camera/") and not camera_enabled:
                 continue
@@ -370,6 +380,10 @@ def bridge_config(names, world, destination, record_overhead=False, *, camera_en
                     direction="GZ_TO_ROS",
                 )
             )
+        for suffix, ros, gz in [('cmd_vel', 'geometry_msgs/msg/Twist', 'gz.msgs.Twist'),
+                                ('enable', 'std_msgs/msg/Bool', 'gz.msgs.Boolean')]:
+            rows.append(dict(ros_topic_name=f'/{n}/{suffix}', gz_topic_name=f'/{n}/{suffix}',
+                             ros_type_name=ros, gz_type_name=gz, direction='ROS_TO_GZ'))
     if record_overhead:
         rows.append(dict(
             ros_topic_name=OVERHEAD_TOPIC,

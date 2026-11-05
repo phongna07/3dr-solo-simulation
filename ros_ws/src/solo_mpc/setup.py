@@ -7,6 +7,11 @@ upstream_files = [upstream / name for name in ('mpc_problem.py', 'dynamics.py', 
 if any(not path.is_file() for path in upstream_files):
     raise RuntimeError('Initialize the MPC submodule: git submodule update --init --recursive')
 
+model_files = {}
+for path in sorted(Path('models').rglob('*')):
+    if path.is_file():
+        model_files.setdefault(str(Path('share/solo_mpc') / path.parent), []).append(str(path))
+
 setup(
     name='solo_mpc', version='0.1.0', packages=find_packages(),
     data_files=[
@@ -16,6 +21,7 @@ setup(
         ('share/solo_mpc/launch', glob('launch/*.launch.py')),
         ('share/solo_mpc/config', glob('config/*.yaml')),
         ('share/solo_mpc/scenarios', glob('scenarios/*.yaml')),
+        *model_files.items(),
     ],
     install_requires=['setuptools'], zip_safe=True,
     maintainer='Solo project team', maintainer_email='maintainer@example.invalid',
@@ -25,6 +31,7 @@ setup(
         'controller = solo_mpc.controller_node:main',
         'setpoints = solo_mpc.setpoint_node:main',
         'frames = solo_mpc.frame_node:main',
+        'flight = solo_mpc.flight_node:main',
         'marker_detector = solo_mpc.perception_node:main',
         'target = solo_mpc.target_node:main',
         'mission = solo_mpc.mission:main',

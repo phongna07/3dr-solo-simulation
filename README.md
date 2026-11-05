@@ -1,9 +1,13 @@
 # Multi-UAV MPC simulation
 
-Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy, ArduCopter
-4.5.3 SITL, MAVROS 2.15.1, and Gazebo Harmonic in Docker. The default three-UAV scenario
+Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy and
+native Gazebo Harmonic multicopters in Docker. The default three-UAV scenario
 uses a 50 × 30 m field and a 3 m flight altitude. Vehicle physics runs in 3D;
-MPC plans horizontally, with separate altitude control.
+MPC plans horizontally, with separate altitude control. Vendored original Iris
+assets in `ros_ws/src/solo_mpc/models` retain vehicle geometry and inertias;
+`MulticopterVelocityControl` writes an `Actuators` component consumed by four
+`MulticopterMotorModel` systems applying rotor forces and torques. Vehicles are
+not moved kinematically.
 
 The `large200_5uav` preset uses five UAVs in a 200 × 200 m field with
 seeded random obstacles and a random winding target route. Select it with
@@ -22,13 +26,17 @@ camera footprint, and the observer follows 260 m above the target. It uses a
 the original fine grid to one million square metres. Followers start separated,
 while UAV 3 covers a target that ramps up gently over three seconds. Its thicker
 coverage guides are visible from the high observer. See the configuration guide
-for speed limits, formation starts, and the verified operating envelope.
+for prediction bounds, formation starts, and verification requirements.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)
 at `external/motion_planning_MPC`. This repository focuses on Gazebo simulation
 and recorded missions. Local adapters handle measured state, ROS, sensors, and
-flight supervision. Planning and formation remain local ports.
+flight supervision. A ROS-free `Algorithm` protocol selects the existing MPC
+through `algorithm: mpc`; planning and formation remain local ports. One flight
+process per UAV owns body velocity/enable commands and token-checked flight
+services. A Gazebo safety plugin independently expires commands, descends, and
+disables motors only on settled ground, including after process death.
 
 ## Quick start
 
@@ -47,7 +55,8 @@ test -e .env || cp .env.example .env
 ```
 
 Keep an existing `.env` rather than overwriting it. `mpc` waits for readiness and
-leaves UAVs disarmed; `mission run` takes off, tracks, lands, and waits for disarm.
+leaves motors disabled; `mission run` takes off, tracks, lands, and waits for
+settled ground and motor shutdown.
 The time limit covers tracking in simulation seconds, excluding startup, takeoff,
 and landing; omit it or use `--seconds 0` to attempt the complete route.
 Failed `mpc` and `mission run` commands request landing, finalize any recorded
@@ -77,8 +86,9 @@ The server otherwise runs headlessly. See the simulation guide for GPU setup.
 ```text
 external/motion_planning_MPC/  Unchanged upstream solver submodule
 ros_ws/src/solo_mpc/          Solver adapter, local planning, ROS launch/nodes, Gazebo plugins
-ros_ws/src/solo_bringup/      Fleet validation, readiness, MAVROS/flight helpers
-ros_ws/src/solo_mpc_interfaces/ Mission service
+ros_ws/src/solo_mpc/models/   Vendored original Iris assets and licenses
+ros_ws/src/solo_bringup/      Fleet validation, readiness, run files, flight helpers
+ros_ws/src/solo_mpc_interfaces/ Mission and owner-checked flight interfaces
 config/                      Simulation fleet configuration
 scripts/dev                  Primary host CLI
 scripts/pin-mpc-upstream      Select an upstream revision and refresh provenance
@@ -90,6 +100,16 @@ AGENTS.md                    Contributor instructions
 
 Each launch creates `runs/<run-id>/`; `runs/latest` changes on the next launch.
 Preserve the actual run directory, source hashes, resolved configuration, and
-image identity when comparing experiments. All flight runs use Gazebo and
-ArduCopter SITL. The project has no physical-drone profile, serial-device
+image identity when comparing experiments. All flight runs use native Gazebo
+multicopter physics, with no legacy backend or one-UAV migration phase. The
+project has no physical-drone profile, serial-device
 configuration, or hardware migration workspace.
+
+All four full-fleet presets completed bounded native missions with camera input,
+LiDAR mapping and recording on November 5, 2026. Every vehicle landed and stopped
+its rotors. An additional all-flight-process pause confirmed independent Gazebo
+watchdog landing; that deliberate fault remains a failed supervised mission.
+See [Development](docs/DEVELOPMENT.md#native-migration-verification) for exact
+run IDs, visible solver/deadline failures, video inspection and limitations.
+Installed runtime needs neither Git nor a host checkout; see
+[Deployment](docs/DEPLOYMENT.md).

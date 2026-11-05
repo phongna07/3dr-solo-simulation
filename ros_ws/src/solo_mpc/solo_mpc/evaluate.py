@@ -38,7 +38,7 @@ def main():
         if r["vehicles"]
         and all(v["position"][2] > minimum_altitude for v in r["vehicles"].values())
         and all(
-            v.get("armed", True) and v.get("mode", "GUIDED") == "GUIDED"
+            v.get("armed", True) and v.get("mode", "TRACK") == "TRACK"
             for v in r["vehicles"].values()
         )
     ]
@@ -83,7 +83,7 @@ def main():
         "target_mode": airborne[-1]["target_mode"],
         "geometry_source": "gazebo_ground_truth"
         if geometry is not airborne
-        else "mavros_measurements",
+        else "gazebo_measured_state",
         "minimum_obstacle_body_clearance_m": float(min(margins)),
         "minimum_inter_uav_distance_m": float(min(separation)) if separation else None,
         "compute_p50_p95_p99_max_ms": np.percentile(

@@ -7,6 +7,12 @@ find_package(gz-plugin2 REQUIRED COMPONENTS register)
 find_package(gz-gui8 REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Quick)
 
+add_library(SoloFlightSafety SHARED FlightSafety.cc)
+target_compile_features(SoloFlightSafety PRIVATE cxx_std_17)
+target_compile_options(SoloFlightSafety PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(SoloFlightSafety PRIVATE gz-sim8::gz-sim8 gz-plugin2::register)
+install(TARGETS SoloFlightSafety LIBRARY DESTINATION lib)
+
 add_library(SoloWorldStabilizedCamera SHARED WorldStabilizedCamera.cc)
 target_compile_features(SoloWorldStabilizedCamera PRIVATE cxx_std_17)
 target_compile_options(SoloWorldStabilizedCamera PRIVATE -Wall -Wextra -Wpedantic)

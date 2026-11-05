@@ -6,8 +6,9 @@
   <license>MIT</license>
   <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>rclpy</exec_depend><exec_depend>launch_ros</exec_depend>
-  <exec_depend>solo_bringup</exec_depend><exec_depend>mavros_msgs</exec_depend>
+  <exec_depend>solo_bringup</exec_depend>
   <exec_depend>solo_mpc_interfaces</exec_depend>
+  <exec_depend>actuator_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend><exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend><exec_depend>std_msgs</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>

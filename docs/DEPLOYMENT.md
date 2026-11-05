@@ -5,12 +5,14 @@
 Development uses live sources at `/workspace` with `SOLO_DEV=1`. Release mode
 uses installed code under `/opt/solo_ws/install`, including the unchanged pinned
 upstream solver/dynamics/license. It needs neither a source checkout nor Git at
-runtime. Preserve platform, image identity, source hashes, and input snapshots.
+runtime. Native Gazebo velocity control, the `Actuators` component and four rotor
+motor models are the only flight backend. Preserve platform, image identity,
+source hashes, vendored original Iris assets/licenses, and input snapshots.
 
 ## Build and preserve images
 
 Initialize the submodule before building. Docker contains expensive dependency
-layers separately from application/native camera layers. Numerical dependencies
+layers separately from application/native plugin layers. Numerical dependencies
 are hash-locked in `locks/`; do not install the upstream plotting requirements.
 
 ```bash
@@ -38,7 +40,11 @@ Updating APT inside a pruned runtime is unsupported; rebuild it.
 `./scripts/dev lock` exports available manifests/image identity to `artifacts/`.
 Validate the installed image with `./release doctor --require-renderer` after
 startup, then run a recorded mission as below. Check installed source provenance,
-measured flight, video and landing in that run directory.
+measured odometry, actual motor telemetry, safety status, video, settled landing
+and motor shutdown in that run directory. Install `SoloFlightSafety`, camera/
+coverage plugins, vendored Iris assets and licenses, generated flight interfaces,
+and ROS/Gazebo odometry/actuator bridges with the package; never depend on host
+model downloads, Git metadata or a source-workspace mount at runtime.
 Validate each target platform natively before publishing; emulation does not
 establish ARM64 runtime performance.
 
@@ -79,8 +85,11 @@ After readiness, explicitly fly, evaluate, land, and stop:
 ./release stop sim
 ```
 
-Release `stop` calls Compose directly; it does not request LAND. Confirm mission
-cleanup first. Root/configuration filesystems are read-only; `/tmp` is tmpfs and
+Release `stop` calls Compose directly; it does not request landing. Confirm
+settled ground and measured motor shutdown/disarm for every owned UAV first.
+The independent Gazebo safety plugin handles command expiry/process death while
+physics runs, but cannot land vehicles after the simulator stops.
+Root/configuration filesystems are read-only; `/tmp` is tmpfs and
 output mounts must already exist and be writable. For GPU/display changes,
 use `docker compose --env-file .env -f compose.release.yaml -f OVERRIDE ...`
 consistently. The helper selects the standalone headless base only.
@@ -98,3 +107,24 @@ This reuses preserved compiler outputs; it does not promise bit-identical
 upstream recompilation. For exact deployment, pull the tested runtime digest or
 load its checksummed archive. Record runtime/input/base digests with the native
 validation evidence and retain them for the supported release lifetime.
+
+The November 5, 2026 native verification used local runtime image
+`sha256:d75bfc1f8713f2ef992ae29e3de884cbe3fb57bc5c80053a87bb3e1d12e72be1`.
+All four full-fleet presets completed bounded camera/recording missions; see
+[Development](DEVELOPMENT.md#native-migration-verification) for exact evidence
+and visible solver/deadline failures. Separate installed-image checks without
+host mounts imported the native flight/frame/controller/recorder modules, loaded
+bundled unchanged upstream sources with `matches_pinned_sources: true`, and
+verified installed asset checksums and the native safety library. No obsolete
+flight packages or backend directories were present. These checks were static
+installed-runtime checks, not additional release-mode flights.
+
+Two normal `./scripts/dev build sim` attempts were cancelled during very slow
+numerical wheel downloads. The successful native build reused only the existing
+numerical venv after byte-for-byte comparison of `mpc-py312.lock` (SHA-256
+`d492195fa01cc0ca1d03d918ac992cc706508209e2c919b5155bb113d6be0617`).
+No previous flight backend files were copied. The one-off cached recipe, build
+log, image identity and installed-runtime output are retained locally under
+`artifacts/native-migration/`; the checked-in Dockerfile remains a fresh-build
+recipe and does not require that cache. No new CPU/performance acceptance
+thresholds were introduced.

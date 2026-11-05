@@ -18,10 +18,10 @@ for path in /usr/include /usr/lib/gcc /usr/share/cmake* /usr/share/colcon*; do
   printf '%s\n' "$path" >> /opt/solo/removed-build-files.lock
   rm -rf "$path"
 done
-find /opt/ros/jazzy /opt/mavros_ws/install /opt/solo_ws/install \
+find /opt/ros/jazzy /opt/solo_ws/install \
   -type d \( -name include -o -name cmake \) -prune -print \
   >> /opt/solo/removed-build-files.lock
-find /opt/ros/jazzy /opt/mavros_ws/install /opt/solo_ws/install \
+find /opt/ros/jazzy /opt/solo_ws/install \
   -type d \( -name include -o -name cmake \) -prune -exec rm -rf {} +
 find /usr/lib/python3/dist-packages -maxdepth 1 -name 'colcon*' -print \
   >> /opt/solo/removed-build-files.lock

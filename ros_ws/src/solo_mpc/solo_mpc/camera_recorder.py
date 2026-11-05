@@ -17,7 +17,8 @@ from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from mavros_msgs.msg import PositionTarget, State
+from solo_mpc_interfaces.msg import FlightState
+from trajectory_msgs.msg import JointTrajectory
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 from solo_bringup.configuration import load_config
@@ -70,7 +71,7 @@ class CameraRecorder(Node):
                     lambda msg, n=name: self.map_pose(n, msg), qos_profile_sensor_data))
                 for typ, suffix, callback in (
                     (TwistStamped, 'velocity', self.velocity),
-                    (PositionTarget, 'reference', self.reference),
+                    (JointTrajectory, 'trajectory', self.reference),
                 ):
                     self.subscriptions_keep.append(self.create_subscription(
                         typ, f'/{name}/mpc/{suffix}',
@@ -80,11 +81,11 @@ class CameraRecorder(Node):
                 self.subscribe_images(name)
         for name in self.vehicle_names:
             for typ, suffix, callback in (
-                (State, 'state', self.state),
-                (PoseStamped, 'local_position/pose', self.pose),
+                (FlightState, 'flight/state', self.state),
+                (PoseStamped, 'mpc/pose', self.pose),
             ):
                 self.subscriptions_keep.append(self.create_subscription(
-                    typ, f'/{name}/mavros/{suffix}',
+                    typ, f'/{name}/{suffix}',
                     lambda msg, n=name, cb=callback: cb(n, msg), qos_profile_sensor_data,
                 ))
         self.get_logger().info(f"Waiting for armed UAV takeoff before recording in {output_dir}")
@@ -93,7 +94,7 @@ class CameraRecorder(Node):
         self.states[name] = (msg, time.monotonic())
         if (self.overhead or self.composite) and msg.connected and msg.armed:
             # Start transport on arming, ahead of the takeoff recording gate,
-            # while avoiding Full HD rendering during EKF startup.
+            # while avoiding Full HD rendering before flight startup.
             self.subscribe_images('overhead')
 
     def subscribe_images(self, name):
@@ -117,7 +118,6 @@ class CameraRecorder(Node):
             self.ground_altitudes[name] = z
 
     def map_pose(self, name, msg):
-        # MAVROS local origins differ between UAVs; use aligned world poses.
         if msg.header.frame_id != 'world':
             return
         p = msg.pose.position
@@ -138,14 +138,11 @@ class CameraRecorder(Node):
         self.composite.write_state(name, 'velocity', (v.x, v.y, v.z), stamp)
 
     def reference(self, name, msg):
-        # This topic is the world-frame MPC reference, before the independent
-        # setpoint publisher's expiry/proximity guard and local-frame conversion.
-        ignored = PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ
-        if msg.header.frame_id != 'world' or msg.type_mask & (ignored | PositionTarget.FORCE):
+        if msg.header.frame_id != 'world' or not msg.points or len(msg.points[0].accelerations) != 2:
             return
-        a = msg.acceleration_or_force
+        acceleration = msg.points[0].accelerations
         stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
-        self.composite.write_state(name, 'command', (a.x, a.y, a.z), stamp)
+        self.composite.write_state(name, 'command', (*acceleration, 0.0), stamp)
 
     def controller_status(self, msg):
         try:

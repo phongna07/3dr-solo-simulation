@@ -196,7 +196,7 @@ case "$command" in
   lock)
     mkdir -p artifacts
     "${dc[@]}" run --rm --no-deps sim bash -c \
-      'cp /opt/solo/*.lock /opt/solo/versions.json /opt/solo/geoid.sha256 /opt/solo/application.sha256 /workspace/artifacts/'
+      'cp /opt/solo/*.lock /opt/solo/versions.json /opt/solo/application.sha256 /workspace/artifacts/'
     TASK_IMAGE="$("${dc[@]}" images -q sim | head -n 1)"
     [[ -n "$TASK_IMAGE" ]] || { printf 'Start sim once before exporting its image identity.\n' >&2; exit 1; }
     docker image inspect "$TASK_IMAGE" --format '{{json .}}' > artifacts/simulation-image.json

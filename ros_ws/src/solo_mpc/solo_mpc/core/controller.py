@@ -17,19 +17,11 @@ from .mapping import SensorGrid, warmup_scan_integration
 from .mpc_problem import SolverCache
 from .planner_grid import LocalGridPlanner, warmup
 from .tracking import TargetTracker
+from .algorithm import VehicleState
 
 # The pinned pydecomp wheel exposes its computation in _pydecomp. Import the
 # binding directly: its package initializer also loads plotting libraries,
 # which are unnecessary for a headless ROS controller.
-
-
-@dataclass
-class VehicleState:
-    position: np.ndarray
-    velocity: np.ndarray
-    acceleration: np.ndarray
-    quaternion: np.ndarray
-    stamp: float
 
 
 @dataclass
@@ -181,7 +173,7 @@ class TeamController(FleetGuidance):
     def _stop_tail(self, name, state, stamp):
         """Use simulation time and measured-state agreement, never a solve counter.
 
-        A model certificate cannot justify replay after the FCU deviates from it.
+        A model certificate cannot justify replay after the measured vehicle deviates from it.
         The publisher's existing expiry/hold behavior handles a rejected tail.
         """
         plan = self.stop_plans.get(name)

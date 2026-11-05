@@ -68,20 +68,6 @@ def process_status(run, startup):
     return [f"  {label}: {', '.join(names)}" for label, names in groups.items() if names]
 
 
-def legacy_checks(data, uav):
-    """Keep ./scripts/dev wait useful for stacks started before this update."""
-    return {
-        'FCU': {'ready': uav['connected'], 'detail': 'waiting for FCU heartbeat'},
-        'MAVROS parameters': {'ready': data.get('plugin_parameters_applied', False),
-                              'detail': 'waiting for plugin configuration'},
-        'telemetry': {'ready': set(uav.get('telemetry', [])) == {30, 32},
-                      'detail': f"accepted messages {uav.get('telemetry', [])}; need [30, 32]"},
-        'local pose': {'ready': uav['pose_messages'] >= 3 and
-                       uav.get('pose_age_wall_s') is not None and uav['pose_age_wall_s'] < 10,
-                       'detail': f"waiting for fresh local poses ({min(uav['pose_messages'], 3)}/3)"},
-    }
-
-
 def progress_lines(run, data, startup, wall_now, container_started=0):
     lines = []
     if startup and startup.get('started_wall_unix', 0) >= container_started:
@@ -98,27 +84,13 @@ def progress_lines(run, data, startup, wall_now, container_started=0):
         lines.append('  WAIT readiness monitor: no live health update for at least 10s; checking container')
         return lines
     for name, uav in data['uavs'].items():
-        checks = uav.get('checks') or legacy_checks(data, uav)
+        checks = uav['checks']
         ready = [check for check, item in checks.items() if item['ready']]
         waiting = [f"{check} ({item['detail']})" for check, item in checks.items() if not item['ready']]
         if ready:
             lines.append(f"  READY {name}: {', '.join(ready)}")
         if waiting:
             lines.append(f"  WAIT {name}: {'; '.join(waiting)}")
-            if uav.get('last_fcu_status'):
-                lines.append(f"    FCU status: {uav['last_fcu_status']}")
-        phases = {}
-        for plugin, item in uav.get('plugins', {}).items():
-            if not item['ready']:
-                phases.setdefault(item['phase'], []).append(plugin)
-        for phase, plugins in phases.items():
-            plugins.sort(key=lambda name: (name not in ('imu', 'local_position', 'sys'), name))
-            names = ', '.join(plugins[:6])
-            if len(plugins) > 6:
-                names += f' (+{len(plugins) - 6} more; details: ./scripts/dev status)'
-            lines.append(f"    MAVROS {phase}: {names}")
-    if not data.get('plugin_parameters_applied', False):
-        lines.append('  WAIT fleet: MAVROS plugin configuration must complete for every UAV')
     return lines
 
 
@@ -135,8 +107,6 @@ def simulation_lines(data):
         detail += f'; {factor:.2f}x real time (recent window)'
     if simulation.get('clock_age_wall_s', 0) >= 5:
         detail += f"; no clock update for {simulation['clock_age_wall_s']:.0f}s"
-    if factor is not None and factor < 0.5:
-        detail += '; FCU initialization follows simulation time'
     return [f'  Simulation: {detail}']
 
 
@@ -183,7 +153,7 @@ def main(argv=None):
             last_report = now
             previous = summary
         if ready:
-            detail = 'FCU telemetry and local poses'
+            detail = 'native flight, measured world odometry and actual rotor telemetry'
             if args.all_processes:
                 detail = f'all processes initialized, {detail}'
             print(f'Simulation ready in {now - started:.1f}s ({detail}): {run.resolve()}', flush=True)

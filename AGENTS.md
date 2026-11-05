@@ -1,8 +1,9 @@
 # Project and architecture
 
-This project simulates three UAVs tracking a moving target through obstacles at
-3 m altitude. Docker supplies ROS 2 Jazzy, ArduCopter SITL, MAVROS, and Gazebo
-Harmonic. MPC is planar; Gazebo/ArduPilot provide 3D vehicle physics.
+This project simulates full fleets of three or five UAVs tracking a moving target
+through obstacles at 3 m altitude (30 m for `scen1`). Docker supplies ROS 2 Jazzy
+and native Gazebo Harmonic multicopters. MPC is planar; native velocity control,
+an `Actuators` component and four rotor motor models provide 3D force/torque physics.
 
 Read `README.md` first. The four guides are `docs/SIMULATION.md` (run, record,
 inspect, recover, GPU), `docs/CONFIGURATION.md` (inputs and timing),
@@ -19,22 +20,28 @@ than adding a separate document for each feature or experiment.
   actual source provenance; do not import upstream simulator/global config.
 - `core/mpc_problem.py`: local compatibility adapter, retaining inactive-neighbor
   conditioning and optional speed recovery. Do not restore copied solver code.
+- `core/algorithm.py`: small ROS-free `Algorithm` protocol and `VehicleState`;
+  `core/mpc_algorithm.py` integrates existing MPC, selected by `algorithm: mpc`.
 - Other `solo_mpc/core/` modules: local planning, occupancy/mapping, target
   estimation, coordination, and persistent per-UAV workers; keep ROS imports out.
   These remain local ports and do not automatically follow upstream changes.
 - `ros_ws/src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
   mission supervision, recording, and evaluation.
 - `ros_ws/src/solo_mpc/launch/mpc.launch.py`: single simulation launch entry point.
-- `ros_ws/src/solo_mpc/gazebo/`: native camera/gimbal/coverage plugins.
-- `ros_ws/src/solo_bringup/`: fleet validation, readiness, run files, MAVROS/flight helpers.
-- `ros_ws/src/solo_mpc_interfaces/`: mission service definition.
+- `ros_ws/src/solo_mpc/solo_mpc/flight_node.py`: one exclusive process per UAV; token-checked commands,
+  body velocity/enable output, measured takeoff/landing and motor shutdown.
+- `ros_ws/src/solo_mpc/gazebo/`: `SoloFlightSafety`, camera/gimbal/coverage plugins.
+- `ros_ws/src/solo_mpc/models/`: vendored original Iris assets and licenses.
+- `ros_ws/src/solo_bringup/`: fleet validation, readiness, run files, flight helpers.
+- `ros_ws/src/solo_mpc_interfaces/`: mission service, `FlightState`, `FlightCommand`.
 - `config/`, package `config/` and `scenarios/`: fleet/controller/scenario settings.
 - `docker/`, `compose*.yaml`, `locks/`: runtime, deployment, pinned dependencies.
 - `runs/`, `artifacts/`: generated evidence, ignored by Git; do not delete prior runs.
 
 This repository is simulation-only. Do not add physical-drone profiles, serial
 device integration, or hardware migration scaffolding. All flight and recording
-runs use Gazebo and ArduCopter SITL.
+runs use native Gazebo multicopters only; do not add a legacy backend or a
+one-UAV migration phase. Preserve all four full-fleet CLI presets.
 
 ## Submodule workflow
 
@@ -62,6 +69,14 @@ plotting dependencies; dependency changes belong in Docker and local locks.
 - Preserve measured-state control, per-UAV isolation, common-world ENU alignment,
   simulation-time semantics, source-stamped trajectories, independent setpoint
   expiry, ownership checks, and landing/cleanup. Never bypass them to pass a run.
+- Preserve `OdometryPublisher` world pose/body twist source stamps; rotate twist
+  into world ENU in `frame_node`, never restamp at receipt. Setpoint sampling and
+  position feedback produce world `TwistStamped` on `/uavN/flight/velocity`.
+- Only the UAV's flight process owns `/uavN/cmd_vel` body `Twist` and
+  `/uavN/enable` `Bool`. Keep `SoloFlightSafety` between it and native velocity
+  control: independent simulation/wall expiry must descend after process death
+  and disable motors only on settled ground. Observe actual `/uavN/motor_speed`
+  `actuator_msgs/Actuators` and `/uavN/safety_active`, not just command state.
 - In development, restart the stack for existing Python/config/launch/upstream
   edits. Rebuild with `./scripts/dev build sim` for dependencies, package metadata,
   executables/interfaces, renamed modules, and native plugins. Release source
@@ -106,6 +121,14 @@ Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
   motion, all UAVs' solver outcomes, timing, tracking, geometry, and failures.
 - `recorded-mission.mp4` when requested: visually inspect the relevant result;
   normal `stop` finalizes it, mission completion alone does not.
+
+For backend-wide changes, rebuild and verify `small50_3uav`, `large200_5uav`,
+`large200_5uav_separated`, and `scen1`, each with the full fleet, camera input
+and recording. The November 5, 2026 native migration evidence and limitations
+are recorded in `docs/DEVELOPMENT.md`; earlier backend flights are not validation.
+Preserve the 1920 × 1080 / 20 FPS composition, all map/state/FOV panels, source
+timestamp sidecars and recording layout. Do not introduce new CPU/performance
+acceptance thresholds; retain existing caps and report failures visibly.
 
 Optimizer replay is a numerical diagnostic, not a substitute for flight evidence.
 Successful command exits alone are insufficient. Keep CPU/deadline failures

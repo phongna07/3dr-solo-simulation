@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from mavros_msgs.msg import PositionTarget, State
+from solo_mpc_interfaces.msg import FlightState
 from nav_msgs.msg import OccupancyGrid, Path as RosPath
 from rclpy.exceptions import InvalidHandle
 from rclpy.node import Node
@@ -18,9 +18,8 @@ from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
-from .core.controller import VehicleState
+from .core.algorithm import VehicleState, create_algorithm
 from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
-from .core.parallel_controller import ParallelTeamController
 from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
 from .core.tracking import ExactTargetTracker
@@ -43,7 +42,7 @@ class Controller(Node):
         self.velocities = {}
         self.accelerations = {}
         self.scans = {}
-        self.fcu = {}
+        self.flight = {}
         self.histories = {
             n: PoseHistory(args.settings_data["frame_history_tolerance"])
             for n in args.names
@@ -79,14 +78,14 @@ class Controller(Node):
         for n in args.names:
             self.trajectories[n] = self.create_publisher(JointTrajectory, f"/{n}/mpc/trajectory", 10)
             self.outputs[n] = (
-                self.create_publisher(PositionTarget, f"/{n}/mpc/reference", 10),
+                self.trajectories[n],
                 self.create_publisher(RosPath, f"/{n}/mpc/prediction", 10),
             )
             subscriptions = [
                 (PoseStamped, "mpc/pose", self.pose),
                 (TwistStamped, "mpc/velocity", self.velocity),
                 (LaserScan, "scan", self.scan),
-                (State, "mavros/state", self.state),
+                (FlightState, "flight/state", self.state),
             ]
             if args.settings_data["target_mode"] == "camera":
                 subscriptions.append((PoseStamped, "target/observation", self.observation))
@@ -112,12 +111,8 @@ class Controller(Node):
         if args.run_dir:
             cfg['DIAGNOSTIC_DIR'] = str(Path(args.run_dir, 'optimizer-inputs'))
             cfg['DIAGNOSTIC_CAPTURE_CYCLES'] = args.settings_data.get('diagnostic_capture_cycles', 128)
-        self.team = ParallelTeamController(
-            args.names, cfg,
-            timeout=args.settings_data.get("controller_worker_timeout_wall", 1.0),
-            startup_timeout=args.settings_data.get("controller_worker_startup_timeout_wall", 30.0),
-            sequential=self.execution == 'sequential',
-        )
+        self.team = create_algorithm(args.settings_data.get('algorithm', 'mpc'),
+                                     args.names, cfg, args.settings_data)
         if args.settings_data["target_mode"] == "ground_truth":
             self.team.track = ExactTargetTracker(
                 cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
@@ -139,8 +134,7 @@ class Controller(Node):
             self.cycles.close()
             if self.completion_guard is not None:
                 self.destroy_guard_condition(self.completion_guard)
-            if isinstance(self.team, ParallelTeamController):
-                self.team.close()
+            self.team.close()
             raise
 
     def pose(self, n, msg):
@@ -181,7 +175,7 @@ class Controller(Node):
         self.scans[n] = msg
 
     def state(self, n, msg):
-        self.fcu[n] = msg
+        self.flight[n] = msg
 
     def observation(self, n, msg):
         sources = ("ground_truth",) if self.args.settings_data["target_mode"] == "ground_truth" else self.args.names
@@ -230,8 +224,8 @@ class Controller(Node):
         current = self.get_clock().now().nanoseconds * 1e-9
         if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
             results, reason = {}, 'obsolete_cycle'
-        elif not all(n in self.fcu and self.fcu[n].connected and self.fcu[n].armed
-                     and self.fcu[n].mode == 'GUIDED' for n in self.args.names):
+        elif not all(n in self.flight and self.flight[n].connected and self.flight[n].armed
+                     and self.flight[n].mode in ('TAKEOFF', 'TRACK') for n in self.args.names):
             results, reason = {}, 'flight_state_changed'
         for n, out in results.items():
             if out['ok'] and not out.get('nominal_ok', True):
@@ -267,13 +261,16 @@ class Controller(Node):
         ):
             reason = "waiting_for_measured_state_and_scans"
         elif not all(
-            n in self.fcu
-            and self.fcu[n].connected
-            and self.fcu[n].armed
-            and self.fcu[n].mode == "GUIDED"
+            n in self.flight
+            and self.flight[n].connected
+            and self.flight[n].armed
+            and self.flight[n].mode in ('TAKEOFF', 'TRACK')
             for n in names
         ):
-            reason = "waiting_for_armed_guided_fleet"
+            reason = "waiting_for_owned_airborne_fleet"
+        elif any(abs(self.poses[name][0][2] - settings['flight_altitude']) > 0.5
+                 for name in names):
+            reason = 'waiting_for_flight_altitude'
         elif (
             self.team.track.observed_at is None
             or not 0 <= stamp - self.team.track.observed_at <= settings[
@@ -351,8 +348,7 @@ class Controller(Node):
         # optional and never changes the workers' independent planning maps.
         if not self.occupancy_pub.get_subscription_count():
             return
-        maps = [p.gmap for p in self.team.planners.values()
-                if p.gmap.occupied is not None and p.gmap.unknown is not None]
+        maps = self.team.occupancy_maps()
         if not maps:
             return
         cells = fuse_occupancy(maps)
@@ -373,20 +369,9 @@ class Controller(Node):
         for n, out in results.items():
             if not out["ok"]:
                 continue
-            msg = PositionTarget()
-            msg.header.stamp = now.to_msg()
-            msg.header.frame_id = "world"
-            msg.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
-            msg.type_mask = PositionTarget.IGNORE_YAW | PositionTarget.IGNORE_YAW_RATE
-            msg.position.x, msg.position.y = map(float, out["position"])
-            msg.position.z = settings["flight_altitude"]
-            msg.velocity.x, msg.velocity.y = map(float, out["velocity"])
-            msg.acceleration_or_force.x, msg.acceleration_or_force.y = map(
-                float, out["acceleration"]
-            )
-            self.outputs[n][0].publish(msg)
             trajectory = JointTrajectory()
-            trajectory.header = msg.header
+            trajectory.header.stamp = now.to_msg()
+            trajectory.header.frame_id = 'world'
             trajectory.joint_names = ['x', 'y']
             controls = out.get('controls')
             if controls is not None:
@@ -399,7 +384,7 @@ class Controller(Node):
                         time_from_start=Duration(sec=at // 10**9, nanosec=at % 10**9)))
                 self.trajectories[n].publish(trajectory)
             path = RosPath()
-            path.header = msg.header
+            path.header = trajectory.header
             path.poses = [
                 pose_message([x[0], x[1], settings["flight_altitude"]], now.to_msg())
                 for x in out["prediction"]
@@ -419,10 +404,7 @@ class Controller(Node):
             **(timing or {}),
             "execution": self.execution,
             "reason": reason,
-            "leader": self.team.leader,
-            "controller_modes": self.team.modes,
-            "assignment": self.team.assignment,
-            "slot_scales": self.team.slot_scales,
+            **self.team.diagnostics(),
             "target_mode": settings["target_mode"],
             "target_input_fresh": target_age is not None and 0 <= target_age <= settings['target_timeout_sim'],
             "target_observation_age": target_age,
@@ -448,8 +430,8 @@ class Controller(Node):
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",
                         )
                     },
-                    "armed": bool(n in self.fcu and self.fcu[n].armed),
-                    "mode": self.fcu[n].mode if n in self.fcu else None,
+                    "armed": bool(n in self.flight and self.flight[n].armed),
+                    "mode": self.flight[n].mode if n in self.flight else None,
                 }
                 for n, (p, q, at) in self.poses.items()
             },
@@ -466,8 +448,7 @@ class Controller(Node):
             self._closing = True
         self.cycles.close()
         self.cycle_context = None
-        if isinstance(self.team, ParallelTeamController):
-            self.team.close()
+        self.team.close()
         if self.log:
             self.log.close()
         return super().destroy_node()

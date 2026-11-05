@@ -1,6 +1,5 @@
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -10,20 +9,6 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import yaml
-
-
-def sitl_parameter_file(parameters, destination):
-    """Shared read-only defaults; each SITL still owns its own EEPROM directory."""
-    if not isinstance(parameters, dict):
-        raise ValueError('sitl_params must be a mapping of FCU parameter names to numbers')
-    lines = []
-    for name, value in parameters.items():
-        if (not isinstance(name, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,15}', name)
-                or type(value) not in (int, float) or not math.isfinite(value)):
-            raise ValueError(f'Invalid SITL parameter: {name}')
-        lines.append(f'{name} {value}\n')
-    Path(destination).write_text(''.join(lines))
-    return str(destination)
 
 
 def create_run(config, run_id=''):
@@ -44,7 +29,8 @@ def create_run(config, run_id=''):
         'created_utc': datetime.now(timezone.utc).isoformat(),
         'ros_domain_id': os.environ.get('ROS_DOMAIN_ID', '0'),
         'rmw': os.environ.get('RMW_IMPLEMENTATION', ''),
-        'clock_policy': 'Gazebo /clock for control/sensors/video; FCU JSON lockstep; MAVROS wall time with timesync disabled',
+        'clock_policy': 'Gazebo source timestamps and /clock for measured state, control, sensors and video',
+        'flight_backend': 'gazebo_native_multicopter',
         'application_mode': 'development' if os.environ.get('SOLO_DEV') == '1' else 'release',
         'versions': json.loads(versions_path.read_text()) if versions_path.exists() else {},
     }
@@ -56,7 +42,7 @@ def create_run(config, run_id=''):
         manifest['workspace_commit'] = None
     (run / 'metadata/manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (run / 'config/fleet.yaml').write_text(yaml.safe_dump(config, sort_keys=False))
-    for filename in ('apt-packages.lock', 'submodules.lock', 'geoid.sha256', 'application.sha256'):
+    for filename in ('apt-packages.lock', 'application.sha256'):
         source = Path('/opt/solo') / filename
         if source.exists():
             shutil.copy2(source, run / 'metadata' / filename)

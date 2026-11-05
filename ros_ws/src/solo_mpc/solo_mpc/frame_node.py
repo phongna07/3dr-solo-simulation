@@ -1,202 +1,84 @@
-"""Calibrate disarmed local EKF frames once, then publish measured world state.
-
-Ground truth is used only for initial simulation alignment and evaluation. Pose
-comes from MAVROS after calibration. FCU wall-time stamps are explicitly mapped
-to ROS simulation receipt time; this is an approximation recorded in docs.
-"""
+"""Publish Gazebo measured state in common-world ENU at its source timestamp."""
 
 import json
-import time
 from pathlib import Path
 
 import numpy as np
 from geometry_msgs.msg import PoseStamped, TransformStamped, TwistStamped
-from mavros_msgs.msg import State
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from .core.sensors import stabilized_camera_pose
-from .ros_utils import pose_arrays, pose_message, qos_profile_sensor_data, run_node
+from .ros_utils import pose_message, qos_profile_sensor_data, run_node
 
 
 class Frames(Node):
     def __init__(self, args):
-        super().__init__("mpc_frames")
+        super().__init__('mpc_frames')
         self.args = args
-        self.local = {}
-        self.truth = {}
-        self.fcu = {}
-        self.transforms = {}
-        self.samples = {}
         self.publishers_keep = {}
         self.subscriptions_keep = []
         self.static = StaticTransformBroadcaster(self)
         self.dynamic = TransformBroadcaster(self)
         mounts = []
-        for n in args.names:
-            for child, offset, rotation in [
-                ("laser", [0.0, 0.0, 0.08], Rotation.identity()),
-            ]:
-                tf = TransformStamped()
-                tf.header.frame_id = f"{n}/base_link"
-                tf.child_frame_id = f"{n}/{child}"
-                (
-                    tf.transform.translation.x,
-                    tf.transform.translation.y,
-                    tf.transform.translation.z,
-                ) = offset
-                q = rotation.as_quat()
-                (
-                    tf.transform.rotation.x,
-                    tf.transform.rotation.y,
-                    tf.transform.rotation.z,
-                    tf.transform.rotation.w,
-                ) = map(float, q)
-                mounts.append(tf)
+        for name in args.names:
+            mount = TransformStamped()
+            mount.header.frame_id = f'{name}/base_link'
+            mount.child_frame_id = f'{name}/laser'
+            mount.transform.translation.z = 0.08
+            mount.transform.rotation.w = 1.0
+            mounts.append(mount)
+            self.publishers_keep[name] = (
+                self.create_publisher(PoseStamped, f'/{name}/mpc/pose', 10),
+                self.create_publisher(TwistStamped, f'/{name}/mpc/velocity', 10),
+            )
+            self.subscriptions_keep.append(self.create_subscription(
+                Odometry, f'/{name}/ground_truth/odometry',
+                lambda msg, vehicle=name: self.odometry(vehicle, msg), qos_profile_sensor_data))
         self.static.sendTransform(mounts)
-        for n in args.names:
-            self.publishers_keep[n] = (
-                self.create_publisher(PoseStamped, f"/{n}/mpc/pose", 10),
-                self.create_publisher(TwistStamped, f"/{n}/mpc/velocity", 10),
-            )
-            for typ, suffix, cb in [
-                (PoseStamped, "mavros/local_position/pose", self.local_pose),
-                (PoseStamped, "ground_truth/pose", self.ground_pose),
-                (TwistStamped, "mavros/local_position/velocity_local", self.velocity),
-                (State, "mavros/state", self.state),
-            ]:
-                self.subscriptions_keep.append(
-                    self.create_subscription(
-                        typ,
-                        f"/{n}/{suffix}",
-                        lambda msg, name=n, fn=cb: fn(name, msg),
-                        qos_profile_sensor_data,
-                    )
-                )
+        if args.run_dir:
+            path = Path(args.run_dir, 'status/alignment.json')
+            path.write_text(json.dumps({name: dict(yaw=0.0, translation=[0.0, 0.0, 0.0],
+                                                  source='gazebo_world_enu')
+                                        for name in args.names}, indent=2) + '\n')
 
-    def state(self, n, msg):
-        self.fcu[n] = msg
-
-    def ground_pose(self, n, msg):
-        self.truth[n] = (msg, time.monotonic())
-
-    def local_pose(self, n, msg):
-        self.local[n] = (msg, time.monotonic())
-        if n not in self.transforms:
-            fcu = self.fcu.get(n)
-            truth = self.truth.get(n)
-            if (
-                not fcu
-                or fcu.armed
-                or not fcu.connected
-                or not truth
-                or time.monotonic() - truth[1] > 1.0
-            ):
-                return
-            p, q = pose_arrays(msg)
-            wp, wq = pose_arrays(truth[0])
-            if np.linalg.norm(q) < 0.9 or np.linalg.norm(wq) < 0.9:
-                return
-            # Local position axes are ENU by the pinned Gazebo XYZ->NED
-            # transform and MAVROS conversion. Compass yaw error describes
-            # attitude error, not a rotation of those position axes. Using it
-            # as frame yaw would accumulate lateral position error downfield.
-            yaw = float(self.args.settings_data.get("world_from_local_yaw", 0.0))
-            rot = Rotation.from_euler("z", yaw)
-            self.samples.setdefault(n, []).append((yaw, wp - rot.apply(p)))
-            if len(self.samples[n]) < self.args.settings_data["calibration_samples"]:
-                return
-            samples = self.samples[n]
-            yaw = float(
-                np.arctan2(
-                    np.mean(np.sin([s[0] for s in samples])),
-                    np.mean(np.cos([s[0] for s in samples])),
-                )
-            )
-            rot = Rotation.from_euler("z", yaw)
-            offset = np.mean([s[1] for s in samples], axis=0)
-            self.transforms[n] = (rot, offset)
-            tf = TransformStamped()
-            tf.header.stamp = self.get_clock().now().to_msg()
-            tf.header.frame_id = "world"
-            tf.child_frame_id = f"{n}/map"
-            (
-                tf.transform.translation.x,
-                tf.transform.translation.y,
-                tf.transform.translation.z,
-            ) = map(float, offset)
-            q = rot.as_quat()
-            (
-                tf.transform.rotation.x,
-                tf.transform.rotation.y,
-                tf.transform.rotation.z,
-                tf.transform.rotation.w,
-            ) = map(float, q)
-            self.static.sendTransform(tf)
-            self.get_logger().info(
-                f"{n}: frozen world alignment yaw={yaw:.4f}, offset={offset.tolist()}"
-            )
-            self.save()
-        rot, offset = self.transforms[n]
-        p, q = pose_arrays(msg)
-        if (
-            not np.isfinite(p).all()
-            or not np.isfinite(q).all()
-            or np.linalg.norm(q) < 0.9
-        ):
+    def odometry(self, name, msg):
+        position, quaternion = msg.pose.pose.position, msg.pose.pose.orientation
+        coordinates = [position.x, position.y, position.z]
+        orientation = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
+        if (msg.header.frame_id != 'world' or not np.isfinite(coordinates + orientation).all()
+                or abs(np.linalg.norm(orientation) - 1.0) > 0.01):
             return
-        transformed = pose_message(
-            rot.apply(p) + offset,
-            self.get_clock().now().to_msg(),
-            (rot * Rotation.from_quat(q)).as_quat(),
-        )
-        self.publishers_keep[n][0].publish(transformed)
-        tf = TransformStamped()
-        tf.header = transformed.header
-        tf.child_frame_id = f"{n}/base_link"
-        tf.transform.translation.x = transformed.pose.position.x
-        tf.transform.translation.y = transformed.pose.position.y
-        tf.transform.translation.z = transformed.pose.position.z
-        tf.transform.rotation = transformed.pose.orientation
-        self.dynamic.sendTransform(tf)
-        camera_position, camera_quaternion = stabilized_camera_pose(
-            [transformed.pose.position.x, transformed.pose.position.y,
-             transformed.pose.position.z])
-        camera_tf = TransformStamped()
-        camera_tf.header = transformed.header
-        camera_tf.child_frame_id = f"{n}/camera_optical_frame"
-        (camera_tf.transform.translation.x, camera_tf.transform.translation.y,
-         camera_tf.transform.translation.z) = map(float, camera_position)
-        (camera_tf.transform.rotation.x, camera_tf.transform.rotation.y,
-         camera_tf.transform.rotation.z, camera_tf.transform.rotation.w) = map(
-             float, camera_quaternion)
-        self.dynamic.sendTransform(camera_tf)
-
-    def velocity(self, n, msg):
-        if n not in self.transforms:
-            return
-        rot, _ = self.transforms[n]
-        v = msg.twist.linear
-        values = rot.apply([v.x, v.y, v.z])
-        out = TwistStamped()
-        out.header.stamp = self.get_clock().now().to_msg()
-        out.header.frame_id = "world"
-        out.twist.linear.x, out.twist.linear.y, out.twist.linear.z = map(float, values)
-        self.publishers_keep[n][1].publish(out)
-
-    def save(self):
-        if self.args.run_dir:
-            data = {
-                n: {"yaw": float(r.as_euler("xyz")[2]), "translation": t.tolist()}
-                for n, (r, t) in self.transforms.items()
-            }
-            path = Path(self.args.run_dir, "status/alignment.json")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(".json.tmp")
-            temporary.write_text(json.dumps(data, indent=2) + "\n")
-            temporary.replace(path)
+        rotation = Rotation.from_quat(orientation)
+        pose = pose_message(coordinates, msg.header.stamp, orientation)
+        self.publishers_keep[name][0].publish(pose)
+        linear, angular = msg.twist.twist.linear, msg.twist.twist.angular
+        velocity = TwistStamped()
+        velocity.header = pose.header
+        values = rotation.apply([linear.x, linear.y, linear.z])
+        velocity.twist.linear.x, velocity.twist.linear.y, velocity.twist.linear.z = map(float, values)
+        values = rotation.apply([angular.x, angular.y, angular.z])
+        velocity.twist.angular.x, velocity.twist.angular.y, velocity.twist.angular.z = map(float, values)
+        self.publishers_keep[name][1].publish(velocity)
+        transform = TransformStamped()
+        transform.header = pose.header
+        transform.child_frame_id = f'{name}/base_link'
+        transform.transform.translation.x = position.x
+        transform.transform.translation.y = position.y
+        transform.transform.translation.z = position.z
+        transform.transform.rotation = quaternion
+        camera_position, camera_quaternion = stabilized_camera_pose(coordinates)
+        camera = TransformStamped()
+        camera.header = pose.header
+        camera.child_frame_id = f'{name}/camera_optical_frame'
+        (camera.transform.translation.x, camera.transform.translation.y,
+         camera.transform.translation.z) = map(float, camera_position)
+        (camera.transform.rotation.x, camera.transform.rotation.y,
+         camera.transform.rotation.z, camera.transform.rotation.w) = map(float, camera_quaternion)
+        self.dynamic.sendTransform([transform, camera])
 
 
 def main():
-    run_node(Frames, "Calibrate simulation world frames from disarmed measured poses")
+    run_node(Frames, 'Adapt Gazebo ground truth to common-world measured states')

@@ -1,4 +1,4 @@
-"""Request telemetry once per connection and monitor actual pose arrivals."""
+"""Monitor native flight, source-stamped ground truth and actual rotor telemetry."""
 import argparse
 from collections import deque
 import json
@@ -7,16 +7,16 @@ from pathlib import Path
 import time
 
 import rclpy
+from actuator_msgs.msg import Actuators
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
-from geometry_msgs.msg import PoseStamped
-from mavros_msgs.msg import State, StatusText
-from mavros_msgs.srv import MessageInterval
 from rosgraph_msgs.msg import Clock
-from std_msgs.msg import String
+from solo_mpc_interfaces.msg import FlightState
+from solo_mpc_interfaces.srv import FlightCommand
+from std_msgs.msg import Bool, String
 
 from solo_bringup.configuration import load_config
-from solo_bringup.parameters import PluginParameters
 
 
 def atomic_json(path, payload):
@@ -42,29 +42,28 @@ class Readiness(Node):
         self.clock_samples = deque()
         self.first_ready_elapsed = None
         self.records = {}
-        self.plugin_parameters = PluginParameters(self, config['uavs'], run_dir)
         self.publisher = self.create_publisher(
             String, '/solo/readiness',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-        self.subscriptions_keepalive = []
-        self.subscriptions_keepalive.append(self.create_subscription(
-            Clock, '/clock', self.clock, qos_profile_sensor_data))
+        self.subscriptions_keepalive = [self.create_subscription(
+            Clock, '/clock', self.clock, qos_profile_sensor_data)]
         for uav in config['uavs']:
             name = uav['name']
             self.records[name] = {
-                'state': None, 'state_at': 0, 'pose_at': 0, 'pose_count': 0,
-                'stamp': None, 'intervals': set(), 'future': None, 'request_id': None,
-                'next_request': 0, 'request_at': 0,
-                'status_text': None,
-                'client': self.create_client(MessageInterval, f'/{name}/mavros/set_message_interval'),
+                'state': None, 'state_at': None, 'pose_at': None, 'pose_count': 0,
+                'stamp': None, 'motor_stamp': None, 'motor_at': None, 'motor_speed': None,
+                'safety_active': False,
+                'client': self.create_client(FlightCommand, f'/{name}/flight/command'),
             }
             self.subscriptions_keepalive += [
-                self.create_subscription(State, f'/{name}/mavros/state',
+                self.create_subscription(FlightState, f'/{name}/flight/state',
                                          lambda msg, n=name: self.state(msg, n), qos_profile_sensor_data),
-                self.create_subscription(PoseStamped, f'/{name}/mavros/local_position/pose',
+                self.create_subscription(Odometry, f'/{name}/ground_truth/odometry',
                                          lambda msg, n=name: self.pose(msg, n), qos_profile_sensor_data),
-                self.create_subscription(StatusText, f'/{name}/mavros/statustext/recv',
-                                         lambda msg, n=name: self.status_text(msg, n), qos_profile_sensor_data),
+                self.create_subscription(Actuators, f'/{name}/motor_speed',
+                                         lambda msg, n=name: self.motors(msg, n), qos_profile_sensor_data),
+                self.create_subscription(Bool, f'/{name}/safety_active',
+                                         lambda msg, n=name: self.safety(msg, n), qos_profile_sensor_data),
             ]
         self.timer = self.create_timer(0.5, self.tick)
 
@@ -72,6 +71,9 @@ class Readiness(Node):
         value = msg.clock.sec + msg.clock.nanosec * 1e-9
         if self.sim_time is not None and value < self.sim_time:
             self.clock_samples.clear()
+            for record in self.records.values():
+                record.update(state=None, state_at=None, pose_at=None, pose_count=0,
+                              stamp=None, motor_stamp=None, motor_at=None, motor_speed=None)
         self.sim_time, self.clock_at = value, time.monotonic()
 
     def simulation_status(self, now):
@@ -85,135 +87,99 @@ class Readiness(Node):
         return {'time_s': self.sim_time, 'real_time_factor': factor,
                 'clock_age_wall_s': now - self.clock_at}
 
-    def status_text(self, msg, name):
-        self.records[name]['status_text'] = msg.text
-
     def state(self, msg, name):
-        record = self.records[name]
-        old = record['state']
-        if msg.connected and (old is None or not old.connected):
-            self.reset(record)
-        elif not msg.connected:
-            self.reset(record)
-        record['state'], record['state_at'] = msg, time.monotonic()
-
-    @staticmethod
-    def reset(record):
-        future = record['future']
-        if future is not None:
-            future.cancel()
-        record.update(intervals=set(), future=None, request_id=None, next_request=0,
-                      pose_count=0, pose_at=0, stamp=None)
+        self.records[name]['state'], self.records[name]['state_at'] = msg, time.monotonic()
 
     def pose(self, msg, name):
-        values = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-                  msg.pose.orientation.x, msg.pose.orientation.y,
-                  msg.pose.orientation.z, msg.pose.orientation.w)
-        if not all(math.isfinite(value) for value in values):
+        position, orientation = msg.pose.pose.position, msg.pose.pose.orientation
+        linear, angular = msg.twist.twist.linear, msg.twist.twist.angular
+        values = (position.x, position.y, position.z, orientation.x, orientation.y,
+                  orientation.z, orientation.w, linear.x, linear.y, linear.z,
+                  angular.x, angular.y, angular.z)
+        if msg.header.frame_id != 'world' or not all(math.isfinite(value) for value in values):
             return
-        stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        norm = sum(value**2 for value in (orientation.x, orientation.y, orientation.z, orientation.w))
+        if not 0.81 <= norm <= 1.21:
+            return
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         record = self.records[name]
-        if stamp != record['stamp']:
+        if record['stamp'] is None or stamp > record['stamp']:
             record['pose_count'] += 1
-            record['stamp'] = stamp
-            record['pose_at'] = time.monotonic()
+            record['stamp'], record['pose_at'] = stamp, time.monotonic()
+
+    def motors(self, msg, name):
+        if len(msg.velocity) != 4 or not all(math.isfinite(value) for value in msg.velocity):
+            return
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        record = self.records[name]
+        if record['motor_stamp'] is None or stamp > record['motor_stamp']:
+            record['motor_stamp'], record['motor_at'] = stamp, time.monotonic()
+            record['motor_speed'] = max(abs(value) for value in msg.velocity)
+
+    def safety(self, msg, name):
+        self.records[name]['safety_active'] = msg.data
 
     def tick(self):
         now = time.monotonic()
-        configured = self.plugin_parameters.tick()
-        plugins = self.plugin_parameters.status()
+        clock_ready = self.clock_at is not None and now - self.clock_at < self.max_pose_age
         report = {}
         for name, record in self.records.items():
             state = record['state']
-            connected = bool(state and state.connected and now - record['state_at'] < self.state_timeout)
-            if not connected:
-                self.reset(record)
-            elif record['future'] is not None:
-                future = record['future']
-                if future.done():
-                    accepted = False
-                    try:
-                        response = future.result()
-                        if response and response.success:
-                            record['intervals'].add(record['request_id'])
-                            accepted = True
-                        else:
-                            self.get_logger().warning(f'{name}: telemetry request rejected; retrying')
-                    except Exception as error:
-                        self.get_logger().warning(f'{name}: telemetry service: {error}')
-                    record['future'] = None
-                    record['next_request'] = now if accepted else now + 1
-                elif now - record['request_at'] > 15:
-                    future.cancel()
-                    record['future'] = None
-                    record['next_request'] = now + 2
-            if connected and record['future'] is None and now >= record['next_request'] \
-                    and record['client'].service_is_ready():
-                missing = [message for message in (32, 30) if message not in record['intervals']]
-                if missing:
-                    request = MessageInterval.Request(message_id=missing[0], message_rate=10.0)
-                    record['future'] = record['client'].call_async(request)
-                    record['request_id'], record['request_at'] = missing[0], now
-            pose_age = now - record['pose_at'] if record['pose_at'] else None
-            prefix = f'/{name}/mavros/'
-            plugin_status = {target.removeprefix(prefix): item for target, item in plugins.items()
-                             if target.startswith(prefix)}
-            parameters_ready = all(item['ready'] for item in plugin_status.values())
-            if not connected:
-                connection_detail = 'waiting for FCU heartbeat' if state is None else \
-                    ('FCU disconnected' if not state.connected else 'FCU heartbeat stale')
-            else:
-                connection_detail = 'connected'
-            missing = [message for message in (32, 30) if message not in record['intervals']]
-            if not missing:
-                telemetry_detail = 'position + attitude streams accepted'
-            elif not connected:
-                telemetry_detail = 'waiting for FCU connection'
-            elif record['future'] is not None:
-                telemetry_detail = f"waiting for message {record['request_id']} acknowledgement"
-            elif not record['client'].service_is_ready():
-                telemetry_detail = 'waiting for MAVROS set_message_interval service'
-            else:
-                telemetry_detail = f'requesting messages {missing}'
-            pose_ready = record['pose_count'] >= 3 and pose_age is not None and pose_age < self.max_pose_age
-            if not record['pose_count']:
-                pose_detail = 'waiting for first local pose (FCU EKF/local_position)'
-            elif record['pose_count'] < 3:
-                pose_detail = f"collecting fresh poses {record['pose_count']}/3"
-            elif not pose_ready:
-                pose_detail = 'local pose stream stale'
-            else:
-                pose_detail = 'fresh local poses'
+            state_stamp = (state.header.stamp.sec + state.header.stamp.nanosec * 1e-9
+                           if state is not None else None)
+            connected = bool(clock_ready and state and state.connected
+                             and now - record['state_at'] < self.state_timeout
+                             and -0.05 <= self.sim_time - state_stamp < self.state_timeout)
+            pose_age = now - record['pose_at'] if record['pose_at'] is not None else None
+            motor_age = now - record['motor_at'] if record['motor_at'] is not None else None
+            pose_ready = (clock_ready and record['pose_count'] >= 3 and pose_age < self.max_pose_age
+                          and -0.05 <= self.sim_time - record['stamp'] < self.max_pose_age)
+            motor_ready = (clock_ready and motor_age is not None and motor_age < self.max_pose_age
+                           and -0.05 <= self.sim_time - record['motor_stamp'] < self.max_pose_age)
+            service_ready = record['client'].service_is_ready()
+            flight_ready = bool(connected and (state.mode in ('TAKEOFF', 'TRACK', 'LAND')
+                                               or (state.mode == 'IDLE' and state.landed)))
             checks = {
-                'FCU': {'ready': connected, 'detail': connection_detail},
-                'MAVROS parameters': {'ready': parameters_ready,
-                                      'detail': f"{sum(item['ready'] for item in plugin_status.values())}/{len(plugin_status)} plugins configured"},
-                'telemetry': {'ready': not missing, 'detail': telemetry_detail},
-                'local pose': {'ready': pose_ready, 'detail': pose_detail},
+                'flight': {'ready': flight_ready,
+                           'detail': ('connected' if flight_ready else 'waiting for settled ground'
+                                      if connected else 'waiting for fresh native flight state')},
+                'command service': {'ready': service_ready,
+                                    'detail': 'available' if service_ready else 'waiting for FlightCommand service'},
+                'ground truth': {'ready': bool(pose_ready),
+                                 'detail': 'fresh world odometry' if pose_ready
+                                 else f"waiting for fresh odometry ({min(record['pose_count'], 3)}/3)"},
+                'motors': {'ready': bool(motor_ready),
+                           'detail': 'actual rotor speeds available' if motor_ready
+                           else 'waiting for actual rotor JointVelocity telemetry'},
+                'safety': {'ready': not record['safety_active'],
+                           'detail': 'Gazebo watchdog active' if record['safety_active']
+                           else 'Gazebo watchdog clear'},
             }
-            ready = configured and connected and record['intervals'] == {32, 30} and \
-                record['pose_count'] >= 3 and pose_age is not None and pose_age < self.max_pose_age
+            ready = all(item['ready'] for item in checks.values())
             report[name] = {
-                'connected': connected, 'telemetry': sorted(record['intervals']),
+                'connected': connected,
+                'telemetry': [topic for topic, available in [('ground_truth/odometry', pose_ready),
+                                                            ('motor_speed', motor_ready)] if available],
                 'pose_messages': record['pose_count'], 'pose_age_wall_s': pose_age,
+                'motor_age_wall_s': motor_age, 'motor_speed_max_rad_s': record['motor_speed'],
                 'mode': state.mode if state else None,
-                'armed': bool(state and state.armed), 'ready': ready,
-                'last_fcu_status': record['status_text'],
-                'checks': checks, 'plugins': plugin_status,
+                'owner': state.owner if state else None,
+                'safety_active': record['safety_active'],
+                'armed': bool(state and state.armed), 'landed': bool(state and state.landed),
+                'ready': ready, 'checks': checks,
             }
         ready = all(value['ready'] for value in report.values())
         if ready and self.first_ready_elapsed is None:
             self.first_ready_elapsed = now - self.started
-        payload = {'ready': ready, 'plugin_parameters_applied': configured, 'updated_wall_unix': time.time(),
-                   'elapsed_wall_s': now - self.started,
-                   'first_ready_elapsed_wall_s': self.first_ready_elapsed, 'uavs': report}
-        payload['simulation'] = self.simulation_status(now)
+        payload = {'ready': ready, 'backend': 'gazebo_native',
+                   'updated_wall_unix': time.time(), 'elapsed_wall_s': now - self.started,
+                   'first_ready_elapsed_wall_s': self.first_ready_elapsed, 'uavs': report,
+                   'simulation': self.simulation_status(now)}
         atomic_json(self.run_dir / 'status/health.json', payload)
         self.publisher.publish(String(data=json.dumps(payload)))
         if ready:
             atomic_json(self.run_dir / 'status/ready.json', payload)
-        status_summary = json.dumps({name: {'checks': item['checks'], 'plugins': item['plugins']}
-                                     for name, item in report.items()}, sort_keys=True)
+        status_summary = json.dumps({name: item['checks'] for name, item in report.items()}, sort_keys=True)
         if status_summary != self.previous_summary or ready != self.previous_ready or now - self.last_report > 15:
             summary = ', '.join(f"{name}: {'ready' if item['ready'] else 'waiting'} "
                                 + '; '.join(f"{check}: {value['detail']}" for check, value in item['checks'].items()

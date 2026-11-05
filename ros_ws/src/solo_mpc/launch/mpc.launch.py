@@ -1,9 +1,8 @@
-"""Gazebo/SITL fleet, sensors, recording and independent MPC mission processes."""
+"""Native Gazebo fleet, sensors, recording and independent algorithm processes."""
 
 import json
 import os
 import shutil
-import socket
 from pathlib import Path
 
 import yaml
@@ -13,8 +12,8 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from solo_bringup.configuration import load_config
-from solo_bringup.launching import critical, mavros, observed
-from solo_bringup.runtime import create_run, sitl_parameter_file
+from solo_bringup.launching import critical, observed
+from solo_bringup.runtime import create_run
 from solo_bringup.startup import StartupProgress
 from solo_mpc.settings import load_settings
 from solo_mpc.core.visual_style import OVERHEAD_FPS
@@ -36,52 +35,22 @@ def start(context):
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
         uav["spawn"] = [point[0], point[1], 0.195, 0, 0, 90]
     fleet["world_name"] = scenario.get("world_name", "mpc_small50")
-    # All FCU ports stay inside the simulation container.
-    for uav in fleet['uavs']:
-        for kind, port in ((socket.SOCK_STREAM, uav['tcp_port']),
-                           (socket.SOCK_DGRAM, uav['json_port'])):
-            with socket.socket(socket.AF_INET, kind) as sock:
-                try:
-                    sock.bind(('127.0.0.1', port))
-                except OSError as error:
-                    raise RuntimeError(f"{uav['name']}: port {port} occupied") from error
     run = create_run(fleet, get('run_id'))
     progress = StartupProgress(run)
     progress.stage('Generating Gazebo world and sensor models')
     world = generate_mpc_world(
-        fleet, '/opt/ardupilot_gazebo', run / 'config/world.sdf',
+        fleet, os.environ['SOLO_MODEL_PATH'], run / 'config/world.sdf',
         scenario, settings, cfg, record_video=record_video,
     )
-    defaults = ','.join(str(Path('/opt/ardupilot/Tools/autotest/default_params') / name)
-                        for name in ('copter.parm', 'gazebo-iris.parm'))
-    for path in defaults.split(','):
-        if not Path(path).is_file():
-            raise RuntimeError(f'Missing defaults: {path}')
-    if settings.get('sitl_params'):
-        defaults += ',' + sitl_parameter_file(settings['sitl_params'], run / 'config/sitl-overrides.parm')
     server_home = run / 'gazebo-home'
     server_home.mkdir()
     gazebo = ExecuteProcess(
         cmd=['gz', 'sim', '--headless-rendering', '-s', '-r', '-v', '3', str(world)],
         name='gazebo-server', output='both', additional_env={'HOME': str(server_home)},
     )
-    progress.stage('Preparing SITL and MAVROS configuration')
+    progress.stage('Preparing native multicopter flight supervision')
     actions = [SetEnvironmentVariable('ROS_LOG_DIR', str(run / 'logs')),
                critical(gazebo)] + observed(gazebo, progress, 'gazebo-server')
-    for uav in fleet['uavs']:
-        cwd = run / 'sitl' / str(uav['instance'])
-        cwd.mkdir(parents=True)
-        # JSON physics timestamps drive FCU time. Gazebo alone throttles the
-        # rate; the plugin's no_time_sync avoids another wall pacing loop.
-        sitl = ExecuteProcess(
-            cmd=['/opt/ardupilot/build/sitl/bin/arducopter', '-S', '--model', 'JSON',
-                 '--speedup', '1', '--sim-address=127.0.0.1', '-I', str(uav['instance']),
-                 '--sysid', str(uav['sysid']), '--defaults', defaults],
-            cwd=str(cwd), name=f"sitl-{uav['name']}", output='both',
-        )
-        fcu_bridge = mavros(uav, run)
-        actions += [critical(sitl)] + observed(sitl, progress, f"sitl-{uav['name']}")
-        actions += [critical(fcu_bridge)] + observed(fcu_bridge, progress, f"mavros-{uav['name']}")
     monitor = Node(
         package='solo_bringup', executable='readiness', name='fleet_readiness',
         output='both', arguments=['--fleet', str(run / 'config/fleet.yaml'), '--run-dir', str(run),
@@ -89,7 +58,7 @@ def start(context):
     )
     actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
     progress.stage('Preparing MPC nodes and sensor bridges')
-    # Snapshot the same resolved inputs used for the world and FCU setup.
+    # Snapshot the same resolved inputs used for world generation and flight.
     shutil.copyfile(get("scenario"), run / "config/scenario.yaml")
     (run / "config/controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
     (run / "config/mpc-config.json").write_text(json.dumps(cfg, indent=2) + "\n")
@@ -136,9 +105,15 @@ def start(context):
             parameters=[{"use_sim_time": True}],
             output="both",
         )
-        # Keep SITL and MAVROS alive if a controller/perception process exits.
-        # The independent publisher expires references; the supervisor can LAND.
         actions += observed(node, progress, executable, initializes=True)
+    for uav in fleet['uavs']:
+        component = f"flight-{uav['name']}"
+        node = Node(
+            package='solo_mpc', executable='flight',
+            arguments=args + ['--vehicle', uav['name'], '--startup-component', component],
+            parameters=[{'use_sim_time': True}], output='both',
+        )
+        actions += observed(node, progress, component, initializes=True)
     supervisor = Node(
         package="solo_mpc", executable="mission_supervisor",
         arguments=['--run-dir', str(run), '--startup-component', 'mission-supervisor'],

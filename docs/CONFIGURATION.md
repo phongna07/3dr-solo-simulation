@@ -9,7 +9,7 @@ editing a YAML file does not reconfigure an active experiment.
 
 | Input | Default | Purpose |
 |---|---|---|
-| Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names, SITL instances, SYSIDs |
+| Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names and native Gazebo spawn poses |
 | Scenario | [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
 | Controller | [controller.yaml](../ros_ws/src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
 
@@ -25,10 +25,17 @@ Use container paths for CLI overrides:
 The runner supplies host UID/GID and a fresh run ID. Select GPU/display overrides
 as described in [Simulation](SIMULATION.md#gpu-and-display).
 
-Readiness waits indefinitely, including on slow hosts where FCU initialization
-advances much slower than wall time. The former `READINESS_TIMEOUT` environment
-setting is no longer used. FCU heartbeat and pose freshness checks still apply;
-startup process failures and a stopped container still fail startup.
+Readiness waits indefinitely, including on slow hosts where native model/sensor
+initialization advances much slower than wall time. The former
+`READINESS_TIMEOUT` environment setting is no longer used. Fresh measured
+odometry, flight state, motor telemetry and ready algorithm workers still gate
+flight; process failures and a stopped container still fail startup.
+
+Controller settings select `algorithm: mpc` through the small ROS-free algorithm
+factory. This uses the existing MPC implementation and unchanged upstream
+solver/dynamics; see [Development](DEVELOPMENT.md#architecture). All four presets
+retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
+backend selection or one-UAV migration stage.
 
 ### Scen1: five UAVs in a 1000 × 1000 m map
 
@@ -46,7 +53,7 @@ Simulation-specific differences from upstream:
   UAV 3 initially covers the target; the other four approach from hundreds of
   metres away rather than spawning on formation slots. The frozen target route
   and obstacles remain unchanged. All UAVs take off from ground level under
-  SITL control.
+  native flight-node and Gazebo rotor control.
 - `target_startup_ramp_sim: 3.0` ramps the route clock from zero to its nominal
   rate over the first three tracking seconds. On the initial 5 m/s leg this
   gives roughly 1.67 m/s² tangential acceleration and 7.5 m of travel during
@@ -73,15 +80,12 @@ Simulation-specific differences from upstream:
   entire kilometre-wide field. The occupancy panel shows the whole field.
 - The local controller overrides the scenario's 10 m/s and 5 m/s² prediction
   bounds with 6 m/s and 3 m/s², a 20-step nominal horizon and a 30-step stopping
-  branch at 0.1 s. Its effective acceleration lag is 0.3 s, with SITL
-  `PSC_JERK_XY: 20` m/s³. ArduCopter's default 5 m/s³ horizontal input shaping
-  delayed braking during saturated SEARCH approaches; recorded response lag
-  was about 0.7 s. Keep input shaping and the prediction settings together:
-  slowing physics alone does not correct the braking response. Optional speed
-  recovery remains enabled; prediction
-  bounds are not strict measured-motion limits. SITL horizontal navigation
-  speed/acceleration are 12 m/s and 5 m/s²; climb is 3 m/s and final descent is
-  1 m/s. Landing retains a 120 simulation-second deadline.
+  branch at 0.1 s. Its predictive acceleration lag is 0.3 s. These are numerical
+  model settings, not a measured native response envelope; slowing physics does
+  not correct a prediction/rotor-dynamics mismatch. Optional speed recovery
+  remains enabled, and prediction bounds are not strict measured-motion limits.
+  Native takeoff/landing use measured state and the configured vertical speed
+  limit; landing retains a 120 simulation-second deadline.
   Evaluation excludes low-altitude takeoff/landing using the lower of
   `flight_altitude - 0.5` and `0.9 * flight_altitude`, rather than a fixed 2.5 m
   threshold. This permits measured-versus-truth altitude error without calling
@@ -106,7 +110,8 @@ Simulation-specific differences from upstream:
   expiry is unchanged and can reject late results before that deadline.
 - Inter-UAV safety/soft avoidance distances are 4/10 m, and slot expansion is
   limited to 2 m/s so re-expansion leaves speed headroom behind a 5 m/s target.
-- Physics runs at at most 0.1× real time to provide compute headroom without
+- Physics pacing uses `simulation_real_time_factor` from the selected settings
+  to provide compute headroom without
   changing simulation-time control periods, trajectory stamps, expiry, or
   ownership/landing guards. Worker and CPU caps remain finite, and failures
   remain visible in telemetry.
@@ -116,68 +121,20 @@ handoff stress case, not a guarantee of continuous visibility. Inspect camera
 observations, leader changes, solver failures, measured clearance and actual
 mission duration before treating a longer or full-route run as successful.
 
-The dispersed starts and current flight settings were checked in
-`runs/20261105T033654Z-12568/`: 30 simulation seconds of camera tracking completed,
-followed by observed disarm of all five UAVs. Sampled Gazebo body clearance was
-at least 0.99 m. No controller delivery exceeded the 0.1 s simulation-time
-control period; five CPU-capped solves (two for UAV 4, three for UAV 2) recovered.
-UAV 3 retained tracking while the distant followers remained in SEARCH; this
-does not verify formation joining or the full route. Source hashes matched
-the pinned upstream revision. See `reports/verification.json`,
-`reports/mission-completed.json`, `reports/evaluation.json`, and the recording.
-Earlier evidence below uses earlier starts and controller settings.
-
-Verification evidence (run IDs are UTC):
-
-- `runs/20261105T014442Z-8991/`: current separated starts, 3 s startup ramp,
-  and thicker guides; 30 s camera tracking completed with UAV 1 retaining
-  leadership throughout and all 1,500 tracking solves nominal. During the first
-  6 s, the target retained at least 10.79 m of margin inside UAV 1's true camera
-  footprint; maximum observation age was 0.125 s. All followers joined TRACK
-  within 3.9 s; final-five-second median leader distances were 42.6–44.7 m.
-  All five landed/disarmed. Minimum body clearance/separation were 18.89/6.09 m.
-  Both native plugins rebuilt; the recording visibly shows the wider guides,
-  while installed-package inspection confirms unchanged defaults for other
-  presets. See `reports/separated-start-verification.json`,
-  `package-inspection.json`, `coverage-config.json`, and `frames/`.
-- `runs/20261104T163129Z-4514/`: 90 s ground-truth baseline from the
-  then-current cross start, before the final cache/safety/slot-expansion tuning,
-  at 0.2×.
-  Tracking completed; all five UAVs landed/disarmed. Minimum measured body
-  clearance was 4.54 m and separation 5.56 m. One nominal solve hit its CPU cap.
-- `runs/20261104T164739Z-8377/` and `runs/20261104T170529Z-13780/`: faster
-  0.4× / 0.2× camera experiments ended in supervised LAND after worker deadlines
-  under heavy unrelated host CPU load. All vehicles subsequently disarmed.
-  `20261104T170416Z-8011` was a separate, unarmed MAVROS startup crash.
-- `runs/20261104T172212Z-31938/`: pre-separated-start settings, 60 s camera mission through
-  the first 13 m/s sprint. The recorded `config/scenario.yaml` is a route-section
-  override: first three waypoints/legs omitted, with clear starts at waypoint 4;
-  obstacle geometry and remaining speeds are unchanged. UAV 5 took leadership
-  from UAV 1, briefly entered SEARCH, and reacquired the target. Tracking
-  completed and all five vehicles landed/disarmed. Minimum body clearance was
-  2.54 m; separation was 3.90 m, slightly below the 4 m prediction/guard setting.
-  Nominal solves succeeded in 96.3% of per-UAV samples: 117 CPU-cap failures and
-  one infeasible solve remain visible; only 85.9% of fleet samples were fully
-  ready. Mapping p95 was 2.45 ms per UAV under that load. This is a successful
-  bounded mission, not a zero-failure or full-route validation.
-
-Each flight directory retains `reports/evaluation.json`, `mission-cli.log`,
-`scen1-verification.json` where present, telemetry, optimizer captures, source
-provenance and the finalized `recorded-mission.mp4`; later checks also retain
-`reports/mission-final.json` before normal stop overwrote live mission status.
-The unchanged solver/dynamics hashes matched pin `3f71d4c` in all flight runs.
-The full approximately 750 s ramped route and later sprints remain unverified. Do not
-increase pacing on a busy host based solely on successful command exits.
-`./scripts/dev build sim` also completed; an unmounted, non-development container
-loaded the installed preset and bundled upstream sources with matching hashes.
-That packaging inspection is recorded in `reports/installed-package-check.log`
-and is not an installed-image flight mission.
+Native run `20261105T073226Z-7527` completed 90 tracking simulation seconds with
+all five UAVs, camera perception and recording, followed by settled landing and
+measured rotor shutdown. UAV 3 retained camera tracking (maximum observation age
+0.126 s); four nominal solves exceeded the existing CPU cap, remaining visible
+as partial failures. Minimum sampled obstacle body clearance was 1.203 m.
+This bounded run does not validate the complete route or later 13 m/s sprints;
+earlier backend operating envelopes do not apply. See the native verification
+record in [Development](DEVELOPMENT.md#native-migration-verification).
 
 ### Five UAVs in a 200 × 200 m map
 
 `./scripts/dev mpc --preset large200_5uav --record-video` selects these matching inputs:
 
-- [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five independent SITL/MAVROS instances.
+- [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five native multicopters, each with its own ROS flight process and Gazebo safety plugin.
 - [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
 - [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 6 m LiDAR range and a 0.35 s solver CPU cap. The original large scenario supplies its 2.2 m/s MPC speed bound; target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
 
@@ -261,30 +218,13 @@ UAV 1. Run long enough for the distant followers to rendezvous before assessing
 team tracking. The scenario is a separate checked-in snapshot: regenerating
 `large200_5uav.yaml` does not update its obstacle field or route automatically.
 
-Verified on November 4, 2026 with the default camera/LiDAR inputs:
-
-```bash
-./scripts/dev mpc --preset large200_5uav_separated --record-video
-./scripts/dev mission run --seconds 90
-./scripts/dev evaluate
-./scripts/dev stop
-```
-
-Run `runs/20261104T155857Z-2649/` completed 90 simulation seconds of target
-motion; all five UAVs entered TRACK within 17.53 s, then landed and disarmed.
-Sampled minimum obstacle-body clearance was 0.429 m and inter-UAV separation
-1.219 m; nearest-UAV target distance was 1.237 m at p95. One UAV 4 solve hit
-the unchanged 0.35 s CPU cap and recovered on the next cycle (4,664 successful
-solves of 4,665). Maximum source-to-delivery delay was 96 ms in simulation
-time, below the 100 ms control period. Wall-time compute p95 was 165.7 ms;
-the host achieved 0.274× real time despite the controller requesting 1×.
-Measured horizontal speed peaked at 2.875 m/s, exceeding the prediction bound;
-the existing measured-state speed recovery remained enabled. Upstream source
-hashes matched the pin. See `reports/evaluation.json`, `reports/speed-tuning.json`,
-`reports/mission-completed.json`, and the finalized `recorded-mission.mp4` in
-that run. The first increased-limit configuration completed without further
-tuning; this bounded mission does not establish full-route or repeatability
-success, hard physical limits, or collision guarantees.
+Native run `20261105T075748Z-16619` completed 30 tracking simulation seconds with
+all five UAVs, camera input and recording. All followers entered TRACK by the
+end; all 300 fleet cycles were ready, with no failed nominal solves. Minimum
+sampled obstacle body clearance was 0.456 m and inter-UAV distance was 1.227 m;
+all five subsequently landed and stopped their rotors. Prediction bounds and
+this bounded mission do not establish hard physical limits, full-route success,
+repeatability or continuous collision guarantees.
 
 ## Fleet and geometry
 
@@ -302,10 +242,12 @@ planning uses the original footprints. Coverage guides are render-only.
 Match fleet entries to finite XYZ `starts` rows and supply one unique, nonzero
 `params.GRID_CELLS` offset per follower. Start altitude must match
 `flight_altitude`; XY starts must meet `UAV_SAFE_DISTANCE`. Fleet schema is `1`,
-names match `[a-z][a-z0-9_]*`, SYSIDs are 1–255, and instances are 0–200.
-Instance `i` uses MAVLink TCP `5760+10*i` and JSON UDP `9002+10*i`, inside the
-container. MPC launch replaces fleet spawn positions with scenario XY and a
-0.195 m ground height; flight altitude is controlled separately.
+names match `[a-z][a-z0-9_]*` and are unique. Each `spawn` is
+`[x,y,z,roll,pitch,yaw]`, with angles in degrees. MPC launch replaces fleet spawn
+positions with scenario XY and a 0.195 m ground height; flight altitude is
+controlled separately. Names identify native model/topic namespaces, not network
+endpoints. Vendored original Iris models, four rotor motor systems and native
+velocity control are the only vehicle backend.
 
 Target `waypoints` define the route. Optional `target.speeds` supplies a positive
 speed per leg. `TAR_SMOOTH_ENABLE: false` selects a polyline; otherwise a
@@ -402,7 +344,7 @@ resolved source and `target_input_fresh` are reported in logs and status.
 `*_sim` uses Gazebo time; `*_wall` uses elapsed real time. Slow simulation makes
 these budgets differ. Sensor rates also follow simulation time.
 
-`simulation_real_time_factor` defaults to **0.2** in both supplied controllers
+`simulation_real_time_factor` defaults to **0.2** in the supplied controllers
 and when omitted from custom settings: one simulation second takes at least five
 wall seconds. Set it in the controller YAML selected by `--settings`, then restart
 the stack. Use `0.1` for more compute headroom or `1.0` for real-time pacing.
@@ -417,14 +359,26 @@ a 250 ms solve consumes about 50 ms of simulation time. It does not reduce solve
 CPU cost or guarantee collision avoidance under arbitrary load. Choose a rate
 below `control_period / observed cycle wall time`, allowing scheduling headroom.
 
-Gazebo is the clock authority. Each FCU receives Gazebo timestamps through the
-JSON plugin with `lock_step: 1` and `no_time_sync: 1`; SITL stays at `--speedup 1`
-because it must not apply a second wall-rate pacing loop. ROS planning, target,
-frames, sensors, mission supervision, and setpoints use `/clock`. MAVROS keeps
-wall time with MAVLink timesync and SYSTEM_TIME disabled; the frame adapter
-stamps FCU measurements at simulation receipt time. The recorder samples original
-simulation timestamps at 20 FPS, so saved playback retains normal physical speed.
+Gazebo is the clock authority. Native velocity control and motor dynamics advance
+with physics. ROS planning, target, frames, sensors, flight/mission supervision
+and setpoints use `/clock`. `OdometryPublisher` provides world ENU pose and body
+twist on `/uavN/ground_truth/odometry`; `frame_node` rotates twist into world ENU
+and retains source stamps rather than stamping receipt time. Joint trajectories
+retain their original source epoch through sampling and expiry. The independent
+sampler emits current-tick world `/uavN/flight/velocity` requests only while the
+original trajectory is fresh. The recorder samples original simulation
+timestamps at 20 FPS, so saved playback retains normal physical speed.
 Live GUI motion is slower and collecting the same video duration takes longer.
+
+The native sampler combines sampled planned velocity, measured-position error
+(`position_kp`, default 1.0/s), and planned acceleration multiplied by
+`acceleration_feedforward_time` (default 0.22 s). The latter compensates the
+native horizontal velocity loop's mass/gain ratio (1.76 kg / 8), retaining the
+acceleration intent when every MPC horizon restarts at measured velocity.
+Both gains must be finite and nonnegative. The resulting horizontal request is
+still speed-limited, proximity-guarded, independently expired, and realized only
+by attitude/rotor forces; predicted positions never set the vehicle pose.
+Altitude uses separate measured-height feedback and the vertical speed limit.
 
 `mission run --seconds N` and `mission start --seconds N` limit tracking to `N`
 simulation seconds on Gazebo's `/clock`, independently of the requested or
@@ -438,6 +392,7 @@ safety watchdogs keep their independent wall-time budgets.
 
 | Setting | Default |
 |---|---:|
+| `algorithm` | `mpc` |
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |
@@ -448,17 +403,17 @@ safety watchdogs keep their independent wall-time budgets.
 | Persistent planning failure budget | 3 simulation seconds |
 | Command expiry | 0.4 simulation seconds and 3 wall seconds |
 | Pose wall freshness | 3 seconds |
-| FCU freshness | 2.5 simulation seconds and 60 wall seconds |
+| Flight/motor freshness | 2.5 simulation seconds and 3 wall seconds |
 | Final fleet arrival radius / timeout | 6 m / 30 simulation seconds |
-| `landing_timeout_sim` | 60 simulation seconds to confirm disarm |
-| `landing_stall_timeout_wall` | 60 wall seconds without clock progress or FCU state |
+| `landing_timeout_sim` | 60 simulation seconds to confirm settled ground and motor shutdown |
+| `landing_stall_timeout_wall` | 60 wall seconds without clock progress or flight state |
 | `diagnostic_capture_cycles` | 128 retained calls per UAV; 0 disables capture |
 
 Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
 planner kernels warm both contiguous and sliced windows before worker readiness.
 See [Development](DEVELOPMENT.md#frames-and-clocks) before changing clock policy.
 
-Worker deadlines, IPOPT CPU caps, pose/FCU wall freshness, command wall expiry,
+Worker deadlines, IPOPT CPU caps, pose/flight wall freshness, command wall expiry,
 and landing stall watchdogs remain independent wall/CPU limits; they are not
 multiplied by the slowdown. Source timestamps and simulation expiry remain
 unchanged. Extreme slowdowns can therefore trip a wall freshness guard; inspect
@@ -471,10 +426,17 @@ The mission supervisor imposes no wall-time timeout on target simulator updates.
 Target publication follows Gazebo time and successful pose requests, so a slow
 CPU can delay updates without aborting the mission. Target freshness and camera
 SEARCH limits use simulation time. Pose wall freshness still guards vehicle
-setpoint publishing; command expiry, controller health, and FCU checks also apply.
+setpoint publishing; command expiry, controller health, and flight checks also apply.
 
-Resolved `sitl_params` default to `PLND_ENABLED: 0`: this simulation uses normal
-LAND and supplies no IRLOCK precision-landing observations. Local overrides are
-written to `config/sitl-overrides.parm` after the unchanged Iris defaults;
-explicit `sitl_params` entries take precedence. Restart the stack after changing
-these settings. A release deployment requires a new image for source changes.
+The per-UAV flight node checks source simulation age and receipt wall age before
+accepting world velocity requests, then exclusively emits body `/cmd_vel` and
+`/enable`. Separately, C++ `SoloFlightSafety` checks simulation/wall command expiry
+inside Gazebo, descends on command/process loss and disables motors only after
+settled ground. Inspect actual `/uavN/motor_speed` (`actuator_msgs/Actuators`) and
+`/uavN/safety_active`; a requested disable alone does not prove motor shutdown.
+Owner-token services and measured landing confirmation remain mandatory.
+
+No new CPU/performance acceptance thresholds are introduced by the migration.
+Preserve existing budgets and visible failures; new native results for every
+full-fleet camera/recording preset will be supplied by the parent task. Restart
+after changing inputs; release source changes require a new image.

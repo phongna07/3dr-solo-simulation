@@ -17,9 +17,10 @@ from `.env.example` only for a new checkout.
 ./scripts/dev stop
 ```
 
-`mpc` starts a fresh stack and waits for processes, controller nodes, FCU
-connections, telemetry acknowledgements, and local poses. It does not arm.
-Takeoff waits for aligned frames, fresh inputs, and a stable fleet altitude
+`mpc` starts a fresh stack and waits for native models, per-UAV flight processes,
+measured odometry/motor telemetry, sensors and algorithm workers. Motors stay
+disabled. Takeoff waits for world-frame state, ownership, fresh inputs and a
+stable fleet altitude
 before enabling target motion and control. Startup can take several minutes
 with slow rendering. `--seconds` limits tracking using Gazebo's simulation clock,
 excluding startup/takeoff/landing; omit it or use `--seconds 0` to attempt the
@@ -37,6 +38,12 @@ The exported video also includes recorded takeoff/landing and keeps recording
 until the stack stops, so its total duration can exceed `--seconds`. Compare its
 timestamp sidecar and tracking interval, not the host command's elapsed time.
 Normal `stop` finalizes the video.
+
+`telemetry/flight-<uav>.jsonl` records native flight mode/ownership, measured
+world position/velocity, source stamps, actual four-rotor speeds in rad/s,
+motor-enable state, settled-ground confirmation and safety faults. Confirm
+fresh zero rotor speeds and `landed: true`, `armed: false`, `enabled: false`
+for every vehicle after the mission, before stopping physics.
 
 For the five-UAV 200 × 200 m random field, use the matching preset:
 
@@ -61,7 +68,7 @@ The complete route is much longer than this representative check and contains
 13 m/s sprint legs. A duration-limited mission is not evidence of completing
 the route or all handoffs. Retain the actual run ID and inspect the evaluation,
 per-UAV solver/worker timing, camera observations, landing and finalized video.
-At 0.1× pacing, allow at least ten wall seconds per simulation second, plus
+Budget wall time from the selected pacing and observed clock rate, plus
 takeoff/landing. Recording temporarily retains raw video until finalization;
 check free disk space before long missions.
 
@@ -69,17 +76,15 @@ To watch distant followers rendezvous with a leader already over the target,
 select `--preset large200_5uav_separated` in the same commands. Keep camera mode
 (the default) to check that UAV 1 retains the pink target while the other four
 approach from about 9–37 m away. UAV 3 starts southwest of the leader to reduce
-crossing during joining. Its UAV speed bound is 1.2 m/s; the target uses 0.4 m/s
-on its first two legs, then 0.6 m/s. Allow at least 2,250 wall seconds for joining
-and subsequent tracking, and inspect the recorded modes and measured separations; wall time
-is longer than simulation time on a loaded renderer.
+crossing during joining. Its UAV prediction speed/acceleration bounds are
+2.2 m/s and 3 m/s²; target speed is 0.6 m/s on its first two legs, then 1.0 m/s.
+Allow enough simulation time for joining and subsequent tracking, and inspect
+recorded modes and measured separations; loaded renderers extend wall time.
 
-The original fast large preset takes about 464 simulation seconds (7.7 minutes
-at real time) to complete its route, with several early slalom bends through
-nearby obstacles. The slower separated preset takes about 786 simulation seconds
-(13.1 minutes at real time). At the default 0.2× rate these routes need at least
-39 / 66 wall minutes respectively. Use 2,250 wall seconds or more to inspect
-joining and multiple bends; consult the actual clock rate.
+The original large preset's route takes about 464 simulation seconds, with
+several early slalom bends through nearby obstacles: at least 39 wall minutes at
+0.2×. Separated starts and slower first legs need their own duration budget;
+target-loss pauses can extend either route. Consult the actual clock rate.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to
@@ -94,13 +99,13 @@ for regeneration and parameter details.
 | `mpc --no-wait` / `wait` | Start asynchronously / wait indefinitely for readiness |
 | `mission start --seconds 30` | Return after tracking starts; supervisor continues |
 | `mission status` | Mission state, ownership, errors, and controller diagnostics |
-| `mission stop` | Pause target, disable publishing, LAND eligible UAVs, await disarm |
+| `mission stop` | Pause target, disable publishing, land owned UAVs, await settled ground and motor shutdown |
 | `mission reset` | Reset the target while idle |
 | `status` / `logs` / `shell` | Health / process logs / container shell |
 
 Prefix the commands above with `./scripts/dev`. Only one simulation should run
-at a time. FCUs and ROS nodes share one container; host ROS discovery and exposed
-FCU ports are unnecessary. Use `shell` to inspect topics.
+at a time. Native models and ROS nodes share one container; host ROS discovery
+and vehicle network endpoints are unnecessary. Use `shell` to inspect topics.
 
 ## Stop and recover
 
@@ -110,20 +115,23 @@ exits. Target loss, stale inputs, persistent controller failures, or flight
 violations trigger cleanup.
 
 Normal `./scripts/dev stop` requests mission cleanup before stopping the container.
-If landing fails, inspect FCU state and service errors and retry `mission stop`.
+If landing fails, inspect flight state, actual motor speeds, safety status and
+owner-token service errors, then retry `mission stop`.
 Failed `./scripts/dev mission run` commands automatically request mission cleanup,
 then gracefully stop the container so the recorder finishes encoding and saves
 `recorded-mission.mp4`. The container also stops if the cleanup request fails
-because physics, FCU state, or the supervisor is unavailable. The original
+because physics, flight state, or the supervisor is unavailable. The original
 nonzero command status is retained. Before retrying cleanup, the CLI saves the
 available mission status to `status/mission-failure.json`; `status/mission.json`
 then describes the final cleanup attempt. Inspect both and the process logs.
 Successful missions still need an explicit `stop` to finalize the video.
 Other mission subcommands keep the stack available on failure. Landing progress
 shows simulation/wall elapsed time, per-UAV mode, armed state, altitude, and state
-age. Cleanup requires observed disarm; low altitude alone is insufficient.
+age. Cleanup requires settled ground and observed motor shutdown/disarm;
+low altitude or a requested disable alone is insufficient.
 Landing allows 60 simulation seconds, with separate 60-wall-second watchdogs
-for a stalled clock or missing FCU state. A slow but progressing simulation can
+for a stalled clock or missing flight state (`scen1` allows 120 simulation seconds
+for landing). A slow but progressing simulation can
 therefore take longer than four wall minutes. Final mission and landing status
 is preserved in `status/mission.json`.
 Failures during `mpc` startup or its attached GUI use the same automatic cleanup.
@@ -131,11 +139,19 @@ The separate `gui` command leaves the stack running when its viewer exits.
 Use `stop --force` only for a crashed simulation when normal landing cannot
 complete. A failed command in an `&&` chain skips later cleanup commands.
 
-Ownership is per UAV. A pilot mode change or disarm releases that UAV, stops
-publishing, and lands remaining mission-owned UAVs; cleanup does not send LAND
-to released or unowned aircraft. New missions require a connected, disarmed fleet.
+Ownership is per UAV through token-checked `FlightCommand` services. Lost or
+mismatched ownership stops publishing and triggers cleanup of remaining owned
+UAVs; cleanup never commands released or unowned vehicles. New missions require
+fresh connected flight state, settled ground and disabled motors.
 A timed-out worker is disabled until the controller restarts; extending the
 tracking duration cannot repair it. Preserve the failed run before restarting.
+
+One flight node/process per UAV owns body `/uavN/cmd_vel` and `/uavN/enable`.
+C++ `SoloFlightSafety` remains between these commands and native velocity
+control: independent simulation/wall expiry triggers descent even after process
+death, and motor disable occurs only after settled ground. Inspect actual
+`/uavN/motor_speed` and `/uavN/safety_active`; never bypass safety by commanding
+internal velocity-controller topics during recovery.
 
 ## Evidence and evaluation
 
@@ -145,12 +161,12 @@ Use the actual `runs/<run-id>/` directory, not a changing `runs/latest` link.
 |---|---|
 | `config/` | Fleet/scenario/controller snapshots, resolved `mpc-config.json`, world and bridge files |
 | `metadata/` | Manifest, controller and upstream source hashes, dependency fingerprints |
-| `status/` | Startup, live health, readiness, alignment, and node initialization |
+| `status/` | Startup, live health, readiness, world-frame state and node initialization |
 | `telemetry/mpc.jsonl` | Measured state, solver results, worker timing, controller decisions |
 | `telemetry/truth.jsonl` | Independent Gazebo poses and target positions |
 | `optimizer-inputs/<uav>/` | Bounded complete solver calls for numerical replay |
 | `reports/evaluation.json` | Sampled geometry, tracking, compute, and simulation speed |
-| `logs/`, `sitl/`, `gazebo-home/` | ROS/process logs, FCU state, renderer diagnostics |
+| `logs/`, `gazebo-home/` | ROS/process logs, native flight/safety state, renderer diagnostics |
 | `recorded-mission.mp4` | Optional combined video |
 
 The image ID is saved beside the run as `runs/<run-id>.image-id.json`.
@@ -160,10 +176,21 @@ Evaluate after landing, before stopping the container:
 ./scripts/dev evaluate --run-dir /workspace/runs/YOUR_RUN_ID
 ```
 
-Evaluation prefers Gazebo geometry and reports its source. Its airborne filter
-requires every UAV above 2.5 m; revisit that filter when changing altitude.
+Evaluation uses measured Gazebo geometry and reports its source. The airborne
+filter requires every UAV above the lower of `flight_altitude - 0.5` and
+`0.9 * flight_altitude` (2.5 m for the 3 m presets); revisit it when changing altitude.
 Inspect solver failures and measured motion alongside the summary. Sampled
 clearance and successful commands alone do not establish continuous safety.
+
+All four presets completed recorded full-fleet native missions on November 5,
+2026: 30 tracking simulation seconds for the three 3 m presets and 90 seconds
+for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;
+no ground-truth target override was used. Telemetry confirmed settled landing,
+released ownership and actual rotor shutdown for every vehicle. Finalized videos
+were decoded and visually sampled with the original composition intact. See
+[Development](DEVELOPMENT.md#native-migration-verification) for exact run
+directories, solver failures, earlier failed attempts and bounded-run limitations.
+No new CPU/performance acceptance thresholds apply.
 
 ## Recording
 
@@ -294,8 +321,11 @@ Docker daemon host. For example, discover them using
 Inside `./scripts/dev shell`:
 
 ```bash
-ros2 topic echo /uav1/mavros/state --once
+ros2 topic echo /uav1/flight/state --once
+ros2 topic echo /uav1/ground_truth/odometry --qos-reliability best_effort --once
 ros2 topic echo /uav1/mpc/pose --qos-reliability best_effort --once
+ros2 topic echo /uav1/motor_speed --qos-reliability best_effort --once
+ros2 topic echo /uav1/safety_active --qos-reliability best_effort --once
 ros2 topic hz /uav1/scan
 ros2 topic echo /mpc/setpoint_status --once
 timeout 5s gz topic -e -t /world/mpc_small50/stats
@@ -303,22 +333,22 @@ timeout 5s gz topic -e -t /world/mpc_small50/stats
 
 Use the configured world name. Exit 124 from `timeout` is expected. A stopped
 clock suggests paused/stalled physics or bridge/rendering failure. A slow clock
-with progressing EKF/GPS messages means startup is advancing slowly. Connected
-FCUs without poses need estimator and acknowledged telemetry investigation.
+with progressing odometry and motor messages means startup is advancing slowly.
+Missing poses require checking `OdometryPublisher`, source stamps, bridges and
+`frame_node`; missing motor/safety data requires native plugin and bridge checks.
 Missing upstream sources require submodule initialization; worker solve timeouts
-require fixing the cause and restarting. For MAVROS allocator crashes, see the
-[bootstrap constraint](DEVELOPMENT.md#mavros-bootstrap).
+require fixing the cause and restarting.
 
 `[ros2run]: Process exited with failure 1` reports the mission client's failure;
 the preceding mission error and `status/mission-failure.json` (saved before
 automatic cleanup) identify the reason. For other mission subcommands, inspect
 `status/mission.json`.
-The altitude-envelope error includes the affected UAVs, measured MAVROS local
+The altitude-envelope error includes the affected UAVs, measured world ENU
 altitudes, and minimum allowed altitude. A completed landing does not clear a
-tracking failure. Check truth clearance, FCU crash messages and `obsolete_cycle`
-records before retrying. In `scen1`, retain `simulation_real_time_factor: 0.1`:
-1× pacing can let mapping/solver cycles exceed the independent 0.4 simulation-second
-command expiry. Long SEARCH approaches also need the preset's conservative
-speed, acceleration, response lag and stopping horizon; compute headroom alone
-does not correct a flight model that brakes sooner than SITL. Restart after
-changing these settings. Keep command expiry and the altitude guard enabled.
+tracking failure. Check measured clearance, flight/safety errors, actual rotor
+speeds and `obsolete_cycle` records before retrying. Faster pacing or heavy load
+can let mapping/solver cycles exceed independent simulation-time command expiry.
+Long SEARCH approaches depend on prediction speed, acceleration, lag and
+stopping horizon; compute headroom alone does not establish native braking
+response. Restart after changing settings. Keep expiry, ownership, motor-shutdown
+confirmation and the altitude guard enabled.

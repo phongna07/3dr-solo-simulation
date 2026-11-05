@@ -44,7 +44,7 @@ class MissionSupervisor(Flight):
         self.scenario = yaml.safe_load((self.run_dir / "config/scenario.yaml").read_text())
         uavs = manifest["config"]["uavs"]
         self.names = [u["name"] for u in uavs]
-        super().__init__(uavs, timeout=240.0)
+        super().__init__(uavs, timeout=240.0, settings=self.settings)
         self.mission_state = "idle"
         self.mission_id = ""
         self.error = ""
@@ -196,9 +196,10 @@ class MissionSupervisor(Flight):
         elif self.mission_state == "failed":
             response.message = "Previous mission failed; request stop to confirm landing before restarting"
         elif any(owner == Ownership.RELEASED for owner in self.ownership.values()) and not all(
-            self.connected(n) and not self.states[n].armed for n in self.names
+            self.connected(n) and not self.states[n].armed and self.states[n].landed
+            and not self.states[n].owner and self.states[n].mode == 'IDLE' for n in self.names
         ):
-            response.message = "Pilot/FCU owns flight; confirm fleet disarmed before starting again"
+            response.message = "Another owner/mode controls flight; confirm fleet landed/disarmed before restarting"
         else:
             # A new start is the only operation allowed to clear takeover,
             # after the disarmed-fleet check above.
@@ -299,8 +300,7 @@ class MissionSupervisor(Flight):
 
     def prepare_flight(self):
         self.landing_status = {}
-        # Freeze target and flight publisher during takeoff so velocity references
-        # cannot override ArduPilot's takeoff controller.
+        # Freeze target and references while each native backend owns takeoff.
         self.service_call("/mpc/enable", False)
         self.service_call("/target/reset")
 
@@ -336,6 +336,7 @@ class MissionSupervisor(Flight):
             90.0,
         )
         self.service_call("/mpc/enable", True)
+        self.track(self.names)
         self.service_call("/target/run", True)
 
     def supervise(self):
@@ -427,20 +428,25 @@ class MissionSupervisor(Flight):
             if not all(
                 self.connected(n)
                 and self.states[n].armed
-                and self.states[n].mode == "GUIDED"
+                and self.states[n].mode == "TRACK"
+                and self.states[n].owner == self.owner_token
+                and n in self.poses
+                and time.monotonic() - self.pose_at[n] <= self.settings['pose_timeout_wall']
+                and -0.05 <= self.get_clock().now().nanoseconds * 1e-9 - self.pose_sim_at[n]
+                <= self.settings['state_timeout_sim']
                 for n in self.names
             ):
-                raise RuntimeError("Mission lost armed/connection state")
+                raise RuntimeError("Mission lost fresh measured/armed/connection/owner state")
             minimum_altitude = self.settings["flight_altitude"] - 0.7
             below_envelope = [
-                f"{n}: local z={self.poses[n].pose.position.z:.2f}m"
+                f"{n}: world z={self.poses[n].pose.position.z:.2f}m"
                 for n in self.names
                 if self.poses[n].pose.position.z < minimum_altitude
             ]
             if below_envelope:
                 raise RuntimeError(
                     "Vehicle left the fixed-altitude flight envelope "
-                    f"(minimum local z={minimum_altitude:.2f}m; "
+                    f"(minimum world z={minimum_altitude:.2f}m; "
                     + "; ".join(below_envelope) + ")"
                 )
 
