@@ -96,6 +96,10 @@ git -C external/motion_planning_MPC fetch origin
 ./scripts/pin-mpc-upstream COMMIT_OR_REF
 ```
 
+For the latest fetched `feature/compare` revision, use
+`./scripts/pin-mpc-upstream origin/feature/compare`. The submodule stays detached
+at that exact commit rather than following future branch updates automatically.
+
 The helper refuses a dirty submodule, checks out a detached revision, and updates
 `ros_ws/src/solo_mpc/UPSTREAM.json` with its commit and solver/dynamics hashes.
 It does not fetch, stage, or modify upstream files. Use `HEAD` to refresh metadata
@@ -110,6 +114,8 @@ Only upstream `mpc_problem.py` and `dynamics.py` execute directly. Planning,
 formation, target estimation, and configuration remain local ports; changes in
 upstream `robot_jps.py`, planners, or `config.py` require deliberate integration.
 A remote push or parent `git pull` does not select a newer upstream revision.
+In particular, selecting `feature/compare` does not enable its upstream-only
+comparison controllers in the ROS simulation.
 
 The loader binds upstream's flat `import dynamics` privately, without adding
 upstream to global import paths or importing its simulator/configuration. It

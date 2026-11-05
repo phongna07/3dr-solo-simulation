@@ -1,5 +1,6 @@
 # Select with --preset scen1. All distances are metres; FCU speed/acceleration parameters use cm.
-simulation_real_time_factor: 0.1
+# Keep the five-worker solve/mapping cycle inside simulation-time command expiry.
+simulation_real_time_factor: 0.2
 flight_altitude: 30.0
 obstacle_height: 40.0
 target_height: 0.05
@@ -43,11 +44,15 @@ params:
   ROBOT_RADIUS: 0.5
   UAV_SAFE_DISTANCE: 4.0
   COLLISION_AVOID_DISTANCE: 10.0
-  ACCEL_TAU: 0.2
+  # Bound distant SEARCH approaches and account for the SITL response after
+  # configuring horizontal input shaping below.
+  VMAX: 6.0
+  UMAX: 3.0
+  ACCEL_TAU: 0.3
   SPEED_RECOVERY: true
   LOCAL_SEARCH: jps
   CONTINGENCY: true
-  BACKUP_HORIZON: 25
+  BACKUP_HORIZON: 30
   W_backup: 0.1
   TERMINAL_STOP: false
   CORRIDOR_MAX_FACES: 16
@@ -68,6 +73,9 @@ sitl_params:
   WPNAV_SPEED: 1200
   WPNAV_ACCEL: 500
   PSC_ACC_XY: 500
+  # m/s³ (unlike the cm-based speed/acceleration parameters): the default 5
+  # delays acceleration reversal far beyond the MPC's first-order lag model.
+  PSC_JERK_XY: 20
   WPNAV_SPEED_UP: 300
   WPNAV_ACCEL_Z: 200
   LAND_SPEED: 100

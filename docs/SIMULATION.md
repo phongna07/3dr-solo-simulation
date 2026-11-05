@@ -111,16 +111,23 @@ violations trigger cleanup.
 
 Normal `./scripts/dev stop` requests mission cleanup before stopping the container.
 If landing fails, inspect FCU state and service errors and retry `mission stop`.
-Failed mission commands leave the container running so the supervisor and FCUs
-can finish landing. They do not automatically force-stop flight. Landing progress
+Failed `./scripts/dev mission run` commands automatically request mission cleanup,
+then gracefully stop the container so the recorder finishes encoding and saves
+`recorded-mission.mp4`. The container also stops if the cleanup request fails
+because physics, FCU state, or the supervisor is unavailable. The original
+nonzero command status is retained. Before retrying cleanup, the CLI saves the
+available mission status to `status/mission-failure.json`; `status/mission.json`
+then describes the final cleanup attempt. Inspect both and the process logs.
+Successful missions still need an explicit `stop` to finalize the video.
+Other mission subcommands keep the stack available on failure. Landing progress
 shows simulation/wall elapsed time, per-UAV mode, armed state, altitude, and state
 age. Cleanup requires observed disarm; low altitude alone is insufficient.
 Landing allows 60 simulation seconds, with separate 60-wall-second watchdogs
 for a stalled clock or missing FCU state. A slow but progressing simulation can
 therefore take longer than four wall minutes. Final mission and landing status
 is preserved in `status/mission.json`.
-Startup/GUI command failures also leave the stack available for inspection;
-clean up with `stop` before starting another simulation.
+Failures during `mpc` startup or its attached GUI use the same automatic cleanup.
+The separate `gui` command leaves the stack running when its viewer exits.
 Use `stop --force` only for a crashed simulation when normal landing cannot
 complete. A failed command in an `&&` chain skips later cleanup commands.
 
@@ -161,8 +168,9 @@ clearance and successful commands alone do not establish continuous safety.
 ## Recording
 
 Select `--record-video` at launch, optionally with `--ground-truth-target`.
-Normal `stop` finalizes `recorded-mission.mp4`; mission completion and GUI closure
-do not. Recording starts at takeoff and continues through landing.
+Normal `stop` and automatic shutdown after a failed `mpc` or `mission run`
+finalize `recorded-mission.mp4`; successful mission completion and normal GUI
+closure do not. Recording starts at takeoff and continues through landing.
 
 MP4 encoding automatically tries FFmpeg `h264_nvenc` by encoding a frame at the
 actual recording resolution. This checks the encoder, device and driver at
@@ -300,3 +308,17 @@ FCUs without poses need estimator and acknowledged telemetry investigation.
 Missing upstream sources require submodule initialization; worker solve timeouts
 require fixing the cause and restarting. For MAVROS allocator crashes, see the
 [bootstrap constraint](DEVELOPMENT.md#mavros-bootstrap).
+
+`[ros2run]: Process exited with failure 1` reports the mission client's failure;
+the preceding mission error and `status/mission-failure.json` (saved before
+automatic cleanup) identify the reason. For other mission subcommands, inspect
+`status/mission.json`.
+The altitude-envelope error includes the affected UAVs, measured MAVROS local
+altitudes, and minimum allowed altitude. A completed landing does not clear a
+tracking failure. Check truth clearance, FCU crash messages and `obsolete_cycle`
+records before retrying. In `scen1`, retain `simulation_real_time_factor: 0.1`:
+1× pacing can let mapping/solver cycles exceed the independent 0.4 simulation-second
+command expiry. Long SEARCH approaches also need the preset's conservative
+speed, acceleration, response lag and stopping horizon; compute headroom alone
+does not correct a flight model that brakes sooner than SITL. Restart after
+changing these settings. Keep command expiry and the altitude guard enabled.

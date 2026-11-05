@@ -431,11 +431,18 @@ class MissionSupervisor(Flight):
                 for n in self.names
             ):
                 raise RuntimeError("Mission lost armed/connection state")
-            if any(
-                self.poses[n].pose.position.z < self.settings["flight_altitude"] - 0.7
+            minimum_altitude = self.settings["flight_altitude"] - 0.7
+            below_envelope = [
+                f"{n}: local z={self.poses[n].pose.position.z:.2f}m"
                 for n in self.names
-            ):
-                raise RuntimeError("Vehicle left the fixed-altitude flight envelope")
+                if self.poses[n].pose.position.z < minimum_altitude
+            ]
+            if below_envelope:
+                raise RuntimeError(
+                    "Vehicle left the fixed-altitude flight envelope "
+                    f"(minimum local z={minimum_altitude:.2f}m; "
+                    + "; ".join(below_envelope) + ")"
+                )
 
 
 def main(args=None):

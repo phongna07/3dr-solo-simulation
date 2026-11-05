@@ -20,7 +20,7 @@ acceleration/braking bound, and a target speed up to 1.0 m/s. These presets fly 
 camera footprint, and the observer follows 260 m above the target. It uses a
 2 m occupancy grid and bounded local planning/sensing work rather than scaling
 the original fine grid to one million square metres. Followers start separated,
-while UAV 1 covers a target that ramps up gently over three seconds. Its thicker
+while UAV 3 covers a target that ramps up gently over three seconds. Its thicker
 coverage guides are visible from the high observer. See the configuration guide
 for speed limits, formation starts, and the verified operating envelope.
 
@@ -50,7 +50,8 @@ Keep an existing `.env` rather than overwriting it. `mpc` waits for readiness an
 leaves UAVs disarmed; `mission run` takes off, tracks, lands, and waits for disarm.
 The time limit covers tracking in simulation seconds, excluding startup, takeoff,
 and landing; omit it or use `--seconds 0` to attempt the complete route.
-If a command fails, inspect it and run cleanup explicitly.
+Failed `mpc` and `mission run` commands request landing, finalize any recorded
+video, and stop the container while retaining their failure exit status.
 Physics defaults to 0.2× real time to give MPC more compute time per simulation
 second; recorded video retains normal motion at 20 FPS. `--seconds 30` requests
 30 simulation seconds of tracking (at least 150 wall seconds at 0.2×), regardless

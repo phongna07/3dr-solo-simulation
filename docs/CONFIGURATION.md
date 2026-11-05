@@ -41,13 +41,12 @@ runtime. Normal target speed is 5 m/s, with the original 13 m/s sprint legs.
 
 Simulation-specific differences from upstream:
 
-- UAV 1 starts over the target at `[100,100,30]`. Followers reuse the root
-  upstream `scen1.yaml` starts `[70,40,30]`, `[40,70,30]`, `[70,70,30]`, and
-  `[55,100,30]`, about 42–67 m from the leader. Only UAV 1 initially covers the
-  target; the followers join rather than spawning on their formation slots.
-  The root YAML differs from the frozen `scenarios/scen1.yaml` field used here;
-  its alternative route and generated obstacles are not substituted. All UAVs
-  take off from ground level under SITL control.
+- The current starts are `[638.81,354.575,30]`, `[708.72,182.49,30]`,
+  `[83.569,101.826,30]`, `[118.523,704.122,30]`, and `[259.686,486.327,30]`.
+  UAV 3 initially covers the target; the other four approach from hundreds of
+  metres away rather than spawning on formation slots. The frozen target route
+  and obstacles remain unchanged. All UAVs take off from ground level under
+  SITL control.
 - `target_startup_ramp_sim: 3.0` ramps the route clock from zero to its nominal
   rate over the first three tracking seconds. On the initial 5 m/s leg this
   gives roughly 1.67 m/s² tangential acceleration and 7.5 m of travel during
@@ -72,9 +71,15 @@ Simulation-specific differences from upstream:
 - The following observer offset is `[-100,-100,260]` m, with automatic far-clip
   extension. It frames the local fleet and surrounding obstacles, not the
   entire kilometre-wide field. The occupancy panel shows the whole field.
-- MPC uses a 10 m/s prediction bound, 5 m/s² acceleration bound, 20-step nominal
-  horizon, and 25-step stopping branch at 0.1 s. The measured Iris acceleration
-  lag and optional speed recovery remain enabled. SITL horizontal navigation
+- The local controller overrides the scenario's 10 m/s and 5 m/s² prediction
+  bounds with 6 m/s and 3 m/s², a 20-step nominal horizon and a 30-step stopping
+  branch at 0.1 s. Its effective acceleration lag is 0.3 s, with SITL
+  `PSC_JERK_XY: 20` m/s³. ArduCopter's default 5 m/s³ horizontal input shaping
+  delayed braking during saturated SEARCH approaches; recorded response lag
+  was about 0.7 s. Keep input shaping and the prediction settings together:
+  slowing physics alone does not correct the braking response. Optional speed
+  recovery remains enabled; prediction
+  bounds are not strict measured-motion limits. SITL horizontal navigation
   speed/acceleration are 12 m/s and 5 m/s²; climb is 3 m/s and final descent is
   1 m/s. Landing retains a 120 simulation-second deadline.
   Evaluation excludes low-altitude takeoff/landing using the lower of
@@ -110,6 +115,17 @@ The 13 m/s sprints exceed the UAV prediction bound deliberately; they are a
 handoff stress case, not a guarantee of continuous visibility. Inspect camera
 observations, leader changes, solver failures, measured clearance and actual
 mission duration before treating a longer or full-route run as successful.
+
+The dispersed starts and current flight settings were checked in
+`runs/20261105T033654Z-12568/`: 30 simulation seconds of camera tracking completed,
+followed by observed disarm of all five UAVs. Sampled Gazebo body clearance was
+at least 0.99 m. No controller delivery exceeded the 0.1 s simulation-time
+control period; five CPU-capped solves (two for UAV 4, three for UAV 2) recovered.
+UAV 3 retained tracking while the distant followers remained in SEARCH; this
+does not verify formation joining or the full route. Source hashes matched
+the pinned upstream revision. See `reports/verification.json`,
+`reports/mission-completed.json`, `reports/evaluation.json`, and the recording.
+Earlier evidence below uses earlier starts and controller settings.
 
 Verification evidence (run IDs are UTC):
 

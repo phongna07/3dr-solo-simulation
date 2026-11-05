@@ -60,11 +60,35 @@ Usage: ./scripts/dev COMMAND [arguments]
 EOF
 }
 
-report_failed_simulation() {
+cleanup_failed_simulation() {
+  printf 'Requesting mission cleanup before stopping the failed simulation.\n' >&2
+  # Retain the failure evidence: a subsequent stop request updates mission.json.
+  if ! "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c '
+from pathlib import Path
+import shutil
+status = Path("/workspace/runs/latest/status")
+if (status / "mission.json").is_file():
+    shutil.copyfile(status / "mission.json", status / "mission-failure.json")
+'; then
+    printf 'Could not snapshot mission status; inspect the saved process logs.\n' >&2
+  fi
+  if ! "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop; then
+    printf 'Mission cleanup failed or the supervisor is unavailable; stopping the simulation and finalizing any recorded video.\n' >&2
+  fi
+  # Always reach graceful stack shutdown, even when LAND cannot complete after
+  # a physics/process failure. Compose waits for the recorder's finalization.
+  printf 'Stopping simulation; waiting for video encoding and verification.\n' >&2
+  if ! "${dc[@]}" stop sim; then
+    printf 'Container shutdown failed; inspect Docker state and retry ./scripts/dev stop.\n' >&2
+  fi
+}
+
+finish_failed_simulation() {
   local status=$?
   trap - EXIT
   if (( status != 0 )); then
-    printf 'Command failed (exit %s); simulation left running for inspection and cleanup. Use ./scripts/dev stop; use stop --force only if the simulation has crashed.\n' "$status" >&2
+    printf 'Command failed (exit %s); cleaning up the simulation.\n' "$status" >&2
+    cleanup_failed_simulation
   fi
   exit "$status"
 }
@@ -123,7 +147,7 @@ case "$command" in
       exit 1
     fi
     mkdir -p runs
-    trap report_failed_simulation EXIT
+    trap finish_failed_simulation EXIT
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
@@ -149,13 +173,16 @@ case "$command" in
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py ;;
   mission)
-    # A failed client does not prove flight cleanup finished. Leave the
-    # supervisor and FCUs alive so landing can finish or be retried.
     if "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"; then
       :
     else
       TASK_MISSION_STATUS=$?
-      printf 'Mission command failed (exit %s); simulation left running. Inspect ./scripts/dev mission status, then retry ./scripts/dev mission stop. Use ./scripts/dev stop after confirmed cleanup.\n' "$TASK_MISSION_STATUS" >&2
+      if [[ "${1:-}" == run ]]; then
+        printf 'Mission run failed (exit %s); cleaning up the simulation.\n' "$TASK_MISSION_STATUS" >&2
+        cleanup_failed_simulation
+      else
+        printf 'Mission command failed (exit %s); inspect ./scripts/dev mission status and use ./scripts/dev stop after cleanup.\n' "$TASK_MISSION_STATUS" >&2
+      fi
       exit "$TASK_MISSION_STATUS"
     fi
     ;;
