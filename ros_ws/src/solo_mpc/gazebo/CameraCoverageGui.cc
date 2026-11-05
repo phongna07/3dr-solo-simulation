@@ -24,6 +24,8 @@ class CameraCoverageGui final : public gz::gui::Plugin
       coverage.parentName = uav->Attribute("link");
       coverage.hfov = uav->DoubleAttribute("hfov");
       coverage.aspect = uav->DoubleAttribute("aspect", 1);
+      coverage.rayDiameter = uav->DoubleAttribute("ray_diameter", coverage.rayDiameter);
+      coverage.outlineDiameter = uav->DoubleAttribute("outline_diameter", coverage.outlineDiameter);
       std::istringstream(uav->Attribute("offset")) >> coverage.offset;
       std::istringstream(uav->Attribute("color")) >> coverage.color;
       this->fleet.push_back(coverage);

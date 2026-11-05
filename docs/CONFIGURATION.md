@@ -30,6 +30,133 @@ advances much slower than wall time. The former `READINESS_TIMEOUT` environment
 setting is no longer used. FCU heartbeat and pose freshness checks still apply;
 startup process failures and a stopped container still fail startup.
 
+### Scen1: five UAVs in a 1000 × 1000 m map
+
+`./scripts/dev mpc --preset scen1 --record-video` selects `config/fleet-5uav.yaml`,
+`scenarios/scen1.yaml`, and `config/controller-scen1.yaml`. Launch derives all five
+ground spawns and the `mpc_scen1` world name from the scenario. The upstream
+submodule remains unchanged; its 33 rectangles, 32 circles, 27 target waypoints,
+and per-leg speeds are frozen into the local scenario, independent of Git at
+runtime. Normal target speed is 5 m/s, with the original 13 m/s sprint legs.
+
+Simulation-specific differences from upstream:
+
+- UAV 1 starts over the target at `[100,100,30]`. Followers reuse the root
+  upstream `scen1.yaml` starts `[70,40,30]`, `[40,70,30]`, `[70,70,30]`, and
+  `[55,100,30]`, about 42–67 m from the leader. Only UAV 1 initially covers the
+  target; the followers join rather than spawning on their formation slots.
+  The root YAML differs from the frozen `scenarios/scen1.yaml` field used here;
+  its alternative route and generated obstacles are not substituted. All UAVs
+  take off from ground level under SITL control.
+- `target_startup_ramp_sim: 3.0` ramps the route clock from zero to its nominal
+  rate over the first three tracking seconds. On the initial 5 m/s leg this
+  gives roughly 1.67 m/s² tangential acceleration and 7.5 m of travel during
+  ramp-up, allowing the initially stationary leader to follow. It adds 1.5 s
+  to unpaused route duration; later 5/13 m/s legs are unchanged. Camera-loss
+  pauses retain ramp progress, and mission reset restarts it. Other presets
+  retain their original timing (`target_startup_ramp_sim` defaults to zero).
+- Formation logic is unchanged: full cardinal leader-to-follower slots are
+  `SLOT_SPACING_RATIO * VIEWING_RADIUS = 1.75 * 25 = 43.75 m`, with obstacle
+  contraction and gradual re-expansion. This is not a fixed 50 m separation
+  between every pair: adjacent/opposite full follower slots are about 61.9/87.5 m
+  apart, and measured tracking/safety constraints also affect actual spacing.
+- Flight altitude is 30 m; obstacle collision height is 40 m, so planar
+  avoidance remains necessary. The stabilized 320 × 320 cameras use an HFOV
+  calibrated to a 25 m half-footprint at ground level. The target marker has
+  a 1 m half-width. LiDAR range is 50 m with 360 samples at 10 Hz.
+- Only this preset sets `coverage_ray_diameter` and `coverage_outline_diameter`
+  to 0.30 m so the render-only guides remain visible from the high observer.
+  Both the server recording and GUI use these widths; other presets retain
+  0.018/0.035 m. These guides remain excluded from UAV cameras, LiDAR, shadows,
+  and collision geometry. Rebuild native plugins after changing rendering code.
+- The following observer offset is `[-100,-100,260]` m, with automatic far-clip
+  extension. It frames the local fleet and surrounding obstacles, not the
+  entire kilometre-wide field. The occupancy panel shows the whole field.
+- MPC uses a 10 m/s prediction bound, 5 m/s² acceleration bound, 20-step nominal
+  horizon, and 25-step stopping branch at 0.1 s. The measured Iris acceleration
+  lag and optional speed recovery remain enabled. SITL horizontal navigation
+  speed/acceleration are 12 m/s and 5 m/s²; climb is 3 m/s and final descent is
+  1 m/s. Landing retains a 120 simulation-second deadline.
+  Evaluation excludes low-altitude takeoff/landing using the lower of
+  `flight_altitude - 0.5` and `0.9 * flight_altitude`, rather than a fixed 2.5 m
+  threshold. This permits measured-versus-truth altitude error without calling
+  early climb records a representative 30 m flight.
+- A 2 m grid has 501 × 501 cells per worker, versus 668 × 668 cells for the
+  existing 200 m / 0.3 m preset. Local planning remains bounded to 150 m
+  half-windows (at most 151 × 151 cells). Explicit-ray integration, log-odds
+  clipping, dirty inflation, and corridor surface extraction use only the
+  touched/local region. Full persistent maps and coordinator snapshots still
+  scale with grid cell count; they are not sparse or unbounded-resolution maps.
+- Decorative building meshes cap floors and window columns at 24 each per
+  facade, rather than generating sub-metre windows across every 40–60 m wall.
+  Existing small-field buildings retain their detail. Collision shapes and
+  LiDAR proxies are unchanged; decorative city heights can exceed collision
+  height, as in the original presets.
+- Scen1 warms exact corridor sizes 4–12 and 16 before flight using
+  `CORRIDOR_CACHE_FACES`; other presets retain sizes 4–8 and 16. Unusual sizes
+  still retain every face in the existing two-entry LRU reserve. This moves
+  anticipated solver construction out of the flight deadline, not out of
+  overall startup cost or resident memory. IPOPT has a 0.75 s process-CPU cap,
+  and each worker phase has a 2 s wall deadline. Independent 0.4 s simulation-time command
+  expiry is unchanged and can reject late results before that deadline.
+- Inter-UAV safety/soft avoidance distances are 4/10 m, and slot expansion is
+  limited to 2 m/s so re-expansion leaves speed headroom behind a 5 m/s target.
+- Physics runs at at most 0.1× real time to provide compute headroom without
+  changing simulation-time control periods, trajectory stamps, expiry, or
+  ownership/landing guards. Worker and CPU caps remain finite, and failures
+  remain visible in telemetry.
+
+The 13 m/s sprints exceed the UAV prediction bound deliberately; they are a
+handoff stress case, not a guarantee of continuous visibility. Inspect camera
+observations, leader changes, solver failures, measured clearance and actual
+mission duration before treating a longer or full-route run as successful.
+
+Verification evidence (run IDs are UTC):
+
+- `runs/20261105T014442Z-8991/`: current separated starts, 3 s startup ramp,
+  and thicker guides; 30 s camera tracking completed with UAV 1 retaining
+  leadership throughout and all 1,500 tracking solves nominal. During the first
+  6 s, the target retained at least 10.79 m of margin inside UAV 1's true camera
+  footprint; maximum observation age was 0.125 s. All followers joined TRACK
+  within 3.9 s; final-five-second median leader distances were 42.6–44.7 m.
+  All five landed/disarmed. Minimum body clearance/separation were 18.89/6.09 m.
+  Both native plugins rebuilt; the recording visibly shows the wider guides,
+  while installed-package inspection confirms unchanged defaults for other
+  presets. See `reports/separated-start-verification.json`,
+  `package-inspection.json`, `coverage-config.json`, and `frames/`.
+- `runs/20261104T163129Z-4514/`: 90 s ground-truth baseline from the
+  then-current cross start, before the final cache/safety/slot-expansion tuning,
+  at 0.2×.
+  Tracking completed; all five UAVs landed/disarmed. Minimum measured body
+  clearance was 4.54 m and separation 5.56 m. One nominal solve hit its CPU cap.
+- `runs/20261104T164739Z-8377/` and `runs/20261104T170529Z-13780/`: faster
+  0.4× / 0.2× camera experiments ended in supervised LAND after worker deadlines
+  under heavy unrelated host CPU load. All vehicles subsequently disarmed.
+  `20261104T170416Z-8011` was a separate, unarmed MAVROS startup crash.
+- `runs/20261104T172212Z-31938/`: pre-separated-start settings, 60 s camera mission through
+  the first 13 m/s sprint. The recorded `config/scenario.yaml` is a route-section
+  override: first three waypoints/legs omitted, with clear starts at waypoint 4;
+  obstacle geometry and remaining speeds are unchanged. UAV 5 took leadership
+  from UAV 1, briefly entered SEARCH, and reacquired the target. Tracking
+  completed and all five vehicles landed/disarmed. Minimum body clearance was
+  2.54 m; separation was 3.90 m, slightly below the 4 m prediction/guard setting.
+  Nominal solves succeeded in 96.3% of per-UAV samples: 117 CPU-cap failures and
+  one infeasible solve remain visible; only 85.9% of fleet samples were fully
+  ready. Mapping p95 was 2.45 ms per UAV under that load. This is a successful
+  bounded mission, not a zero-failure or full-route validation.
+
+Each flight directory retains `reports/evaluation.json`, `mission-cli.log`,
+`scen1-verification.json` where present, telemetry, optimizer captures, source
+provenance and the finalized `recorded-mission.mp4`; later checks also retain
+`reports/mission-final.json` before normal stop overwrote live mission status.
+The unchanged solver/dynamics hashes matched pin `3f71d4c` in all flight runs.
+The full approximately 750 s ramped route and later sprints remain unverified. Do not
+increase pacing on a busy host based solely on successful command exits.
+`./scripts/dev build sim` also completed; an unmounted, non-development container
+loaded the installed preset and bundled upstream sources with matching hashes.
+That packaging inspection is recorded in `reports/installed-package-check.log`
+and is not an installed-image flight mission.
+
 ### Five UAVs in a 200 × 200 m map
 
 `./scripts/dev mpc --preset large200_5uav --record-video` selects these matching inputs:

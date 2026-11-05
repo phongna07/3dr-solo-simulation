@@ -12,8 +12,17 @@ seeded random obstacles and a random winding target route. Select it with
 northeast. Its four followers start about 9–37 m from UAV 1, which starts directly
 above the target. UAV 3 starts southwest of the leader to reduce crossing during
 formation joining. This preset uses a 2.2 m/s UAV prediction bound, a 3 m/s²
-acceleration/braking bound, and a target speed up to 1.0 m/s. All presets fly at
+acceleration/braking bound, and a target speed up to 1.0 m/s. These presets fly at
 3 m; `--preset small50_3uav` explicitly selects the original scenario.
+
+`--preset scen1` adapts the upstream 1000 × 1000 m, five-UAV field: the frozen
+65 obstacles and target route are retained, UAVs fly at 30 m with a 50 m-wide
+camera footprint, and the observer follows 260 m above the target. It uses a
+2 m occupancy grid and bounded local planning/sensing work rather than scaling
+the original fine grid to one million square metres. Followers start separated,
+while UAV 1 covers a target that ramps up gently over three seconds. Its thicker
+coverage guides are visible from the high observer. See the configuration guide
+for speed limits, formation starts, and the verified operating envelope.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)

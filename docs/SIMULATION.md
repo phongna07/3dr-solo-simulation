@@ -47,6 +47,24 @@ For the five-UAV 200 × 200 m random field, use the matching preset:
 ./scripts/dev stop
 ```
 
+For the kilometre-wide upstream field at 30 m flight altitude:
+
+```bash
+./scripts/dev mpc --preset scen1 --record-video
+./scripts/dev mission run --seconds 90
+./scripts/dev evaluate
+./scripts/dev stop
+```
+
+Add `--ground-truth-target` to isolate flight/control from marker perception.
+The complete route is much longer than this representative check and contains
+13 m/s sprint legs. A duration-limited mission is not evidence of completing
+the route or all handoffs. Retain the actual run ID and inspect the evaluation,
+per-UAV solver/worker timing, camera observations, landing and finalized video.
+At 0.1× pacing, allow at least ten wall seconds per simulation second, plus
+takeoff/landing. Recording temporarily retains raw video until finalization;
+check free disk space before long missions.
+
 To watch distant followers rendezvous with a leader already over the target,
 select `--preset large200_5uav_separated` in the same commands. Keep camera mode
 (the default) to check that UAV 1 retains the pink target while the other four

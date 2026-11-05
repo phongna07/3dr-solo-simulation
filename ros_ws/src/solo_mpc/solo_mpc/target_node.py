@@ -8,7 +8,7 @@ from gz.transport13 import Node as GazeboNode
 from rclpy.node import Node
 from std_srvs.srv import SetBool, Trigger
 
-from .core.target_motion import target_route
+from .core.target_motion import startup_route_time, target_route
 from .ros_utils import pose_message, run_node
 
 
@@ -49,10 +49,12 @@ class MovingTarget(Node):
     def tick(self):
         sampled_at = self.get_clock().now()
         elapsed = sampled_at.nanoseconds * 1e-9 - self.started if self.running else self.elapsed
+        route_elapsed = startup_route_time(
+            elapsed, self.args.settings_data['target_startup_ramp_sim'])
         point = np.array(
             [
-                np.interp(elapsed, self.times, self.path[:, 0]),
-                np.interp(elapsed, self.times, self.path[:, 1]),
+                np.interp(route_elapsed, self.times, self.path[:, 0]),
+                np.interp(route_elapsed, self.times, self.path[:, 1]),
                 self.args.settings_data["target_height"],
             ]
         )
@@ -65,9 +67,9 @@ class MovingTarget(Node):
         )
         if ok and response.data:
             self.publisher.publish(pose_message(point, sampled_at.to_msg()))
-        if elapsed >= self.times[-1]:
+        if route_elapsed >= self.times[-1]:
             self.running = False
-            self.elapsed = self.times[-1]
+            self.elapsed = elapsed
 
 
 def main():

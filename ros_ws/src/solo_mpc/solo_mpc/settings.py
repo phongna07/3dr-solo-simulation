@@ -103,6 +103,18 @@ def load_settings(scenario_path, settings_path):
     settings.setdefault('simulation_real_time_factor', 0.2)
     settings.setdefault('landing_timeout_sim', 60.0)
     settings.setdefault('landing_stall_timeout_wall', 60.0)
+    settings.setdefault('target_startup_ramp_sim', 0.0)
+    ramp = settings['target_startup_ramp_sim']
+    if (isinstance(ramp, bool) or not isinstance(ramp, (int, float))
+            or not math.isfinite(ramp) or ramp < 0):
+        raise ValueError('target_startup_ramp_sim must be finite and nonnegative')
+    for key, default in (('coverage_ray_diameter', 0.018),
+                         ('coverage_outline_diameter', 0.035)):
+        settings.setdefault(key, default)
+        value = settings[key]
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0):
+            raise ValueError(f'{key} must be finite and positive')
     # Iris enables IRLOCK precision landing, which this simulation does not feed.
     sitl_params = settings.get('sitl_params', {})
     if not isinstance(sitl_params, dict):
@@ -231,6 +243,11 @@ def validate(scenario, settings, cfg):
         raise ValueError("CORRIDOR_BOX leaves no corridor seed within SENSING_RADIUS")
     if cfg["LOCAL_SEARCH"] not in ("jps", "dijkstra"):
         raise ValueError("LOCAL_SEARCH must be jps or dijkstra")
+    cache_faces = cfg.get('CORRIDOR_CACHE_FACES', [4, 5, 6, 7, 8])
+    if (not isinstance(cache_faces, list) or not cache_faces
+            or any(isinstance(count, bool) or not isinstance(count, int) or count < 1
+                   for count in cache_faces)):
+        raise ValueError('CORRIDOR_CACHE_FACES must be a nonempty list of positive integers')
     for enabled, horizon in (("CONTINGENCY", "BACKUP_HORIZON"),
                              ("TERMINAL_STOP", "HORIZON_LENGTH")):
         if cfg[enabled] and cfg["UMAX"] * (

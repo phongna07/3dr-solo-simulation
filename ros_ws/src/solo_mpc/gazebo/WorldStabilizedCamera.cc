@@ -37,6 +37,10 @@ class WorldStabilizedCamera final : public gz::sim::System,
     this->coverage.hfov = _sdf->Get<double>("coverage_hfov");
     this->coverage.aspect = _sdf->Get<double>("coverage_aspect");
     this->coverage.color = _sdf->Get<gz::math::Color>("coverage_color");
+    if (_sdf->HasElement("coverage_ray_diameter"))
+      this->coverage.rayDiameter = _sdf->Get<double>("coverage_ray_diameter");
+    if (_sdf->HasElement("coverage_outline_diameter"))
+      this->coverage.outlineDiameter = _sdf->Get<double>("coverage_outline_diameter");
     this->connection = _events.Connect<gz::sim::events::PreRender>(
         [this]() { this->Stabilize(); });
   }

@@ -5,6 +5,14 @@ import numpy as np
 from .geometry import catmull_rom
 
 
+def startup_route_time(elapsed, ramp_seconds):
+    """Ramp the route clock from rest; pauses retain the same elapsed clock."""
+    elapsed = max(0.0, elapsed)
+    if ramp_seconds > 0 and elapsed < ramp_seconds:
+        return elapsed * elapsed / (2 * ramp_seconds)
+    return elapsed - ramp_seconds / 2
+
+
 def target_route(scenario, cfg):
     target = scenario["target"]
     points = np.asarray(target["waypoints"], float)

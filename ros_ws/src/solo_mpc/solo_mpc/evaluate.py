@@ -25,6 +25,9 @@ def main():
     import yaml
 
     scenario = yaml.safe_load((run / "config/scenario.yaml").read_text())
+    settings = yaml.safe_load((run / 'config/controller.yaml').read_text())
+    minimum_altitude = min(settings['flight_altitude'] - 0.5,
+                           0.9 * settings['flight_altitude'])
     cfg = json.loads((run / "config/mpc-config.json").read_text())
     records = [
         json.loads(line) for line in (run / "telemetry/mpc.jsonl").read_text().splitlines()
@@ -33,7 +36,7 @@ def main():
         r
         for r in records
         if r["vehicles"]
-        and all(v["position"][2] > 2.5 for v in r["vehicles"].values())
+        and all(v["position"][2] > minimum_altitude for v in r["vehicles"].values())
         and all(
             v.get("armed", True) and v.get("mode", "GUIDED") == "GUIDED"
             for v in r["vehicles"].values()
@@ -47,7 +50,6 @@ def main():
     delivery_delay = np.asarray([
         r['reported_stamp'] - r['stamp'] for r in airborne if 'reported_stamp' in r
     ])
-    settings = yaml.safe_load((run / 'config/controller.yaml').read_text())
     separation = []
     margins = []
     target_distances = []
@@ -60,7 +62,7 @@ def main():
     geometry = [
         r
         for r in truth
-        if all(v["position"][2] > 2.5 for v in r["vehicles"].values())
+        if all(v["position"][2] > minimum_altitude for v in r["vehicles"].values())
         and airborne[0]["stamp"] <= r["stamp"] <= airborne[-1]["stamp"]
     ] or airborne
     for row in geometry:
@@ -77,6 +79,7 @@ def main():
             )
     output = {
         "samples": len(airborne),
+        "minimum_evaluation_altitude_m": minimum_altitude,
         "target_mode": airborne[-1]["target_mode"],
         "geometry_source": "gazebo_ground_truth"
         if geometry is not airborne

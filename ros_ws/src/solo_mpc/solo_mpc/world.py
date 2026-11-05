@@ -186,6 +186,8 @@ def sensors(model, name, settings, cfg, camera_enabled=True, color_index=0):
     element(gimbal, "coverage_hfov", settings["camera_hfov"])
     element(gimbal, "coverage_aspect", settings["camera_width"] / settings["camera_height"])
     element(gimbal, "coverage_color", coverage_color(color_index))
+    element(gimbal, "coverage_ray_diameter", settings['coverage_ray_diameter'])
+    element(gimbal, "coverage_outline_diameter", settings['coverage_outline_diameter'])
     camera = element(link, "sensor", name="camera", type="camera")
     element(camera, "pose", "0 0 -0.04 0 1.5707963267948966 0")
     element(camera, "gz_frame_id", f"{name}/camera_optical_frame")
@@ -233,7 +235,9 @@ def coverage_gui(world, names, settings):
                 hfov=str(settings["camera_hfov"]),
                 aspect=str(settings["camera_width"] / settings["camera_height"]),
                 offset=" ".join(map(str, CAMERA_WORLD_OFFSET)),
-                color=coverage_color(index))
+                color=coverage_color(index),
+                ray_diameter=str(settings['coverage_ray_diameter']),
+                outline_diameter=str(settings['coverage_outline_diameter']))
 
 
 def overhead_camera(target, settings):

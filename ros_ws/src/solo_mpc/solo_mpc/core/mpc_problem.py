@@ -25,7 +25,8 @@ class SolverCache:
 
     def __init__(self, n_others, cfg):
         self.n_others, self.cfg = n_others, dict(cfg)
-        self.anticipated = frozenset((*range(4, 9), int(cfg['CORRIDOR_MAX_FACES'])))
+        self.anticipated = frozenset((*cfg.get('CORRIDOR_CACHE_FACES', range(4, 9)),
+                                     int(cfg['CORRIDOR_MAX_FACES'])))
         if min(self.anticipated) < 1:
             raise ValueError('Corridor solver capacities must be positive')
         self.limit = len(self.anticipated) + 2

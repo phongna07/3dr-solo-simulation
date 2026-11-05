@@ -24,6 +24,8 @@ class CameraCoverage
   public: gz::math::Color color;
   public: double hfov{0};
   public: double aspect{1};
+  public: double rayDiameter{0.018};
+  public: double outlineDiameter{0.035};
 
   // Call only on the scene's render thread, after current poses are applied.
   public: void Update(const gz::rendering::ScenePtr &_scene) const
@@ -53,8 +55,8 @@ class CameraCoverage
       {origin.X() - halfX, origin.Y() + halfY, 0.025}}};
     for (size_t i = 0; i < corners.size(); ++i)
     {
-      this->Segment(_scene, i, origin, corners[i], 0.018);
-      this->Segment(_scene, i + 4, corners[i], corners[(i + 1) % 4], 0.035);
+      this->Segment(_scene, i, origin, corners[i], this->rayDiameter);
+      this->Segment(_scene, i + 4, corners[i], corners[(i + 1) % 4], this->outlineDiameter);
     }
   }
 

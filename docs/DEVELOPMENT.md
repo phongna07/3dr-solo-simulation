@@ -127,12 +127,14 @@ uses the adapter. Do not restore copied solver/dynamics implementations.
 Each local UAV now owns a bounded `SolverCache` of unchanged upstream problems.
 Selection uses exactly `max(1, hard face count, cost face count)`; neither
 polytope is truncated or simplified, and both nominal and full backup horizons
-remain enabled. Sizes 4–8 and the configured `CORRIDOR_MAX_FACES` (normally 16)
+remain enabled. Sizes in `CORRIDOR_CACHE_FACES` (default 4–8) and the configured
+`CORRIDOR_MAX_FACES` (normally 16)
 are constructed and solved with synthetic stationary inputs before worker
 readiness, including any SQP/IPOPT fallback. Initialization failure prevents
 readiness. That configured size is a preinitialized capacity, not a minimum for
 every solve. Anticipated instances stay resident; two additional LRU slots hold
-other exact counts (eight instances per UAV with the supplied configuration).
+other exact counts (eight instances per UAV with the default configuration;
+`scen1` anticipates 4–12 and 16, with twelve instances including the reserve).
 An unexpected size is built inside the existing worker deadline; a miss can
 still be slow or time out. Cache size does not limit actual corridor geometry.
 

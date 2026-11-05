@@ -146,11 +146,11 @@ def building_mesh(path, width, depth, obstacle_height, index):
     mesh.box("wall", (0, 0, height / 2), (width, depth, height))
     # Windows are flat quads with a small offset, batched into two submeshes.
     # No thousands of SDF entities, textures, or overlapping coplanar surfaces.
-    floors = max(4, round(height / 0.85))
+    floors = min(24, max(4, round(height / 0.85)))
     pitch = height / floors
     for face in range(4):
         span = width if face < 2 else depth
-        columns = max(2, round(span / 0.55))
+        columns = min(24, max(2, round(span / 0.55)))
         spacing = span / columns
         for floor in range(floors):
             z = (floor + 0.5) * pitch
