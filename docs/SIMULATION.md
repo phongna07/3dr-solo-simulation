@@ -184,6 +184,17 @@ No new CPU/performance acceptance thresholds apply.
 
 ## Recording
 
+The Gazebo ground uses asphalt gray `#404341` with yellow `#C4B06A` double
+centerlines and white `#C5C8C6` dashed lane dividers, edges and zebra crossings.
+Display colors are converted to linear material values for Ogre2; illumination
+and shadows still affect the captured pixels.
+Eight-metre-wide streets repeat on a fixed 24 m world-aligned perpendicular
+grid across the ground, independently of scenario obstacles and target routes.
+Buildings and trees can cover the paint. Markings are batched visual meshes
+6 mm above the ground, visible to cameras/GUI but excluded from LiDAR and
+collision geometry. Restart the development stack to regenerate the scenery;
+release images need rebuilding.
+
 Select `--record-video` at launch, optionally with `--ground-truth-target`.
 Normal `stop` and automatic shutdown after a failed `mpc` or `mission run`
 finalize `recorded-mission.mp4`; successful mission completion and normal GUI

@@ -138,6 +138,58 @@ class Mesh:
         return path
 
 
+def srgb_material(red, green, blue):
+    """Convert 8-bit display colors to Ogre2's linear material channels."""
+    return tuple(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+                 for c in (red / 255, green / 255, blue / 255))
+
+
+def street_mesh(path, bounds):
+    """World-aligned paint only: fixed 24 m blocks, independent of obstacles.
+
+    Batch upward-facing quads into two materials, with no collision or LiDAR
+    geometry. Leave intersections clear and set paint 6 mm above the ground.
+    """
+    mesh = Mesh(dict(yellow=srgb_material(196, 176, 106),
+                     white=srgb_material(197, 200, 198)))
+    xmin, ymin, xmax, ymax = bounds
+    pitch, half_width = 24.0, 4.0
+
+    def stripe(axis, along, across, length, width, material):
+        points = [(along - length / 2, across - width / 2),
+                  (along + length / 2, across - width / 2),
+                  (along + length / 2, across + width / 2),
+                  (along - length / 2, across + width / 2)]
+        if axis == 1:
+            points = [(y, x) for x, y in reversed(points)]
+        # Clip at the finite ground boundary, including partially visible blocks.
+        points = [(min(xmax, max(xmin, x)), min(ymax, max(ymin, y)), 0.006)
+                  for x, y in points]
+        mesh.face(material, points)
+
+    for axis in (0, 1):
+        lo, hi, across_lo, across_hi = ((xmin, xmax, ymin, ymax) if axis == 0
+                                       else (ymin, ymax, xmin, xmax))
+        for row in range(math.floor(across_lo / pitch), math.ceil(across_hi / pitch) + 1):
+            center = row * pitch
+            for block in range(math.floor(lo / pitch), math.ceil(hi / pitch)):
+                start, end = block * pitch, (block + 1) * pitch
+                middle = (start + end) / 2
+                for offset in (-0.14, 0.14):
+                    stripe(axis, middle, center + offset, pitch - 13, 0.10, "yellow")
+                for side in (-1, 1):
+                    stripe(axis, middle, center + side * half_width,
+                           pitch - 2 * half_width, 0.12, "white")
+                    for dash in (-4, 0, 4):
+                        stripe(axis, middle + dash, center + side * 2,
+                               1.8, 0.10, "white")
+                # Zebra crossings across each approach, outside the intersection.
+                for crossing in (start + 5.0, end - 5.0):
+                    for bar in range(-5, 6):
+                        stripe(axis, crossing, center + bar * 0.65, 1.3, 0.30, "white")
+    return mesh.write(path)
+
+
 def building_mesh(path, width, depth, obstacle_height, index):
     height = obstacle_height * (1.8 + 0.18 * (index % 5))
     facades = [(0.48, 0.52, 0.56), (0.61, 0.56, 0.47), (0.36, 0.43, 0.50)]
