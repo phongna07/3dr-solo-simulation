@@ -88,6 +88,19 @@ publication follows it. Idle/input-rejected records have no completion fields.
 Compare complete airborne, owned TRACK records using identical resolved inputs
 and recording settings; solver work and host load can vary between flights.
 
+Per-UAV `solver_ms` directly brackets `MPCProblem.solve()` with a monotonic
+wall timer; `solver_cpu_ms` measures process CPU over the same call. Neither
+includes path planning, corridor construction, solver-cache selection or
+diagnostic capture. `mapping_ms`, `path_ms`, `corridor_ms`, `solver_setup_ms`,
+`input_ms` and `capture_ms` report those separate stages (capture includes
+pre-solve journaling and post-solve serialization/queueing). `solver_setup_ms`
+includes construction on a cache miss; native initialization deferred to the
+first solve stays in `solver_ms`. `planning_and_solve_ms` remains the whole
+worker solve phase, including those stages and result bookkeeping, excluding
+the preceding map phase. Fleet `compute_ms` includes coordination, worker
+barriers and delivery; concurrent per-UAV timings must not be summed to
+derive it. These are wall milliseconds except for explicitly labelled CPU.
+
 Each worker integrates its UAV's valid projected rays independently, once per
 new scan timestamp, before formation checks and MPC use the latest accumulated
 maps. No fleet-wide ray-count gate applies. Empty scans are a map no-op; scan
@@ -517,3 +530,33 @@ Their timing, measured response, clearance and verified envelopes do not validat
 the native dynamics. Installed-image verification must also establish operation
 without Git or a host checkout; the check above imports bundled sources/assets,
 while the recorded fleet missions use the development mount.
+
+### Scen1 upstream parameter alignment and timing (November 6, 2026)
+
+Run `20261106T042816Z-23613` used headless native five-UAV Gazebo, camera target
+input, LiDAR and recording after matching scen1 prediction/formation values
+to upstream (see Configuration). Commands were `./scripts/dev mpc --preset
+scen1 --record-video`, `./scripts/dev mission run --seconds 90`,
+`./scripts/dev evaluate`, and `./scripts/dev stop`. Existing Python/config
+changes loaded through the development mount; no native rebuild was required.
+
+All five vehicles reached TRACK and completed supervised landing/disarm;
+saved `reports/settled-flight-state.json` records IDLE, landed, unarmed and
+actual rotor speeds below 1e-24 rad/s for all five, with safety inactive.
+Evaluation retained 895 airborne TRACK cycles, 888 ready and seven unsuccessful
+nominal solves: six `Maximum_CpuTime_Exceeded` (UAVs 1, 2, 4) and one
+`Infeasible_Problem_Detected` (UAV 2). Subsequent calls recovered. No caps,
+deadlines or command expiry were relaxed. Optimizer captures report
+`matches_pinned_sources: true`.
+
+Per-UAV solve wall medians were 77.6, 89.7, 78.1, 85.8 and 75.4 ms; p95 values
+were 316.7, 306.0, 121.9, 283.6 and 231.8 ms. Full stage statistics are saved
+in `reports/timing.json`. Fleet wall p50/p95 was 200.2/382.6 ms, and simulation
+delivery delay p50/p95 was 38/75 ms; ten cycles exceeded the 100 ms simulation
+control period. Minimum sampled obstacle-body clearance was 1.389 m and
+inter-UAV distance 11.876 m. These bounded observations do not establish
+sub-70 ms solves, full-route/sprint completion or a measured dynamics envelope.
+
+Normal stop finalized the video. Takeoff/tracking frames retained all five
+FOVs, map, state rows and separated timings; finalized video and timestamp
+sidecars remain in the run directory. The upstream submodule was unchanged.

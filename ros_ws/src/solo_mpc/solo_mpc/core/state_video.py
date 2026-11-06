@@ -108,7 +108,7 @@ class ControllerStatusHistory:
 
 def render_states(states, stamp_ns, status=None):
     """One row per UAV: measured nose direction, XY vectors and XYZ values."""
-    row_height, header, footer = 124, 88, 68
+    row_height, header, footer = 174, 88, 68
     panel = np.full((header + row_height * len(states) + footer, 480, 3), PANEL, np.uint8)
 
     def text(label, xy, size=0.43, color=TEXT, thickness=1, max_width=None):
@@ -121,15 +121,11 @@ def render_states(states, stamp_ns, status=None):
     text('DRONE STATE', (20, 29), 0.70, thickness=2)
     live = status is not None and not status['stale']
     vehicles = status.get('vehicles', {}) if live else {}
-    cpu = [vehicles.get(name, {}).get('solver_cpu_ms') for name in states]
-    cpu = [value for value in cpu if value is not None and math.isfinite(value)]
-
     def milliseconds(value):
         return '--' if value is None or not math.isfinite(value) else f'{value:.1f}'
 
-    cpu_ms = milliseconds(max(cpu) if cpu else None)
     mpc_ms = milliseconds(status.get('compute_ms') if live else None)
-    text(f'Solve CPU max {cpu_ms} ms | MPC {mpc_ms} ms',
+    text(f'Fleet wall {mpc_ms} ms | timings below: wall ms',
          (20, 51), 0.43, MUTED, max_width=440)
     delay = milliseconds(status['delay_ms'] if live else None)
     nominal = (f"{sum(bool(vehicles.get(name, {}).get('nominal_ok')) for name in states)}"
@@ -201,6 +197,23 @@ def render_states(states, stamp_ns, status=None):
             for axis, x in enumerate((178, 278, 378)):
                 value = '--' if vector is None else f'{vector[axis]:+.2f}'
                 text(value, (x, y), color=ink, max_width=72)
+
+        timing = vehicles.get(name, {})
+        failed = live and timing.get('solver_ms') is not None and not timing.get('nominal_ok')
+        ink = (92, 110, 255) if failed else MUTED
+        iterations = timing.get('solver_iterations')
+        text(f"Solve {milliseconds(timing.get('solver_ms'))} wall / "
+             f"{milliseconds(timing.get('solver_cpu_ms'))} CPU | "
+             f"it {iterations if iterations is not None else '--'}"
+             f"{' FAIL' if failed else ''}",
+             (22, top + 132), 0.44, ink, max_width=432)
+        text(f"Map {milliseconds(timing.get('mapping_ms'))} | "
+             f"Path {milliseconds(timing.get('path_ms'))} | "
+             f"Corr {milliseconds(timing.get('corridor_ms'))}",
+             (22, top + 151), 0.42, MUTED, max_width=432)
+        text(f"Setup {milliseconds(timing.get('solver_setup_ms'))} | "
+             f"Worker {milliseconds(timing.get('planning_and_solve_ms'))}",
+             (22, top + 166), 0.36, MUTED, max_width=432)
 
     y = panel.shape[0] - 51
     text('p', (20, y), 0.38)

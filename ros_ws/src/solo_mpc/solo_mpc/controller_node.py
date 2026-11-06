@@ -426,6 +426,7 @@ class Controller(Node):
                         key: results.get(n, {}).get(key)
                         for key in (
                             "worker_pid", "cycle", "mapping_ms", "path_ms", "corridor_ms",
+                            "solver_setup_ms", "input_ms", "capture_ms",
                             "scan_stamp", "scan_usable_rays", "scan_hits", "map_updated",
                             "solver_iterations", "planning_and_solve_ms",
                             "map_started_wall", "map_finished_wall",

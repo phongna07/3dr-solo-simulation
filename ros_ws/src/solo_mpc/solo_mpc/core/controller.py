@@ -309,12 +309,20 @@ class TeamController(FleetGuidance):
         started = time.perf_counter()
         try:
             A, b = self._corridor(n, state, path, stamp)
+        except Exception as exc:
+            metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
+            return self._fallback(n, state, stamp, f"corridor_failed: {exc}", **metrics)
+        metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
+        started = time.perf_counter()
+        try:
             cost_b = self.corridor_cost[n][1]
             self.solvers[n] = self.solver_caches[n].select(
                 len(b), 0 if cost_b is None else len(cost_b))
         except Exception as exc:
-            return self._fallback(n, state, stamp, f"corridor_failed: {exc}", **metrics)
-        metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
+            metrics["solver_setup_ms"] = (time.perf_counter() - started) * 1000
+            return self._fallback(n, state, stamp, f"solver_setup_failed: {exc}", **metrics)
+        metrics["solver_setup_ms"] = (time.perf_counter() - started) * 1000
+        started = time.perf_counter()
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
         X, U = self.warm.get(n, (np.tile(x0, (H + 1, 1)), np.zeros((H, 2))))
         others = [k for k in self.names if k != n]
@@ -337,19 +345,25 @@ class TeamController(FleetGuidance):
             w_tra=0.0 if guidance['slot'] is not None else cfg['W_tra'],
         )
         self.solver_inputs[n] = inputs
+        metrics['input_ms'] = (time.perf_counter() - started) * 1000
         from .diagnostics import SolverCapture
+        started = time.perf_counter()
         capture = SolverCapture(cfg, n, self.solvers[n], stamp, inputs)
+        capture_ms = (time.perf_counter() - started) * 1000
+        started = time.perf_counter()
         cpu_started = time.process_time()
         ok, X, U = self.solvers[n].solve(**inputs)
         metrics['solver_cpu_ms'] = (time.process_time() - cpu_started) * 1000
+        solver_ms = (time.perf_counter() - started) * 1000
+        started = time.perf_counter()
         capture.finish(ok, X, U, self.solvers[n])
+        metrics['capture_ms'] = capture_ms + (time.perf_counter() - started) * 1000
         try:
             stats = self.solvers[n].opti.stats()
             solver_status = stats.get("return_status", "unknown")
             metrics["solver_iterations"] = stats.get("iter_count", 0)
         except RuntimeError:
             solver_status = "unavailable"
-        solver_ms = self.solvers[n].solve_times[-1] * 1000
         if not ok or not np.isfinite(X).all() or not np.isfinite(U).all():
             return self._fallback(n, state, stamp, "mpc_failed", solver_status=solver_status,
                                   solver_ms=solver_ms, **metrics)

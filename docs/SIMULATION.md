@@ -263,6 +263,12 @@ the error and journals must be inspected rather than claiming a complete video.
 
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.
+The state header labels total controller delivery time as `Fleet wall`, not
+solver time. Each UAV row shows solve wall/CPU milliseconds, iteration count,
+map/path/corridor wall times, solver-cache setup and total worker solve-phase
+time. Failed nominal solves are marked `FAIL` in red even when a retained stop
+plan succeeds. Stale or missing timing values display `--`. Input preparation
+and capture costs are also available in `telemetry/mpc.jsonl`.
 The right-hand square panels shrink and stack vertically to fit every UAV;
 the left map/state panels share the same displayed width and divide the height
 to keep every state row visible for three- and five-UAV fleets. Labels and fleet
@@ -280,12 +286,12 @@ The XYZ rows are position, velocity, estimated acceleration, and commanded
 acceleration, with colors and units in the shared footer instead of a repeated
 label column.
 
-The state header shows `Solve CPU max` (the largest per-UAV process CPU time
-inside the unchanged upstream solve call, including fallback), `MPC` (fleet
-cycle wall time, including input preparation, mapping, planning, solving,
-coordination, and reference publishing), and `Delay` (simulation time from the
-cycle's input timestamp to the displayed video tick). CPU time is distinct from
-solver wall time (`solver_ms` in telemetry). `Nominal` counts successful nominal
+The state header shows `Fleet wall` (fleet cycle wall time, including input
+preparation, mapping, planning, solving, coordination, and reference publishing),
+and `Delay` (simulation time from the cycle's input timestamp to the displayed
+video tick). Per-UAV solve CPU time is distinct from solver wall time
+(`solver_ms` in telemetry); both include fallback inside the solve call.
+`Nominal` counts successful nominal
 solves out of the configured fleet; failures and the controller reason remain
 visible. Status is sampled only after its `reported_stamp`, so completed solves
 cannot appear on earlier frames. Reports older than one simulation second show

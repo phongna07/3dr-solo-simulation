@@ -78,9 +78,9 @@ Simulation-specific differences from upstream:
 - The following observer offset is `[-100,-100,260]` m, with automatic far-clip
   extension. It frames the local fleet and surrounding obstacles, not the
   entire kilometre-wide field. The occupancy panel shows the whole field.
-- The local controller overrides the scenario's 10 m/s and 5 m/s² prediction
-  bounds with 6 m/s and 3 m/s², a 20-step nominal horizon and a 30-step stopping
-  branch at 0.1 s. Its predictive acceleration lag is 0.3 s. These are numerical
+- The local controller matches upstream `scenarios/scen1.yaml` / `config.py`:
+  10 m/s and 5 m/s² prediction bounds, a 20-step nominal horizon and a 25-step
+  stopping branch at 0.1 s, with a predictive acceleration lag of 0.2 s. These are numerical
   model settings, not a measured native response envelope; slowing physics does
   not correct a prediction/rotor-dynamics mismatch. Optional speed recovery
   remains enabled, and prediction bounds are not strict measured-motion limits.
@@ -96,6 +96,12 @@ Simulation-specific differences from upstream:
   clipping, dirty inflation, and corridor surface extraction use only the
   touched/local region. Full persistent maps and coordinator snapshots still
   scale with grid cell count; they are not sparse or unbounded-resolution maps.
+  Grid resolution, 1 m inflation margin, 25 m corridor box and 150 m local
+  planning radius match upstream. Corridor extraction still uses occupied-cell
+  centres rather than raw LiDAR endpoints, so the derived hard margin retains
+  `GRID_RESOLUTION / sqrt(2)` (1.414 m) for quantization. With these prediction
+  bounds it is 2.182 m, versus upstream's 0.768 m. Do not copy the raw-point
+  margin onto the grid geometry. Measured-state speed recovery remains enabled.
 - Decorative building meshes cap floors and window columns at 24 each per
   facade, rather than generating sub-metre windows across every 40–60 m wall.
   Existing small-field buildings retain their detail. Collision shapes and
@@ -108,8 +114,10 @@ Simulation-specific differences from upstream:
   overall startup cost or resident memory. IPOPT has a 0.75 s process-CPU cap,
   and each worker phase has a 2 s wall deadline. Independent 0.4 s simulation-time command
   expiry is unchanged and can reject late results before that deadline.
-- Inter-UAV safety/soft avoidance distances are 4/10 m, and slot expansion is
-  limited to 2 m/s so re-expansion leaves speed headroom behind a 5 m/s target.
+- Inter-UAV safety/soft avoidance distances are 3/7.5 m, slot expansion is
+  5 m/s and slot lookahead is 5 s, matching upstream. Target route, starts,
+  weights and sensing ranges remain the frozen upstream scen1 inputs; the
+  3 s startup ramp and camera measurements remain simulation-specific.
 - Physics pacing uses `simulation_real_time_factor` from the selected settings
   to provide compute headroom without
   changing simulation-time control periods, trajectory stamps, expiry, or
