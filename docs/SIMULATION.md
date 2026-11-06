@@ -221,6 +221,10 @@ including any partially submitted frame. Finalization decodes/counts frames
 and checks resolution/FPS before publishing the MP4 and removing the journal.
 The journal needs about 7.5 GB per simulation minute at 1080p/20 FPS, in addition
 to the compressed video. Keep enough free space for the whole recording.
+The recorder checkpoints and evicts written journal pages every 32 MiB to bound
+dirty page-cache growth during long flights; all raw frames remain on disk until
+verification, with the same recovery procedure. Only the recorder waits for these
+disk checkpoints. Slow disks can still delay recording.
 
 Normal stop allows up to two minutes for recorder finalization. CPU/disk errors,
 forced termination or exhausted finalization time are reported as failures;
@@ -342,7 +346,10 @@ require fixing the cause and restarting.
 `[ros2run]: Process exited with failure 1` reports the mission client's failure;
 the preceding mission error and `status/mission-failure.json` (saved before
 automatic cleanup) identify the reason. For other mission subcommands, inspect
-`status/mission.json`.
+`status/mission.json`. New failures also save `status/mission-trigger.json`
+immediately before landing: it freezes the failing phase, controller results,
+setpoint status and per-UAV flight state. The same record remains under
+`failure_context` in mission status through subsequent cleanup requests.
 The altitude-envelope error includes the affected UAVs, measured world ENU
 altitudes, and minimum allowed altitude. A completed landing does not clear a
 tracking failure. Check measured clearance, flight/safety errors, actual rotor

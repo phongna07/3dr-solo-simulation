@@ -33,6 +33,7 @@ class _MP4Encoder:
         self.process = None
         self.encoder = None
         self.frames = 0
+        self.checkpoint_bytes = 0
         self.failed = False
         self.closed = False
         (self.work / 'input.json').write_text(json.dumps({
@@ -130,6 +131,16 @@ class _MP4Encoder:
         try:
             self.raw.write(data)
             self.raw.flush()
+            # Bound dirty journal pages in long recordings. Otherwise many GB
+            # can accumulate in the host page cache and throttle unrelated
+            # optimizer captures and flight processes during bulk writeback.
+            # Only the recorder waits for disk; retain every raw frame for replay.
+            written = self.raw.tell()
+            if written - self.checkpoint_bytes >= 32 * 1024 * 1024:
+                os.fdatasync(self.raw.fileno())
+                os.posix_fadvise(self.raw.fileno(), self.checkpoint_bytes,
+                                written - self.checkpoint_bytes, os.POSIX_FADV_DONTNEED)
+                self.checkpoint_bytes = written
             self.frames += 1
             if self.encoder is None:
                 self._select()

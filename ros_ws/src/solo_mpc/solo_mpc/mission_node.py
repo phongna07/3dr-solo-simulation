@@ -48,6 +48,7 @@ class MissionSupervisor(Flight):
         self.mission_state = "idle"
         self.mission_id = ""
         self.error = ""
+        self.failure_context = {}
         self.pending = None
         self.stop_requested = False
         self.cancellable = False
@@ -179,7 +180,28 @@ class MissionSupervisor(Flight):
                 "error": self.error, "run_dir": str(self.run_dir),
                 "ownership": {n: owner.value for n, owner in self.ownership.items()},
                 "landing": self.landing_status,
+                "failure_context": self.failure_context,
                 "controller": self.snapshots}
+
+    def record_failure(self):
+        # Cleanup continues receiving controller/flight updates. Freeze the
+        # trigger now so post-landing status cannot erase the original evidence.
+        if self.failure_context:
+            return
+        context = dict(
+            state=self.mission_state, error=self.error,
+            stamp=self.get_clock().now().nanoseconds * 1e-9, wall=time.time(),
+            controller=self.snapshots, setpoints=self.delivery,
+            flight={n: dict(connected=s.connected, armed=s.armed, mode=s.mode,
+                            owner=s.owner, landed=s.landed)
+                    for n, s in self.states.items()},
+        )
+        self.failure_context = json.loads(json.dumps(context))
+        try:
+            (self.run_dir / 'status/mission-trigger.json').write_text(
+                json.dumps(self.failure_context, indent=2) + '\n')
+        except OSError as exc:
+            self.get_logger().error(f'Could not save mission trigger: {exc}')
 
     def request_status(self, request, response):
         response.success = True
@@ -257,6 +279,7 @@ class MissionSupervisor(Flight):
         result = "completed"
         try:
             if operation == "start":
+                self.failure_context = {}
                 self.cancellable = True
                 self.check_stop()
                 truth_path = self.run_dir / "telemetry/truth.jsonl"
@@ -279,6 +302,7 @@ class MissionSupervisor(Flight):
             result = "stopped"
         except Exception as exc:
             self.error = str(exc)
+            self.record_failure()
             result = "failed"
         finally:
             self.cancellable = False
@@ -288,6 +312,7 @@ class MissionSupervisor(Flight):
                     self.stop_flight()
                 except Exception as exc:
                     self.error = "; ".join(filter(None, [self.error, f"Mission cleanup failed: {exc}"]))
+                    self.record_failure()
                     result = "failed"
                 if result != "failed" and Ownership.RELEASED in self.ownership.values():
                     result = "released"

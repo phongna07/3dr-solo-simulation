@@ -223,10 +223,12 @@ class Controller(Node):
             self.get_logger().error(reason)
         current = self.get_clock().now().nanoseconds * 1e-9
         if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
-            results, reason = {}, 'obsolete_cycle'
+            results = {n: dict(out, ok=False) for n, out in results.items()}
+            reason = 'obsolete_cycle'
         elif not all(n in self.flight and self.flight[n].connected and self.flight[n].armed
                      and self.flight[n].mode in ('TAKEOFF', 'TRACK') for n in self.args.names):
-            results, reason = {}, 'flight_state_changed'
+            results = {n: dict(out, ok=False) for n, out in results.items()}
+            reason = 'flight_state_changed'
         for n, out in results.items():
             if out['ok'] and not out.get('nominal_ok', True):
                 p, q, at = self.poses[n]

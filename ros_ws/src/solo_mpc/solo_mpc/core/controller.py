@@ -75,6 +75,9 @@ class TeamController(FleetGuidance):
         if self.local_names:
             warmup()
             warmup_scan_integration()
+            from .diagnostics import SolverCapture
+            for name in self.local_names:
+                SolverCapture.prepare(cfg, name)
 
     def prepare_guidance(self, states, predictions, stamp, seers, tracker=None):
         track = self.track if tracker is None else tracker

@@ -272,6 +272,17 @@ up to `diagnostic_capture_cycles` complete calls under `optimizer-inputs/`.
 Pending records survive worker termination; successful records include nominal
 and backup plans/warm starts. Copy a record before the ring overwrites it.
 
+Each worker preallocates two 1 MiB, file-backed `pending-0.json` and
+`pending-1.json` input journals before readiness. Updating their resident mapped
+pages records a complete pending call before IPOPT without directory renames.
+They are ordinary JSON padded with spaces; after a worker stops, select the
+newest valid `sequence` and replay that file with the same command below.
+An independent writer thread atomically publishes completed `solve-*.json`
+records through a bounded queue, retaining the configured ring size. Queue
+overflow/write/drain errors remain visible in logs, and the two pending input
+journals survive worker termination even when a completed record cannot be
+written. This protects process-death diagnostics, not host power-loss durability.
+
 Inside the simulation container:
 
 ```bash
@@ -376,6 +387,118 @@ The native build command, numerical-cache caveat and installed-image checks are
 recorded in [Deployment](DEPLOYMENT.md). Host syntax/import/reference checks,
 native plugin compilation and `git diff --check` supplement the missions; no
 automated tests or test harnesses were added.
+
+### Later native-run failures and local corrections
+
+The later November 5 runs failed during tracking, with successful startup and
+subsequent fleet landing. Do not interpret the client's failure exit as a
+takeoff or landing failure:
+
+- `20261105T101659Z-8323` and `20261105T132732Z-11708` (small field): all
+  workers became permanently unavailable after a roughly 1.46 s fleet cycle.
+  Gazebo safety then latched and the mission reported lost flight state. In
+  the latter run, all three final optimizer captures show successful solves
+  written within 69 ms of capture creation, despite all workers being disabled.
+- `20261105T102934Z-13165` (large field): one visible CPU-cap failure preceded
+  an all-worker timeout; supervision stopped on persistent planner failure.
+  All five last captures succeeded and were written within 0.71 s, below the
+  1 s worker budget. Completion-to-pipe delivery cannot be reconstructed from
+  those files alone.
+- `20261105T083215Z-28774` (`scen1`): slow/expired fleet results interrupted
+  leader pursuit, and camera SEARCH exceeded eight simulation seconds. The
+  25 m camera half-footprint had little reserve for UAV 3 starting 16.4 m west
+  of a target accelerating to 5 m/s. This does not establish an upstream
+  numerical failure or prove the complete 13 m/s sprint route is trackable.
+- `20261105T082809Z-27690` and `20261105T085239Z-5408` ended stopped without
+  a saved mission-failure record. The latter still contains CPU-cap failures;
+  neither should be relabeled a successful complete-route mission.
+
+The failed runs reached native readiness; saved final flight states confirm
+all vehicles settled, unowned, IDLE and disarmed. The watchdog activations
+remain safety interventions during tracking, not failed physical landings.
+The three supplied controllers had also been changed to 1.0 pacing while their
+comments and guides still specified 0.2. They now request 0.2 again, preserving
+all speeds, CPU caps, worker deadlines, source expiry and landing checks.
+
+The local worker collector now drains queued replies even when its coordinator
+wakes after the deadline, accepting only worker completions timestamped within
+the original phase budget. Truly late workers are still disabled. Obsolete or
+flight-invalid cycles retain per-UAV numerical/error diagnostics while marking
+every output ineligible for publication. Mission failures freeze their original
+controller/setpoint/flight context in `status/mission-trigger.json` before
+cleanup updates arrive.
+
+Long 1080p recordings write about 124 MB per simulation second to their recovery
+journal. The recorder now synchronizes and evicts journal pages every 32 MiB,
+bounding its dirty-page accumulation without removing recovery frames.
+
+Two follow-up runs, `20261105T155955Z-4421` and
+`20261105T161044Z-23237`, reproduced all-worker failures even at 0.2 pacing.
+Both landed and stopped all three rotors normally. In the latter, a timeout
+stack capture caught UAV 2 inside `SolverCapture.finish()`'s `os.replace()`;
+the other workers had returned to waiting for jobs when sampled. The final
+captures' file modification times reflect the earlier content writes, not
+completion of the blocked rename. Thus early successful JSON content alone
+cannot establish a timely worker reply. This directly identifies synchronous
+diagnostic filesystem work as a worker-deadline hazard; the underlying host
+filesystem stall is not fully explained. Timeout stacks now remain in
+`logs/worker-<uav>.traceback.log` (captured only after a failed deadline).
+Pending mapped journals and the independent completed-record writer remove
+those per-solve renames from the flight worker. Solver code and all existing
+CPU/wall deadlines remain unchanged.
+
+The final local changes were verified with the following full-fleet camera,
+LiDAR and recording missions (run IDs use UTC, November 5; the last checks ran
+on November 6 local time):
+
+| Preset | Requested tracking limit | Actual run directory | TRACK cycles ready / total | Failed nominal UAV solves |
+|---|---:|---|---:|---:|
+| `small50_3uav` | 180 sim s; route goal reached earlier | `20261105T162232Z-11793` | 1519 / 1519 | 0 |
+| `large200_5uav` | 130 sim s | `20261105T164344Z-18865` | 1300 / 1300 | 0 |
+| `large200_5uav_separated` | 45 sim s | `20261105T170006Z-10965` | 450 / 450 | 0 |
+| `scen1` | 90 sim s | `20261105T174634Z-22327` | 891 / 898 | 7 |
+
+Commands were `./scripts/dev build sim`, then for each preset
+`./scripts/dev mpc --preset PRESET --record-video`,
+`./scripts/dev mission run --seconds LIMIT`, `./scripts/dev evaluate` and
+`./scripts/dev stop`. Both initial diagnostic attempts above were retained as
+failed runs; a failed CLI exit was followed through automatic landing and
+container cleanup before another stack started. The final image includes the
+mapped-journal/writer changes. Installed imports were checked separately without
+a checkout mount, retaining bundled upstream provenance.
+
+All four final missions completed, landed every vehicle, released ownership and
+confirmed disabled/disarmed flight with measured rotor speeds below
+`1.3e-24` rad/s. There were no worker timeouts or Gazebo watchdog activations.
+Every UAV's final completed capture sequence matched its latest pending input
+journal, with 128 completed ring records retained. Upstream source hashes matched
+the unchanged pin in every run. The small-field target reached within 0.025 m of
+its `[47,23]` goal before the duration limit; the other three checks were bounded
+missions, not complete-route evidence.
+
+| Preset | Minimum sampled obstacle body clearance | Minimum sampled inter-UAV distance | Finalized 1080p/20 FPS video duration / frames |
+|---|---:|---:|---:|
+| `small50_3uav` | 0.724 m | 1.453 m | 179.50 s / 3590 |
+| `large200_5uav` | 0.552 m | 1.208 m | 155.60 s / 3112 |
+| `large200_5uav_separated` | 0.421 m | 1.203 m | 474.35 s / 9487 |
+| `scen1` | 1.012 m | 17.519 m | 138.30 s / 2766 |
+
+Every MP4 decoded successfully and was visually sampled through the preserved
+map/state/overhead/all-camera composition (`reports/video-contact.png` and
+`reports/video-probe.json`). Recording includes takeoff, landing and idle time
+until stack shutdown; the separated recording includes a long post-mission idle
+interval. Camera observation age stayed below 0.127 s during TRACK in every run.
+The three low-altitude presets remained within 2.970–3.008 m and `scen1` within
+29.969–30.048 m during TRACK. Source timestamp sidecars remain intact.
+
+Scen1's seven failed nominal solves remain visible: four CPU-cap failures and
+three infeasible solves, affecting UAVs 2 and 4. Later calls recovered, while UAV
+2 was still in SEARCH at the end. Four of 898 TRACK cycles delivered later than
+the existing 0.1 s control period; the other presets had none. These observations
+do not change CPU/deadline acceptance criteria. The fix removes diagnostic
+filesystem stalls from worker computation; it does not eliminate every upstream
+numerical failure or establish continuous clearance, all handoffs, or complete
+13 m/s sprint-route tracking. No automated tests or test harnesses were added.
 
 Retain the actual run directory, resolved settings, source/image identity,
 per-UAV solver outcomes, measured odometry, motor speeds and safety status.

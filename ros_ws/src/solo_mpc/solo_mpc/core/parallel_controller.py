@@ -6,10 +6,13 @@ CasADi objects cross a process boundary. Spawn avoids inheriting DDS/native stat
 """
 
 from dataclasses import dataclass
+import faulthandler
 import math
 import multiprocessing as mp
 from multiprocessing.connection import wait
 import os
+from pathlib import Path
+import signal
 import time
 import threading
 from types import SimpleNamespace
@@ -39,10 +42,16 @@ class MapSnapshot:
 
 def vehicle_worker(connection, name, names, cfg):
     """Process entry point; the fleet name list retains all neighbor constraints."""
+    trace = None
     try:
+        if cfg.get('DIAGNOSTIC_DIR'):
+            trace = (Path(cfg['DIAGNOSTIC_DIR']).parent / 'logs' /
+                     f'worker-{name}.traceback.log').open('a')
+            faulthandler.register(signal.SIGUSR1, file=trace, all_threads=True)
         controller = TeamController(names, cfg, local_names=[name])
         grid = controller.planners[name].gmap
-        connection.send({"phase": "ready", "pid": os.getpid(), "vehicle": name})
+        connection.send({"phase": "ready", "pid": os.getpid(), "vehicle": name,
+                         "finished_wall": time.perf_counter()})
         while True:
             job = connection.recv()
             phase, cycle = job["phase"], job["cycle"]
@@ -71,15 +80,22 @@ def vehicle_worker(connection, name, names, cfg):
                                  **payload})
             except Exception as exc:
                 connection.send({"phase": phase, "cycle": cycle, "pid": os.getpid(),
+                                 "finished_wall": time.perf_counter(),
                                  "error": f"{type(exc).__name__}: {exc}"})
     except (EOFError, BrokenPipeError):
         pass
     except Exception as exc:
         try:
-            connection.send({"phase": "ready", "error": f"{type(exc).__name__}: {exc}"})
+            connection.send({"phase": "ready", "finished_wall": time.perf_counter(),
+                             "error": f"{type(exc).__name__}: {exc}"})
         except (EOFError, BrokenPipeError):
             pass
     finally:
+        from .diagnostics import SolverCapture
+        SolverCapture.close()
+        if trace is not None:
+            faulthandler.unregister(signal.SIGUSR1)
+            trace.close()
         connection.close()
 
 
@@ -127,6 +143,14 @@ class ParallelTeamController(TeamController):
     def _disable(self, name, reason):
         worker = self.workers[name]
         worker.error = reason
+        if reason.startswith('worker_timeout:') and self.cfg.get('DIAGNOSTIC_DIR') and worker.process.is_alive():
+            # Capture native/Python stacks before terminating a stuck worker.
+            # This runs only after its deadline has already failed.
+            try:
+                os.kill(worker.process.pid, signal.SIGUSR1)
+                worker.process.join(timeout=0.05)
+            except ProcessLookupError:
+                pass
         worker.connection.close()
         if worker.process.is_alive():
             worker.process.terminate()
@@ -141,10 +165,14 @@ class ParallelTeamController(TeamController):
         messages = {}
         deadline = time.perf_counter() + timeout
         while pending:
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
+            # A descheduled coordinator can wake after the deadline with timely
+            # replies already queued. Drain those before disabling any worker;
+            # worker completion timestamps still enforce the original deadline.
+            remaining = max(0.0, deadline - time.perf_counter())
+            readable = wait(list(pending), timeout=remaining)
+            if not readable:
                 break
-            for connection in wait(list(pending), timeout=remaining):
+            for connection in readable:
                 name = pending.pop(connection)
                 try:
                     message = connection.recv()
@@ -152,7 +180,12 @@ class ParallelTeamController(TeamController):
                         cycle is not None and message.get("cycle") != cycle
                     ):
                         raise ValueError("Worker response does not match the active cycle")
-                    messages[name] = message
+                    if message["finished_wall"] > deadline:
+                        reason = f"worker_timeout: {phase}"
+                        self._disable(name, reason)
+                        messages[name] = {"error": reason}
+                    else:
+                        messages[name] = message
                 except (EOFError, OSError, ValueError) as exc:
                     reason = f"worker_disconnected: {exc}"
                     self._disable(name, reason)
