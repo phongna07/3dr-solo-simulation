@@ -254,14 +254,16 @@ the error and journals must be inspected rather than claiming a complete video.
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.
 The state header labels total controller delivery time as `Fleet wall`, not
-solver time. Each UAV row shows solve wall/CPU milliseconds, iteration count,
-map/path/corridor wall times, solver-cache setup and total worker solve-phase
-time. Failed nominal solves are marked `FAIL` in red even when a retained stop
-plan succeeds. Stale or missing timing values display `--`. Input preparation
-and capture costs are also available in `telemetry/mpc.jsonl`.
+solver time. Each UAV row has a single `CPU solve time: … ms` timing line,
+colored red for failed nominal solves even when a retained stop plan succeeds.
+Stale or missing timing values display `--`. Detailed wall times, iterations,
+mapping, planning, setup, worker, input preparation and capture costs remain
+available in `telemetry/mpc.jsonl`.
 The right-hand square panels shrink and stack vertically to fit every UAV;
 the left map/state panels share the same displayed width and divide the height
-to keep every state row visible for three- and five-UAV fleets. Labels and fleet
+to keep every state row visible for three- and five-UAV fleets. Compact state
+rows reclaim the space from the removed timing lines; the map and state panels
+automatically resize together at their shared width. Labels and fleet
 colors follow the configured order.
 Colored coverage rays/outlines appear in the overhead view and GUI, but are
 excluded from UAV images and LiDAR. They show flat-ground camera projections;
