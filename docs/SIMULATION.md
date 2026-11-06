@@ -54,7 +54,7 @@ For the five-UAV 200 × 200 m random field, use the matching preset:
 ./scripts/dev stop
 ```
 
-For the kilometre-wide upstream field at 30 m flight altitude:
+For the scaled upstream layout in a 200 × 200 m field at 6 m flight altitude:
 
 ```bash
 ./scripts/dev mpc --preset scen1 --record-video
@@ -65,7 +65,7 @@ For the kilometre-wide upstream field at 30 m flight altitude:
 
 Add `--ground-truth-target` to isolate flight/control from marker perception.
 The complete route is much longer than this representative check and contains
-13 m/s sprint legs. A duration-limited mission is not evidence of completing
+2.6 m/s sprint legs. A duration-limited mission is not evidence of completing
 the route or all handoffs. Retain the actual run ID and inspect the evaluation,
 per-UAV solver/worker timing, camera observations, landing and finalized video.
 Budget wall time from the selected pacing and observed clock rate, plus

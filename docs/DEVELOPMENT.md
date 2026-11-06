@@ -560,3 +560,61 @@ sub-70 ms solves, full-route/sprint completion or a measured dynamics envelope.
 Normal stop finalized the video. Takeoff/tracking frames retained all five
 FOVs, map, state rows and separated timings; finalized video and timestamp
 sidecars remain in the run directory. The upstream submodule was unchanged.
+
+### Scaled scen1 configuration (November 6, 2026)
+
+The local scen1 preset now uses a 200 × 200 m map at 6 m altitude. All five
+starts, 33 rectangles, 32 circles and 27 target waypoints retain exactly one
+fifth of the former coordinates and dimensions (maximum numeric difference
+from division by five below 3e-14 m). The colleague-owned submodule is unchanged.
+See Configuration for scaled sensing, formation, route and physical-Iris
+exceptions. No native code, CPU caps, worker deadlines or expiry guards changed.
+
+Initial camera/LiDAR/recording run `20261106T090320Z-4437` used literal 2 m/s
+and 1 m/s² prediction bounds. Repeated follower CPU-cap failures (39 failed
+nominal calls) led to an explicit `mission stop` after roughly 15 tracking
+seconds; the originally requested 90-second window was not completed. All five
+landed, released ownership and disarmed, and normal stop finalized the video.
+This shortened attempt is tuning evidence, not a successful 90-second check.
+
+Retry `20261106T090758Z-17758` used the separated large200 preset's 2.2 m/s
+and 3 m/s² bounds, with target process-noise and velocity-trust thresholds scaled
+to 0.4 m/s² and 0.3 m/s. Commands were:
+
+```bash
+./scripts/dev mpc --preset scen1 --record-video
+./scripts/dev mission run --seconds 90
+./scripts/dev evaluate --run-dir /workspace/runs/20261106T090758Z-17758
+./scripts/dev stop
+```
+
+The retry completed the requested tracking window with camera input and all
+five native vehicles. All five reached formation TRACK by simulation stamp
+71.68 s, approximately 59 s after tracking began, and remained in TRACK through
+the end. Camera observation age stayed at or below 0.126 s; measured TRACK
+altitude ranged from 5.901 to 6.009 m. The 875 completed airborne TRACK cycles
+included 830 ready cycles and 47 failed nominal UAV solves: 44 CPU-cap failures
+(UAV 1: 2, UAV 2: 21, UAV 4: 21), plus three infeasible solves (UAV 2: 2,
+UAV 4: 1). Later calls recovered. These failures remain visible in telemetry;
+a completed supervised mission does not mean every optimization succeeded.
+
+The run is bounded early-route evidence, including rendezvous and the first
+bend. It does not establish complete-route or later 2.6 m/s sprint success,
+repeatability or continuous collision clearance. The scaled obstacles leave
+some tight approaches; inspect sampled body clearance alongside the video.
+
+Final evaluation reported minimum sampled obstacle-body clearance of 0.136 m
+and inter-UAV distance of 1.591 m. Fleet wall p50/p95 was 150.8/487.4 ms;
+simulation delivery delay p50/p95 was 28.0/96.3 ms, with 4.8% of cycles over
+the existing 0.1 s simulation control period. No performance caps were relaxed.
+Saved `reports/settled-flight-state.json` confirms every vehicle IDLE, landed,
+unowned, disarmed and disabled, with actual rotor speeds below 8e-25 rad/s.
+No Gazebo safety watchdog activated during the run.
+
+Normal stop finalized a 119.4 s / 2388-frame 1920 × 1080 / 20 FPS video.
+Decoded frame counting completed without errors; takeoff, tracking and landing
+samples retain the overhead, occupancy, five state rows, all five camera panels
+and coverage guides (`reports/video-contact.png`, `tracking.png`, `takeoff.png`,
+`landing.png`, `video-probe.json`). Source timestamp sidecars remain intact.
+Provenance reports `matches_pinned_sources: true`. The container is stopped.
+`git diff --check` passed; no automated tests or harnesses were added.

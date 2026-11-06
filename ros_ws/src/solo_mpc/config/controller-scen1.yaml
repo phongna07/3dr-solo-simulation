@@ -1,20 +1,20 @@
 # Select with --preset scen1. Distances are metres and velocity is metres/second.
 # Keep the five-worker solve/mapping cycle inside simulation-time command expiry.
 simulation_real_time_factor: 0.2
-flight_altitude: 30.0
-obstacle_height: 40.0
+flight_altitude: 6.0
+obstacle_height: 8.0
 target_height: 0.05
-overhead_camera_offset: [-100, -100, 260]
+overhead_camera_offset: [-20, -20, 52]
 camera_width: 320
 camera_height: 320
 camera_rate: 8.0
 camera_hfov: 1.392432603581188
-coverage_ray_diameter: 0.3
-coverage_outline_diameter: 0.3
+coverage_ray_diameter: 0.06
+coverage_outline_diameter: 0.06
 target_startup_ramp_sim: 3.0
 lidar_rate: 10.0
 lidar_samples: 360
-lidar_noise_stddev: 0.016666666666666666
+lidar_noise_stddev: 0.0033333333333333335
 control_period: 0.1
 diagnostic_capture_cycles: 128
 controller_execution: parallel
@@ -26,7 +26,7 @@ sensor_timeout_sim: 0.5
 target_timeout_sim: 1.5
 target_search_timeout_sim: 8.0
 planner_failure_timeout_sim: 3.0
-arrival_fleet_radius: 65.0
+arrival_fleet_radius: 13.0
 arrival_timeout_sim: 30.0
 command_timeout_sim: 0.4
 command_timeout_wall: 3.0
@@ -35,21 +35,21 @@ flight_timeout_sim: 2.5
 flight_timeout_wall: 3.0
 target_mode: camera
 altitude_kp: 1.0
-vertical_speed_limit: 2.0
+vertical_speed_limit: 0.5
 frame_history_tolerance: 0.3
 marker_min_pixels: 4
 params:
   ROBOT_RADIUS: 0.5
-  # Match upstream scenarios/scen1.yaml and config.py prediction/formation values.
-  UAV_SAFE_DISTANCE: 3.0
-  COLLISION_AVOID_DISTANCE: 7.5
-  VMAX: 10.0
-  UMAX: 5.0
+  # Scaled scen1 bounds; retain physical Iris radius and at least 1 m separation.
+  UAV_SAFE_DISTANCE: 1.0
+  COLLISION_AVOID_DISTANCE: 1.5
+  VMAX: 2.2
+  UMAX: 3.0
   ACCEL_TAU: 0.2
-  GRID_RESOLUTION: 2.0
-  INFLATE_MARGIN: 1.0
-  CORRIDOR_BOX: 25.0
-  LOCAL_PLAN_RADIUS: 150.0
+  GRID_RESOLUTION: 0.4
+  INFLATE_MARGIN: 0.2
+  CORRIDOR_BOX: 5.0
+  LOCAL_PLAN_RADIUS: 30.0
   # Retain measured-state recovery and derived grid-cell corridor allowance.
   SPEED_RECOVERY: true
   LOCAL_SEARCH: jps
@@ -60,7 +60,7 @@ params:
   CORRIDOR_MAX_FACES: 16
   CORRIDOR_CACHE_FACES: [4, 5, 6, 7, 8, 9, 10, 11, 12]
   SLOT_MIN_RATIO: 0.3
-  SLOT_EXPAND_SPEED: 5.0
+  SLOT_EXPAND_SPEED: 1.0
   SLOT_LOOKAHEAD_TIME: 5.0
   IPOPT_OPTIONS:
     ipopt.max_iter: 500

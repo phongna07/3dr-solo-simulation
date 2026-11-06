@@ -37,106 +37,56 @@ solver/dynamics; see [Development](DEVELOPMENT.md#architecture). All four preset
 retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
 backend selection or one-UAV migration stage.
 
-### Scen1: five UAVs in a 1000 × 1000 m map
+### Scen1: scaled five-UAV layout in a 200 × 200 m map
 
 `./scripts/dev mpc --preset scen1 --record-video` selects `config/fleet-5uav.yaml`,
 `scenarios/scen1.yaml`, and `config/controller-scen1.yaml`. Launch derives all five
 ground spawns and the `mpc_scen1` world name from the scenario. The upstream
-submodule remains unchanged; its 33 rectangles, 32 circles, 27 target waypoints,
-and per-leg speeds are frozen into the local scenario, independent of Git at
-runtime. Normal target speed is 5 m/s, with the original 13 m/s sprint legs.
+submodule remains unchanged. The local frozen 33 rectangles (including widths
+and heights), 32 circles (including radii), 27 route waypoints and all five XY
+starts are divided by five. No geometry is borrowed from the large200 presets.
 
-Simulation-specific differences from upstream:
+Starts are `[127.762,70.915,6]`, `[141.744,36.498,6]`,
+`[16.7138,20.3652,6]`, `[23.7046,140.8244,6]`, and
+`[51.9372,97.2654,6]`. UAV 3 initially covers the target at `[20,20]`;
+the others approach from separated locations. Native takeoff begins at ground
+level. Flight/obstacle heights are 6/8 m, preserving planar avoidance. Camera
+HFOV and 320 × 320 resolution are retained: the half-footprint is now 5 m and
+the marker half-width is 0.2 m. Observer offset is `[-20,-20,52]` m; coverage
+guide widths are 0.06 m. Recording remains 1920 × 1080 at 20 FPS with every panel.
 
-- The current starts are `[638.81,354.575,30]`, `[708.72,182.49,30]`,
-  `[83.569,101.826,30]`, `[118.523,704.122,30]`, and `[259.686,486.327,30]`.
-  UAV 3 initially covers the target; the other four approach from hundreds of
-  metres away rather than spawning on formation slots. The frozen target route
-  and obstacles remain unchanged. All UAVs take off from ground level under
-  native flight-node and Gazebo rotor control.
-- `target_startup_ramp_sim: 3.0` ramps the route clock from zero to its nominal
-  rate over the first three tracking seconds. On the initial 5 m/s leg this
-  gives roughly 1.67 m/s² tangential acceleration and 7.5 m of travel during
-  ramp-up, allowing the initially stationary leader to follow. It adds 1.5 s
-  to unpaused route duration; later 5/13 m/s legs are unchanged. Camera-loss
-  pauses retain ramp progress, and mission reset restarts it. Other presets
-  retain their original timing (`target_startup_ramp_sim` defaults to zero).
-- Formation logic is unchanged: full cardinal leader-to-follower slots are
-  `SLOT_SPACING_RATIO * VIEWING_RADIUS = 1.75 * 25 = 43.75 m`, with obstacle
-  contraction and gradual re-expansion. This is not a fixed 50 m separation
-  between every pair: adjacent/opposite full follower slots are about 61.9/87.5 m
-  apart, and measured tracking/safety constraints also affect actual spacing.
-- Flight altitude is 30 m; obstacle collision height is 40 m, so planar
-  avoidance remains necessary. The stabilized 320 × 320 cameras use an HFOV
-  calibrated to a 25 m half-footprint at ground level. The target marker has
-  a 1 m half-width. LiDAR range is 50 m with 360 samples at 10 Hz.
-- Only this preset sets `coverage_ray_diameter` and `coverage_outline_diameter`
-  to 0.30 m so the render-only guides remain visible from the high observer.
-  Both the server recording and GUI use these widths; other presets retain
-  0.018/0.035 m. These guides remain excluded from UAV cameras, LiDAR, shadows,
-  and collision geometry. Rebuild native plugins after changing rendering code.
-- The following observer offset is `[-100,-100,260]` m, with automatic far-clip
-  extension. It frames the local fleet and surrounding obstacles, not the
-  entire kilometre-wide field. The occupancy panel shows the whole field.
-- The local controller matches upstream `scenarios/scen1.yaml` / `config.py`:
-  10 m/s and 5 m/s² prediction bounds, a 20-step nominal horizon and a 25-step
-  stopping branch at 0.1 s, with a predictive acceleration lag of 0.2 s. These are numerical
-  model settings, not a measured native response envelope; slowing physics does
-  not correct a prediction/rotor-dynamics mismatch. Optional speed recovery
-  remains enabled, and prediction bounds are not strict measured-motion limits.
-  Native takeoff/landing use measured state and the configured vertical speed
-  limit; landing retains a 120 simulation-second deadline.
-  Evaluation excludes low-altitude takeoff/landing using the lower of
-  `flight_altitude - 0.5` and `0.9 * flight_altitude`, rather than a fixed 2.5 m
-  threshold. This permits measured-versus-truth altitude error without calling
-  early climb records a representative 30 m flight.
-- A 2 m grid has 501 × 501 cells per worker, versus 668 × 668 cells for the
-  existing 200 m / 0.3 m preset. Local planning remains bounded to 150 m
-  half-windows (at most 151 × 151 cells). Explicit-ray integration, log-odds
-  clipping, dirty inflation, and corridor surface extraction use only the
-  touched/local region. Full persistent maps and coordinator snapshots still
-  scale with grid cell count; they are not sparse or unbounded-resolution maps.
-  Grid resolution, 1 m inflation margin, 25 m corridor box and 150 m local
-  planning radius match upstream. Corridor extraction still uses occupied-cell
-  centres rather than raw LiDAR endpoints, so the derived hard margin retains
-  `GRID_RESOLUTION / sqrt(2)` (1.414 m) for quantization. With these prediction
-  bounds it is 2.182 m, versus upstream's 0.768 m. Do not copy the raw-point
-  margin onto the grid geometry. Measured-state speed recovery remains enabled.
-- Decorative building meshes cap floors and window columns at 24 each per
-  facade, rather than generating sub-metre windows across every 40–60 m wall.
-  Existing small-field buildings retain their detail. Collision shapes and
-  LiDAR proxies are unchanged; decorative city heights can exceed collision
-  height, as in the original presets.
-- Scen1 warms exact corridor sizes 4–12 and 16 before flight using
-  `CORRIDOR_CACHE_FACES`; other presets retain sizes 4–8 and 16. Unusual sizes
-  still retain every face in the existing two-entry LRU reserve. This moves
-  anticipated solver construction out of the flight deadline, not out of
-  overall startup cost or resident memory. IPOPT has a 0.75 s process-CPU cap,
-  and each worker phase has a 2 s wall deadline. Independent 0.4 s simulation-time command
-  expiry is unchanged and can reject late results before that deadline.
-- Inter-UAV safety/soft avoidance distances are 3/7.5 m, slot expansion is
-  5 m/s and slot lookahead is 5 s, matching upstream. Target route, starts,
-  weights and sensing ranges remain the frozen upstream scen1 inputs; the
-  3 s startup ramp and camera measurements remain simulation-specific.
-- Physics pacing uses `simulation_real_time_factor` from the selected settings
-  to provide compute headroom without
-  changing simulation-time control periods, trajectory stamps, expiry, or
-  ownership/landing guards. Worker and CPU caps remain finite, and failures
-  remain visible in telemetry.
+Normal/sprint target speeds scale from 5/13 to 1/2.6 m/s. The three-second
+startup ramp, 0.1 s timestep, 20-step nominal and 25-step stopping horizons,
+0.2 s acceleration lag, dimensionless ratios and cost weights are retained.
+Prediction speed/acceleration bounds use 2.2 m/s and 3 m/s², as in the
+separated large200 preset, after a 2 m/s / 1 m/s² attempt repeatedly hit the
+existing solver CPU cap during follower approaches. Acceleration cost scale
+remains 1 m/s² for native response; target process-noise acceleration and
+trusted-velocity thresholds scale to 0.4 m/s² and 0.3 m/s.
+The sprint legs still exceed the prediction speed bound; bounded early-route
+verification does not establish complete-route or sprint success.
 
-The 13 m/s sprints exceed the UAV prediction bound deliberately; they are a
-handoff stress case, not a guarantee of continuous visibility. Inspect camera
-observations, leader changes, solver failures, measured clearance and actual
-mission duration before treating a longer or full-route run as successful.
+Formation cardinal slots are `1.75 * 5 = 8.75 m`, with obstacle contraction
+and re-expansion at 1 m/s and five-second lookahead. Adjacent/opposite full
+follower slots are about 12.37/17.5 m apart. Arrival fleet radius is 13 m.
+Sensing/neighbor ranges are 10/9 m. Grid resolution is 0.4 m (501 × 501 cells),
+local planning radius is 30 m (151 × 151 cells), corridor box is 5 m, and
+inflation margin is 0.2 m. Other spatial planning, target-estimation and route
+sampling scales are divided by five, including the 0.4 m spline sample spacing.
+The hard corridor margin retains the derived grid quantization allowance.
 
-Native run `20261105T073226Z-7527` completed 90 tracking simulation seconds with
-all five UAVs, camera perception and recording, followed by settled landing and
-measured rotor shutdown. UAV 3 retained camera tracking (maximum observation age
-0.126 s); four nominal solves exceeded the existing CPU cap, remaining visible
-as partial failures. Minimum sampled obstacle body clearance was 1.203 m.
-This bounded run does not validate the complete route or later 13 m/s sprints;
-earlier backend operating envelopes do not apply. See the native verification
-record in [Development](DEVELOPMENT.md#native-migration-verification).
+Physical Iris geometry is unchanged: `ROBOT_RADIUS` remains 0.5 m, LiDAR minimum
+range remains 0.5 m, and inter-UAV safety distance is floored at 1 m rather
+than shrinking to 0.6 m. Soft avoidance distance is 1.5 m. Vertical speed is
+0.5 m/s for measured takeoff/landing. Source expiry, ownership, finite CPU and
+worker budgets, safety supervision and landing deadlines remain unchanged.
+The scenario and controller settings must be changed together because controller
+parameters override scenario parameters. Development configuration edits need
+a stack restart, not a native rebuild.
+
+Earlier 1000 m / 30 m runs in [Development](DEVELOPMENT.md) describe the former
+configuration and do not validate this scaled preset. Inspect measured flight,
+camera observations, solver failures, landing and finalized video for new runs.
 
 ### Five UAVs in a 200 × 200 m map
 
