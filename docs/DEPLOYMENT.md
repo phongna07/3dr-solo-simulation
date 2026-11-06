@@ -82,6 +82,7 @@ After readiness, explicitly fly, evaluate, land, and stop:
 ./release exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission run --seconds 30
 ./release exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate
 ./release exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop
+./release exec -T sim /usr/local/bin/solo-entrypoint python3 -m solo_mpc.core.video /workspace/runs/latest
 ./release stop sim
 ```
 

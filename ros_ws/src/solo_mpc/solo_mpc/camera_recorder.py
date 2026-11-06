@@ -22,7 +22,7 @@ from trajectory_msgs.msg import JointTrajectory
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 from solo_bringup.configuration import load_config
-from solo_bringup.startup import ComponentProgress
+from solo_bringup.startup import ComponentProgress, write_status
 
 from .core.video import FrameVideo
 from .core.composite_video import CompositeVideo
@@ -36,6 +36,9 @@ class CameraRecorder(Node):
         super().__init__("mpc_combined_recorder" if combined else
                          "mpc_overhead_recorder" if overhead else "mpc_camera_recorder")
         self.bridge = CvBridge()
+        self.output_dir = Path(output_dir)
+        self.recording_closed = False
+        self.recording_status('waiting')
         self.vehicle_names = tuple(vehicle_names or names)
         self.overhead = overhead
         self.composite = None
@@ -187,6 +190,8 @@ class CameraRecorder(Node):
         )
 
     def image(self, name, msg):
+        if self.recording_closed:
+            return
         key = 'combined' if self.composite else name
         if key not in self.recording:
             vehicles = self.vehicle_names if self.overhead or self.composite else (name,)
@@ -210,15 +215,33 @@ class CameraRecorder(Node):
             self.get_logger().info(f"{key}: writing {video.path} at {video.fps:g} FPS")
 
     def flush_composite(self):
-        if self.composite:
+        if self.composite and not self.recording_closed:
             self.composite.flush()
 
+    def recording_status(self, state, detail=''):
+        write_status(self.output_dir / 'status/recording.json', {
+            'state': state, 'detail': detail, 'updated_wall_unix': time.time(),
+        })
+
+    def finish_recording(self):
+        if self.recording_closed:
+            return
+        self.recording_closed = True
+        self.recording_status('finalizing')
+        try:
+            if self.composite:
+                self.composite.close()
+            for name, video in self.videos.items():
+                video.close()
+                self.get_logger().info(f"{name}: saved {video.frames} camera frames")
+            self.recording_status('finalized' if any(v.frames for v in self.videos.values())
+                                  else 'empty')
+        except BaseException as exc:
+            self.recording_status('failed', f'{type(exc).__name__}: {exc}')
+            raise
+
     def destroy_node(self):
-        if self.composite:
-            self.composite.close()
-        for name, video in self.videos.items():
-            video.close()
-            self.get_logger().info(f"{name}: saved {video.frames} camera frames")
+        self.finish_recording()
         return super().destroy_node()
 
 
@@ -260,10 +283,19 @@ def main():
             sig: signal.signal(sig, shutdown) for sig in (signal.SIGINT, signal.SIGTERM)
         }
         while rclpy.ok() and not shutdown_requested:
+            if node.recording_closed:
+                # Finalization happens before stack shutdown. Do not dispatch
+                # queued image/map/state callbacks against the closed video.
+                time.sleep(0.1)
+                continue
             rclpy.spin_once(node, timeout_sec=0.1)
+            if (Path(args.output_dir) / 'status/finalize-recording.request').exists():
+                node.finish_recording()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except BaseException as exc:
+        if node is not None:
+            node.recording_status('failed', f'{type(exc).__name__}: {exc}')
         if progress:
             progress.update('failed', f'{type(exc).__name__}: {exc}')
         raise

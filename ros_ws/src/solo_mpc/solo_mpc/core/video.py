@@ -118,6 +118,8 @@ class _MP4Encoder:
                     warning=True)
         self._abort()
         self.encoder = 'mpeg4'
+        # Preserve the first encode until a replacement has been verified.
+        self.output = self.work / 'video-cpu.mp4'
         self._event(f'Video encoder selected: {self.encoder} ({self.path})')
         self._start()
         with self.raw_path.open('rb') as stream:
@@ -170,11 +172,14 @@ class _MP4Encoder:
             raise RuntimeError(f'encoder finalization exited {result}: {self._details()}')
         # Decode, rather than trusting MP4's advertised frame count. A truncated
         # bitstream or lost buffered frames must never become the final video.
+        verification_timeout = max(60, 60 + 2 * self.frames / self.fps)
+        self._event(f'Verifying {self.frames} encoded frames '
+                    f'(timeout {verification_timeout:g}s)')
         result = subprocess.run([
-            'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames',
+            'ffprobe', '-v', 'error', '-threads', '2', '-select_streams', 'v:0', '-count_frames',
             '-show_entries', 'stream=nb_read_frames,width,height,r_frame_rate',
             '-of', 'json', str(self.output),
-        ], capture_output=True, timeout=60, check=True, start_new_session=True)
+        ], capture_output=True, timeout=verification_timeout, check=True, start_new_session=True)
         streams = json.loads(result.stdout)['streams']
         if result.stderr or len(streams) != 1:
             raise RuntimeError(f'encoded video could not be decoded: {result.stderr.decode()}')
@@ -194,6 +199,10 @@ class _MP4Encoder:
                 raise RuntimeError(f'Video encoding failed; input retained in {self.work}')
             try:
                 self._finish()
+            except subprocess.TimeoutExpired:
+                # Slow decoding does not establish an encoder failure. Retain
+                # the original output instead of replacing it with a replay.
+                raise
             except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
                 if self.encoder != 'h264_nvenc':
                     raise
@@ -204,6 +213,8 @@ class _MP4Encoder:
                         f'size={self.size}, fps={self.fps:g}, path={self.path}')
             self.raw.close()
             self.raw_path.unlink()
+            for candidate in (self.work / 'video.mp4', self.work / 'video-cpu.mp4'):
+                candidate.unlink(missing_ok=True)
             (self.work / 'input.json').unlink()
             self.work.rmdir()
         except BaseException:
@@ -279,3 +290,49 @@ class FrameVideo:
                 self.timestamps.close()
                 self.timestamps = None
             self.closed = True
+
+
+def finalize_recording(run):
+    """Finish recording before Compose starts its bounded process shutdown."""
+    run = Path(run).resolve(strict=True)
+    inventory = run / 'status/startup.json'
+    process = json.loads(inventory.read_text())['processes'].get('combined-recorder')
+    if process is None:
+        return
+    status_path = run / 'status/recording.json'
+    work = run / 'recorded-mission.mp4.encoding'
+    duration = 0
+    if (work / 'input.json').exists():
+        spec = json.loads((work / 'input.json').read_text())
+        duration = ((work / 'frames.bgr').stat().st_size
+                    / (math.prod(spec['size']) * 3 * spec['fps']))
+    deadline = time.monotonic() + 300 + 4 * duration
+    (run / 'status/finalize-recording.request').touch()
+    print(f'Finalizing recording in {run}; waiting for verified output', flush=True)
+    while True:
+        status = json.loads(status_path.read_text()) if status_path.exists() else {}
+        state = status.get('state')
+        if state == 'finalized':
+            if not (run / 'recorded-mission.mp4').is_file() or work.exists():
+                raise RuntimeError('Recorder reported success without a finalized MP4')
+            print(f"Video saved: {run / 'recorded-mission.mp4'}", flush=True)
+            return
+        if state == 'empty':
+            print('No airborne camera frames were recorded', flush=True)
+            return
+        if state == 'failed':
+            raise RuntimeError(f"Video finalization failed: {status.get('detail')}")
+        process = json.loads(inventory.read_text())['processes']['combined-recorder']
+        if process['state'] == 'exited':
+            raise RuntimeError(f"Recorder exited {process['exit_code']} without finalizing video")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'Video finalization timed out; input retained in {work}')
+        time.sleep(0.5)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Finalize recording before stack shutdown')
+    parser.add_argument('run')
+    finalize_recording(parser.parse_args().run)

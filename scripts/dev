@@ -60,6 +60,20 @@ Usage: ./scripts/dev COMMAND [arguments]
 EOF
 }
 
+stop_simulation() {
+  local recording_status=0 shutdown_status=0
+  printf 'Finalizing recording before stopping simulation.\n' >&2
+  "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint \
+    python3 -m solo_mpc.core.video /workspace/runs/latest || recording_status=$?
+  # Even a failed recorder must not prevent process cleanup.
+  "${dc[@]}" stop sim || shutdown_status=$?
+  if (( recording_status != 0 )); then
+    printf 'Video finalization failed; retained recording inputs and logs are in runs/latest.\n' >&2
+    return "$recording_status"
+  fi
+  return "$shutdown_status"
+}
+
 cleanup_failed_simulation() {
   printf 'Requesting mission cleanup before stopping the failed simulation.\n' >&2
   # Retain the failure evidence: a subsequent stop request updates mission.json.
@@ -78,8 +92,8 @@ if (status / "mission.json").is_file():
   # Always reach graceful stack shutdown, even when LAND cannot complete after
   # a physics/process failure. Compose waits for the recorder's finalization.
   printf 'Stopping simulation; waiting for video encoding and verification.\n' >&2
-  if ! "${dc[@]}" stop sim; then
-    printf 'Container shutdown failed; inspect Docker state and retry ./scripts/dev stop.\n' >&2
+  if ! stop_simulation; then
+    printf 'Cleanup reported a recording or shutdown failure; inspect the saved run.\n' >&2
   fi
 }
 
@@ -188,10 +202,15 @@ case "$command" in
     ;;
   evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
   stop)
+    [[ -n "$("${dc[@]}" ps --status running -q sim)" ]] || exit 0
+    TASK_LANDING_STATUS=0
     if [[ "${1:-}" != --force ]]; then
-      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop
+      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop || TASK_LANDING_STATUS=$?
+      stop_simulation
+    else
+      "${dc[@]}" stop sim
     fi
-    "${dc[@]}" stop sim
+    exit "$TASK_LANDING_STATUS"
     ;;
   lock)
     mkdir -p artifacts

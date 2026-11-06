@@ -226,8 +226,22 @@ dirty page-cache growth during long flights; all raw frames remain on disk until
 verification, with the same recovery procedure. Only the recorder waits for these
 disk checkpoints. Slow disks can still delay recording.
 
-Normal stop allows up to two minutes for recorder finalization. CPU/disk errors,
-forced termination or exhausted finalization time are reported as failures;
+`./scripts/dev stop` requests recorder finalization after landing and waits for
+`status/recording.json` to confirm a verified MP4 **before** stopping the container.
+This keeps long recordings outside the launch/Compose shutdown deadline. The
+wait budget is five minutes plus four times the recorded video duration; decoded
+verification allows one minute plus twice the duration. Verification uses two
+decoder threads. A verification timeout retains the encoded output instead of
+triggering a full CPU replay. A genuine NVENC failure replays to a separate
+`video-cpu.mp4`, preserving the first encode until successful verification.
+Normal stop returns failure if recording cannot be finalized, while still
+stopping the stack. Successful finalization removes the temporary journal.
+
+Direct Compose shutdown and `stop --force` bypass this handshake and retain the
+two-minute recorder shutdown allowance. For installed releases, explicitly run
+`python3 -m solo_mpc.core.video /workspace/runs/latest` through the container
+entrypoint after landing and before stopping (see the deployment guide).
+CPU/disk errors, forced termination or exhausted finalization time are failures;
 an unfinished video is not published as `recorded-mission.mp4`. Retained
 `frames.bgr`, `input.json`, timestamps and encoder logs permit recovery without
 discarding earlier frames. Do not delete them before recovery. For example,
