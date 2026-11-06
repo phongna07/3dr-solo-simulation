@@ -10,7 +10,7 @@ import yaml
 from .core.sensors import CAMERA_WORLD_OFFSET
 from .obstacle_visuals import (
     CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
-    LIDAR_VISIBILITY_MASK, building_mesh, tree_mesh,
+    LIDAR_VISIBILITY_MASK, building_mesh, srgb_material, street_mesh, tree_mesh,
 )
 from .core.visual_style import (
     OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset, vehicle_color,
@@ -302,11 +302,22 @@ def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
     element(render, "render_engine", "ogre2")
     xmin, ymin, xmax, ymax = cfg["WORLD_BOUNDS"]
     padding = 2 * cfg["SENSING_RADIUS"]
-    solid(world, "field_ground", [(xmin + xmax) / 2, (ymin + ymax) / 2, 0],
-          "plane", [max(150, xmax - xmin + padding), max(150, ymax - ymin + padding)],
-          "0.6 0.6 0.6 1")
+    ground_width = max(150, xmax - xmin + padding)
+    ground_depth = max(150, ymax - ymin + padding)
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    ground = solid(world, "field_ground", [cx, cy, 0],
+                   "plane", [ground_width, ground_depth],
+                   ' '.join(map(str, (*srgb_material(64, 67, 65), 1))))
     height = settings["obstacle_height"]
     assets = Path(output).parent / "city_assets"
+    paint = element(ground.find('link'), 'visual', name='street_markings')
+    element(paint, 'pose', f'{-cx} {-cy} 0 0 0 0')
+    element(paint, 'visibility_flags', CITY_VISUAL_FLAGS)
+    element(paint, 'cast_shadows', 'false')
+    mesh = element(element(paint, 'geometry'), 'mesh')
+    element(mesh, 'uri', street_mesh(assets / 'street_markings.dae',
+            (cx - ground_width / 2, cy - ground_depth / 2,
+             cx + ground_width / 2, cy + ground_depth / 2)).resolve().as_uri())
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
         model = solid(
             world,
