@@ -72,19 +72,9 @@ Budget wall time from the selected pacing and observed clock rate, plus
 takeoff/landing. Recording temporarily retains raw video until finalization;
 check free disk space before long missions.
 
-To watch distant followers rendezvous with a leader already over the target,
-select `--preset large200_5uav_separated` in the same commands. Keep camera mode
-(the default) to check that UAV 1 retains the pink target while the other four
-approach from about 9–37 m away. UAV 3 starts southwest of the leader to reduce
-crossing during joining. Its UAV prediction speed/acceleration bounds are
-2.2 m/s and 3 m/s²; target speed is 0.6 m/s on its first two legs, then 1.0 m/s.
-Allow enough simulation time for joining and subsequent tracking, and inspect
-recorded modes and measured separations; loaded renderers extend wall time.
-
 The original large preset's route takes about 464 simulation seconds, with
 several early slalom bends through nearby obstacles: at least 39 wall minutes at
-0.2×. Separated starts and slower first legs need their own duration budget;
-target-loss pauses can extend either route. Consult the actual clock rate.
+0.2×. Target-loss pauses can extend the route. Consult the actual clock rate.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to
@@ -182,8 +172,8 @@ filter requires every UAV above the lower of `flight_altitude - 0.5` and
 Inspect solver failures and measured motion alongside the summary. Sampled
 clearance and successful commands alone do not establish continuous safety.
 
-All four presets completed recorded full-fleet native missions on November 5,
-2026: 30 tracking simulation seconds for the three 3 m presets and 90 seconds
+The three current presets completed recorded full-fleet native missions on
+November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
 for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;
 no ground-truth target override was used. Telemetry confirmed settled landing,
 released ownership and actual rotor shutdown for every vehicle. Finalized videos

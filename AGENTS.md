@@ -41,7 +41,7 @@ than adding a separate document for each feature or experiment.
 This repository is simulation-only. Do not add physical-drone profiles, serial
 device integration, or hardware migration scaffolding. All flight and recording
 runs use native Gazebo multicopters only; do not add a legacy backend or a
-one-UAV migration phase. Preserve all four full-fleet CLI presets.
+one-UAV migration phase. Preserve all three full-fleet CLI presets.
 
 ## Submodule workflow
 
@@ -123,8 +123,8 @@ Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
   normal `stop` finalizes it, mission completion alone does not.
 
 For backend-wide changes, rebuild and verify `small50_3uav`, `large200_5uav`,
-`large200_5uav_separated`, and `scen1`, each with the full fleet, camera input
-and recording. The November 5, 2026 native migration evidence and limitations
+and `scen1`, each with the full fleet, camera input and recording.
+The November 5, 2026 native migration evidence and limitations
 are recorded in `docs/DEVELOPMENT.md`; earlier backend flights are not validation.
 Preserve the 1920 × 1080 / 20 FPS composition, all map/state/FOV panels, source
 timestamp sidecars and recording layout. Do not introduce new CPU/performance

@@ -33,7 +33,7 @@ flight; process failures and a stopped container still fail startup.
 
 Controller settings select `algorithm: mpc` through the small ROS-free algorithm
 factory. This uses the existing MPC implementation and unchanged upstream
-solver/dynamics; see [Development](DEVELOPMENT.md#architecture). All four presets
+solver/dynamics; see [Development](DEVELOPMENT.md#architecture). All three presets
 retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
 backend selection or one-UAV migration stage.
 
@@ -44,7 +44,7 @@ backend selection or one-UAV migration stage.
 ground spawns and the `mpc_scen1` world name from the scenario. The upstream
 submodule remains unchanged. The local frozen 33 rectangles (including widths
 and heights), 32 circles (including radii), 27 route waypoints and all five XY
-starts are divided by five. No geometry is borrowed from the large200 presets.
+starts are divided by five. No geometry is borrowed from the large200 preset.
 
 Starts are `[127.762,70.915,6]`, `[141.744,36.498,6]`,
 `[16.7138,20.3652,6]`, `[23.7046,140.8244,6]`, and
@@ -58,8 +58,8 @@ guide widths are 0.06 m. Recording remains 1920 × 1080 at 20 FPS with every pan
 Normal/sprint target speeds scale from 5/13 to 1/2.6 m/s. The three-second
 startup ramp, 0.1 s timestep, 20-step nominal and 25-step stopping horizons,
 0.2 s acceleration lag, dimensionless ratios and cost weights are retained.
-Prediction speed/acceleration bounds use 2.2 m/s and 3 m/s², as in the
-separated large200 preset, after a 2 m/s / 1 m/s² attempt repeatedly hit the
+Prediction speed/acceleration bounds use 2.2 m/s and 3 m/s²
+after a 2 m/s / 1 m/s² attempt repeatedly hit the
 existing solver CPU cap during follower approaches. Acceleration cost scale
 remains 1 m/s² for native response; target process-noise acceleration and
 trusted-velocity thresholds scale to 0.4 m/s² and 0.3 m/s.
@@ -135,54 +135,6 @@ experiments in `artifacts/` when they should not be committed. Different seeds
 need their own simulator verification. Explicit
 `--fleet`, `--scenario`, and `--settings` arguments after `--preset` override that
 preset; the original no-argument defaults remain unchanged.
-
-### Separated five-UAV rendezvous
-
-`./scripts/dev mpc --preset large200_5uav_separated --record-video` selects
-[large200_5uav_separated.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav_separated.yaml)
-with the same five-UAV fleet and large-map controller. It preserves the original
-200 × 200 m obstacle field, later route waypoints and 3 m flight altitude.
-UAV 1 and the first target waypoint shift 2 m northeast on each axis to `[18,18]`.
-The scenario sets `params.VMAX: 2.2` m/s and `params.UMAX: 3.0` m/s², increased
-from 1.2 m/s and 2 m/s². The target moves at 0.6 m/s on its first two legs to
-allow rendezvous, then 1.0 m/s (previously 0.4/0.6 m/s). The shared large-map
-controller leaves both bounds to the scenario/defaults; the original
-`large200_5uav` scenario and generator retain 2.2 m/s and the default 2 m/s².
-Controller overrides still take precedence. The target follows a time-sampled
-spline with per-leg speeds; it has no configurable acceleration bound.
-These prediction bounds do not guarantee strict measured-speed limits or shorter
-solve times. The four follower starts are:
-
-| UAV | Start XYZ (m) | Initial distance from UAV 1 |
-|---|---|---:|
-| UAV 1 | `[18,18,3]` | 0 m |
-| UAV 2 | `[38,2,3]` | 25.61 m |
-| UAV 3 | `[10,14,3]` | 8.94 m |
-| UAV 4 | `[8,50,3]` | 33.53 m |
-| UAV 5 | `[48,40,3]` | 37.20 m |
-
-UAV 3 starts southwest of UAV 1 to approach the west formation slot
-from the same side, reducing crossing with the northern arrivals. Its initial distance is deliberately
-shorter than the other followers; slot assignment remains dynamic.
-UAV 1 starts directly above the stationary pink target at `[18,18]`, centered
-in its stabilized downward camera. Takeoff completes before target motion starts.
-The default camera mode exercises actual marker perception; do not select
-`--ground-truth-target` when checking initial visual acquisition and retention.
-Followers start outside camera/formation range and use existing SEARCH pursuit,
-local sensor maps and MPC to approach the shared target estimate. Existing
-leader-distance hysteresis then switches them to TRACK and assigns formation
-slots. Leadership remains selected by observed visibility; it is not forced to
-UAV 1. Run long enough for the distant followers to rendezvous before assessing
-team tracking. The scenario is a separate checked-in snapshot: regenerating
-`large200_5uav.yaml` does not update its obstacle field or route automatically.
-
-Native run `20261105T075748Z-16619` completed 30 tracking simulation seconds with
-all five UAVs, camera input and recording. All followers entered TRACK by the
-end; all 300 fleet cycles were ready, with no failed nominal solves. Minimum
-sampled obstacle body clearance was 0.456 m and inter-UAV distance was 1.227 m;
-all five subsequently landed and stopped their rotors. Prediction bounds and
-this bounded mission do not establish hard physical limits, full-route success,
-repeatability or continuous collision guarantees.
 
 ## Fleet and geometry
 

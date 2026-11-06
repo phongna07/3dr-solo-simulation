@@ -309,6 +309,11 @@ diagnostics; hash mismatches remain visible in provenance.
 
 ### Native migration verification
 
+The tables below preserve historical evidence, including the retired
+`large200_5uav_separated` scenario. Its YAML and CLI preset have been removed;
+existing run directories remain available for inspection. Current presets are
+`small50_3uav`, `large200_5uav`, and `scen1`.
+
 On November 5, 2026, the rebuilt native image completed these full-fleet
 missions using default camera target detection, every UAV's LiDAR, and
 `--record-video`. No ground-truth target override or one-UAV phase was used.
@@ -577,9 +582,9 @@ seconds; the originally requested 90-second window was not completed. All five
 landed, released ownership and disarmed, and normal stop finalized the video.
 This shortened attempt is tuning evidence, not a successful 90-second check.
 
-Retry `20261106T090758Z-17758` used the separated large200 preset's 2.2 m/s
-and 3 m/s² bounds, with target process-noise and velocity-trust thresholds scaled
-to 0.4 m/s² and 0.3 m/s. Commands were:
+Retry `20261106T090758Z-17758` used 2.2 m/s and 3 m/s² prediction bounds,
+with target process-noise and velocity-trust thresholds scaled to 0.4 m/s²
+and 0.3 m/s. Commands were:
 
 ```bash
 ./scripts/dev mpc --preset scen1 --record-video

@@ -12,12 +12,8 @@ not moved kinematically.
 The `large200_5uav` preset uses five UAVs in a 200 × 200 m field with
 seeded random obstacles and a random winding target route. Select it with
 `./scripts/dev mpc --preset large200_5uav --record-video`.
-`large200_5uav_separated` keeps that field and shifts the first target waypoint
-northeast. Its four followers start about 9–37 m from UAV 1, which starts directly
-above the target. UAV 3 starts southwest of the leader to reduce crossing during
-formation joining. This preset uses a 2.2 m/s UAV prediction bound, a 3 m/s²
-acceleration/braking bound, and a target speed up to 1.0 m/s. These presets fly at
-3 m; `--preset small50_3uav` explicitly selects the original scenario.
+This preset flies at 3 m; `--preset small50_3uav` explicitly selects the
+original scenario.
 
 `--preset scen1` scales the upstream five-UAV 1000 × 1000 m layout to
 200 × 200 m. All starts, 65 obstacles and 27 route waypoints retain their
@@ -105,8 +101,8 @@ multicopter physics, with no legacy backend or one-UAV migration phase. The
 project has no physical-drone profile, serial-device
 configuration, or hardware migration workspace.
 
-All four full-fleet presets completed bounded native missions with camera input,
-LiDAR mapping and recording on November 5, 2026. Every vehicle landed and stopped
+The three current full-fleet presets completed bounded native missions with
+camera input, LiDAR mapping and recording on November 5, 2026. Every vehicle landed and stopped
 its rotors. An additional all-flight-process pause confirmed independent Gazebo
 watchdog landing; that deliberate fault remains a failed supervised mission.
 See [Development](docs/DEVELOPMENT.md#native-migration-verification) for exact
