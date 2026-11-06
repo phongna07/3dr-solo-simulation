@@ -22,7 +22,8 @@ committed path, warm start, and stopping plan.
 | `core/algorithm.py`, `core/mpc_algorithm.py` | ROS-free `Algorithm`/`VehicleState` boundary and existing MPC integration |
 | `core/controller.py`, `coordination.py`, `tracking.py` | Measured-state planning, formation, estimation, retained stopping plans |
 | `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
-| `core/parallel_controller.py`, `cycles.py` | Persistent workers, frozen fleet predictions, deadlines, asynchronous cycles |
+| `core/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
+| `core/parallel_controller.py` | MPC worker payloads, map barrier, frozen predictions, guidance and solve diagnostics |
 | `controller_node.py`, `frame_node.py`, `perception_node.py` | ROS input/output, odometry twist rotation, marker detection |
 | `setpoint_node.py` | Source-stamped trajectory sampling, position/altitude feedback, expiry and proximity guard |
 | `flight_node.py` | Per-UAV ownership, flight service/state, world-to-body commands, takeoff and landing |
@@ -44,12 +45,48 @@ vendored original Iris model. No direct pose/velocity replacement or legacy
 backend is used. ROS commands cross `SoloFlightSafety` before reaching the native
 velocity controller; bridges never expose a bypass to its internal control input.
 
-The small ROS-free `Algorithm` protocol exposes `VehicleState`, `track`,
-`step(states, scans, stamp, seers, *, tracker=None)`, `occupancy_maps()`,
-`diagnostics()`, and `close()`. `VehicleState` carries measured position,
-velocity, acceleration, quaternion and source stamp. The factory setting is
-`algorithm: mpc`; `core/mpc_algorithm.py` wraps the existing persistent MPC workers
-without changing the colleague's solver/dynamics or importing ROS into the core.
+The ROS-free `Algorithm` protocol takes a `CycleInput` and returns a
+`CycleResult`. The only factory selection remains `algorithm: mpc`.
+`MPCAlgorithm` composes the MPC coordinator rather than inheriting its planner
+and solver internals. It translates existing numerical outputs at this boundary;
+MPC mathematics, guidance, limits and retained stopping behavior are unchanged.
+
+`CycleInput` carries measured `VehicleState` values, projected `ScanRays`, a
+common source epoch, seers and a target-estimate snapshot. Pose and velocity
+source stamps remain distinct. `CycleRunner` deep-copies the entire input before
+submission; frozen contract containers express snapshot ownership, but do not
+make NumPy arrays or dictionaries deeply immutable. Numerical code must treat
+these owned inputs as read-only. No ROS messages enter the core.
+
+Each `VehicleResult` separates an `ExecutableTrajectory` (world XY positions,
+velocities and commanded accelerations) from a `NeighborPrediction` (planning
+state rows). Both carry source epoch and timestep. A prediction alone does not
+authorize execution. `nominal_success`, `fallback_used` and
+`publication_eligible` have separate meanings: a retained stop can be eligible
+with a failed nominal solve, while an otherwise successful solve can become
+ineligible after expiry or a flight-state change. Collection asks the MPC adapter
+to revalidate retained stops against current measured state using the original
+position/velocity/acceleration tolerances. Rejection changes publication
+eligibility without erasing the nominal outcome or fallback selection.
+Here `fallback_used` denotes selection of the retained stopping trajectory;
+it does not describe an internal numerical solver retry or confirm execution.
+
+`CycleResult` includes a copied coordination metadata snapshot alongside vehicle
+results. Solver/stage details remain algorithm diagnostics, outside trajectory
+fields. ROS telemetry retains existing names including `nominal_ok`, and adds
+`fallback_used` and `publication_eligible`. ROS 2 Jazzy still owns scheduling,
+guard notifications, input validation, trajectory/path/map/status publication,
+setpoint sampling and flight/mission supervision. Headers retain the exact
+captured ROS input epoch, including its nanoseconds, rather than completion time.
+
+`WorkerPool` owns spawn, pipes, startup/phase barriers, cycle matching, deadline
+rejection, disconnected-worker disabling and bounded shutdown. MPC supplies the
+worker entry point, phase payloads, ordered-solve policy and timeout traceback
+observer. The generic runtime imports no MPC planner, solver or capture module.
+The MPC coordinator still freezes fleet predictions before mapping/guidance,
+requires all maps, and commits predictions only after the solve barrier. Each
+worker retains its own numerical state. Development source loading and installed
+package discovery use the same modules; bundled upstream sources are unchanged.
 
 `TeamController.step(states, scans, stamp, seers)` has no ROS imports and never
 advances a simulated replacement for the measured vehicle. Workers freeze a
@@ -687,3 +724,110 @@ power-loss experiment. GPU initialization denial, full disks, prolonged encoder
 stalls, complete recorder death and the larger fleet presets were not exercised
 in this recording change. No automated tests or harnesses were added. Python
 compilation, import/caller checks and `git diff --check` passed.
+
+## Runtime contracts and worker extraction verification (November 6, 2026)
+
+Before editing, the clean tree at
+`9b192a05200839e656af1f14ae3f0638d8645bf8` was preserved under
+`artifacts/runtime-contract/before/`: repository bundle, commit/status/diff,
+submodule pin, image list, resolved inputs and provenance snapshots. The existing
+`runs/20261106T114230Z-29772/` was retained with a file-hash manifest. Its 7,481
+completed airborne cycles already included 43 CPU-cap failures and two infeasible
+nominal solves. Earlier failures and recording limitations above remain evidence.
+The original image remains tagged `solo-simulation:runtime-contract-baseline`.
+
+Three fresh baselines completed before the live source tree changed. All six
+missions below used full fleets, default camera target input, per-UAV LiDAR and
+recording, with identical resolved fleet/scenario/controller/bridge/MPC inputs
+within each pair. Every airborne scan reported 360 usable rays per UAV.
+
+| Preset | Tracking limit | Baseline directory under `runs/` | Refactored directory under `runs/` | Ready / completed airborne cycles, before → after |
+|---|---:|---|---|---|
+| `small50_3uav` | 30 sim s | `20261106T143346Z-30131` | `20261106T145733Z-4706` | 300/300 → 300/300 |
+| `large200_5uav` | 30 sim s | `20261106T143828Z-26772` | `20261106T150207Z-20156` | 300/300 → 299/299 |
+| `scen1` | 90 sim s | `20261106T144337Z-21980` | `20261106T151208Z-897` | 832/876 → 821/870 |
+
+Commands for each preset were:
+
+```bash
+git submodule update --init --recursive
+./scripts/dev mpc --preset PRESET --record-video
+./scripts/dev mission run --seconds SECONDS
+./scripts/dev evaluate
+./scripts/dev stop
+```
+
+After the baselines, `./scripts/dev build sim` completed normally. The final
+scen1 mission used `mission start --seconds 90`, followed by supervisor status
+inspection through terminal `completed`, evaluation and normal stop. Its original
+completed status is also saved in `reports/runtime-contract-completed-mission.json`.
+The host command sequence exited 143 after the refactored large mission had
+completed; evaluation and normal stop were explicitly completed in a subsequent
+command. Its longer video includes the additional grounded wait. No simulation
+was force-stopped. Command logs live under `artifacts/runtime-contract/`.
+
+Neither small nor large had failed nominal UAV solves. Scen1 had 45 before
+(40 CPU-cap, five infeasible) and 50 after (49 CPU-cap, one infeasible).
+Afterward UAV 2 had 21 CPU-cap failures and one infeasible solve, UAV 4 had 27
+CPU-cap failures, UAV 5 had one, and UAVs 1/3 had none. Later solves recovered.
+One retained stopping trajectory was selected and rejected by the moved
+measured-state revalidation: `fallback_used: true`, `publication_eligible: false`,
+`stop_plan_measured_state_changed`. The baseline also had one such rejection.
+No accepted stopping-trajectory publication was observed in these windows.
+There were no worker timeouts, obsolete-cycle results or flight faults in the
+completed airborne cycles; the partial-solver-failure records remain visible.
+
+| Preset | Fleet wall p50/p95 ms, before → after | Simulation delivery p95 ms, before → after | Delivery over existing control period, before → after |
+|---|---|---|---|
+| `small50_3uav` | 63.1/80.2 → 73.0/89.8 | 15.1 → 17.0 | 0% → 0% |
+| `large200_5uav` | 94.3/122.1 → 272.4/387.7 | 23.1 → 53.0 | 0% → 0% |
+| `scen1` | 152.2/417.4 → 378.7/813.0 | 81.8 → 128.0 | 4.68% → 7.70% |
+
+The post-change large/scen1 runs overlapped an unrelated host numerical process
+using approximately 22 CPU cores. Observed simulation pacing dropped, and solver
+wall time exceeded process CPU time. The process was left untouched; observations
+are preserved in `host-load-observation.txt` and `host-load-scen1.txt`. Baselines
+used image `sha256:261530a69f7532f73db13313b694429a8e35bba0430f0a28056d635b951a3c19`;
+post-change flights used rebuilt image
+`sha256:f72f491c85d5d0279c26507df5f2749211a206e3ead54ec3d6b21966638ba97a`.
+These are observed timings under different host load and rebuilt runtime inputs,
+not an isolated benchmark or proof of behavioral/numerical equivalence. Existing
+CPU caps, deadlines, command expiry, pacing settings and performance budgets were
+not relaxed.
+
+Minimum sampled obstacle-body clearance before → after was 0.731 → 0.715 m
+(small), 0.725 → 0.656 m (large), and 0.278 → 0.192 m (scen1). Minimum inter-UAV
+distance was 1.812 → 1.818 m, 1.350 → 1.340 m, and 1.606 → 1.550 m respectively.
+Every vehicle in every run ended IDLE, landed, unowned, unarmed and disabled;
+final actual rotor speeds were below 2e-24 rad/s. Flight journals contain no
+safety-watchdog activation or fault. These bounded windows do not establish
+continuous clearance, full-route/sprint completion, repeatability or a new
+process-death safety experiment.
+
+All recordings finalized at 1920 × 1080 / 20 FPS. Decoded baseline/post frame
+counts were 920/922 (small), 934/1093 (large), and 2369/2409 (scen1). Full FFmpeg
+decoding returned no errors. Visually inspected takeoff/tracking/landing samples
+retain overhead, occupancy, state instruments, coverage guides and every UAV FOV.
+All sidecars retained 50 ms slots and original source-stamp dictionaries, without
+held/dropped frames. The refactored small recording reported a CPU encoder
+fallback on the final two-frame segment's format check (`r_frame_rate: 40/1`,
+`avg_frame_rate: 20/1`); all 922 frames were retained. Recording code/layout was
+unchanged. Other five recordings reported no encoder fallback.
+
+Controller provenance and sampled optimizer captures for every UAV matched
+upstream pin `db96e52b89c24a559271b1a24e36c6d3f9c53873`, with unchanged numerical
+controller, guidance, solver adapter, target estimation and upstream hashes.
+A sampled ROS trajectory had source stamp 27.320 s, matching its cycle, while
+reporting occurred at 27.333 s; world XY references retained 0.1 s offsets.
+No-mount/no-network installed-image imports loaded the new modules from
+`/opt/solo_ws/install` and unchanged bundled upstream sources with
+`matches_pinned_sources: true` (`installed-imports.json`). This is installed
+packaging/provenance evidence; the six flights used development source mounts.
+
+Per-run `reports/runtime-contract-summary.json`, `runtime-contract-video.json`,
+`runtime-contract-decode.log` and `runtime-contract-contact.png` retain the
+inspection results. `artifacts/runtime-contract/comparison.json` includes resolved
+input hashes, per-UAV timing/outcomes, flight/motor journals, sampled optimizer
+provenance and timestamp-sidecar audits. Compilation, import/caller checks and
+`git diff --check` passed. No automated tests, harnesses, alternative algorithms,
+configuration changes or upstream edits were added. The simulation is stopped.
