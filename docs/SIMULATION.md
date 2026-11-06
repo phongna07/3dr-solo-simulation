@@ -189,67 +189,65 @@ Normal `stop` and automatic shutdown after a failed `mpc` or `mission run`
 finalize `recorded-mission.mp4`; successful mission completion and normal GUI
 closure do not. Recording starts at takeoff and continues through landing.
 
-MP4 encoding automatically tries FFmpeg `h264_nvenc` by encoding a frame at the
-actual recording resolution. This checks the encoder, device and driver at
-runtime; an NVIDIA GPU or an encoder listing alone is insufficient. If the
-probe fails, recording uses CPU `mpeg4`. No encoder setting is required on
-NVIDIA, Intel/AMD or software-rendered machines. NVIDIA containers need the
-`video` driver capability, included in `compose.nvidia.yaml`. GPU/display setup
-below still governs Gazebo rendering independently of video encoding. Rebuild
-with `./scripts/dev build sim` for the FFmpeg dependency; release images must
-also be rebuilt.
+MP4 recording streams composed BGR frames directly to FFmpeg, trying
+`h264_nvenc` first. Actual initialization, pipe, flush or segment verification
+failures switch permanently to CPU `libx264` for that recording. CPU encoding
+and decoding use at most two codec threads, with one filter thread; existing
+flight/optimizer limits are unchanged. NVIDIA containers need the `video` driver
+capability from `compose.nvidia.yaml`. Release images require rebuilding.
 
-Both encoders receive the same composed BGR frames at the same FPS. Encoder
-selection changes compression only. The recorder logs the selected encoder,
-fallback reasons and verified frame count to the process log and
-`telemetry/recorded-mission.timestamps.encoder.log`.
-An encoder pipe accepting a frame does not guarantee that it reached the MP4:
-the recorder keeps an exact, uncompressed frame journal in
-`recorded-mission.mp4.encoding/` until finalization. An NVENC failure during
-writing, flushing or output verification replays the entire journal on CPU,
-including any partially submitted frame. Finalization decodes/counts frames
-and checks resolution/FPS before publishing the MP4 and removing the journal.
-The journal needs about 7.5 GB per simulation minute at 1080p/20 FPS, in addition
-to the compressed video. Keep enough free space for the whole recording.
-The recorder checkpoints and evicts written journal pages every 32 MiB to bound
-dirty page-cache growth during long flights; all raw frames remain on disk until
-verification, with the same recovery procedure. Only the recorder waits for these
-disk checkpoints. Slow disks can still delay recording.
+No raw-frame files are written. Independently finalized one-second compressed
+H.264 segments live under `recorded-mission.mp4.encoding/`. Fragmented MP4 also
+allows recovery of completed keyframe fragments from an interrupted segment.
+Only the current second of BGR input is retained in RAM (at most 20 frames,
+about 124 MB at Full HD), allowing a failed GPU segment to be retried on CPU.
+Segments use a common timebase and no B frames. Composition and source-time
+sampling remain unchanged. Encoder stalls are bounded to ten seconds per frame
+and flush to fifteen seconds; recording never controls flight commands.
 
-`./scripts/dev stop` requests recorder finalization after landing and waits for
-`status/recording.json` to confirm a verified MP4 **before** stopping the container.
-This keeps long recordings outside the launch/Compose shutdown deadline. The
-wait budget is five minutes plus four times the recorded video duration; decoded
-verification allows one minute plus twice the duration. Verification uses two
-decoder threads. A verification timeout retains the encoded output instead of
-triggering a full CPU replay. A genuine NVENC failure replays to a separate
-`video-cpu.mp4`, preserving the first encode until successful verification.
-Normal stop returns failure if recording cannot be finalized, while still
-stopping the stack. Successful finalization removes the temporary journal.
+Normal `./scripts/dev stop` lands first, then waits for recorder finalization
+before stopping the container. Finalization remuxes decodable segment prefixes,
+checks dimensions/FPS and decoded counts, and publishes `recorded-mission.mp4`
+whenever usable footage exists. Healthy footage is joined without re-encoding.
+Missing frames use held images at their original 20 FPS simulation-time slots;
+only this recovery path re-encodes on CPU with the same thread limits. Leading
+holes hold the first retained image. A recording with any such holes is
+**partial**, even though the MP4 is playable. No usable frames, disk failures,
+or failed output verification remain explicit failures. Cleanup still stops
+the stack. The finalization wait budget is five minutes plus four times input
+video duration. Individual segment decode checks allow sixty seconds.
 
-Direct Compose shutdown and `stop --force` bypass this handshake and retain the
-two-minute recorder shutdown allowance. For installed releases, explicitly run
-`python3 -m solo_mpc.core.video /workspace/runs/latest` through the container
-entrypoint after landing and before stopping (see the deployment guide).
-CPU/disk errors, forced termination or exhausted finalization time are failures;
-an unfinished video is not published as `recorded-mission.mp4`. Retained
-`frames.bgr`, `input.json`, timestamps and encoder logs permit recovery without
-discarding earlier frames. Do not delete them before recovery. For example,
-for a journal whose `input.json` specifies 1920×1080 at 20 FPS, encode to a new
-path with:
+Inspect `status/recording.json` and these telemetry files:
+
+- `recorded-mission.timestamps.encoder.log`: encoder errors, fallbacks and summary.
+- `recorded-mission.timestamps.inputs.jsonl`: original attempted frames and source stamps.
+- `recorded-mission.timestamps.jsonl`: published output frame/source mapping;
+  `held`, `source_frame` and `playback_ns` describe recovery precisely.
+- `recorded-mission.timestamps.recovery.json`: retained/dropped/held counts,
+  gap frame ranges (end exclusive), fallback events and partial/interrupted state.
+
+Original source stamps are preserved on retained frames. Held frames carry the
+retained image's source stamps and the missing slot's simulation stamp, so lost
+frames and encoder restarts never compress simulation time. Compressed segments
+and metadata remain available for audit; they contain no raw backups.
+
+After a killed recorder or forced shutdown, first stop the stack, then recover
+retained compressed footage using the simulation image (or a host with Python,
+OpenCV and FFmpeg):
 
 ```bash
-ffmpeg -f rawvideo -pixel_format bgr24 -video_size 1920x1080 -framerate 20 \
-  -i runs/RUN_ID/recorded-mission.mp4.encoding/frames.bgr \
-  -c:v mpeg4 -q:v 2 -pix_fmt yuv420p -movflags +faststart \
-  runs/RUN_ID/recovered-mission.mp4
+PYTHONPATH=ros_ws/src/solo_mpc python3 -m solo_mpc.core.video runs/RUN_ID --recover
 ```
 
-Use the journal's actual dimensions/FPS and compare the decoded frame count
-(`ffprobe -v error -count_frames -show_streams VIDEO`) with the timestamp journal
-before accepting a recovered file. Run recovery in the simulation image if the
-host lacks FFmpeg. A disk-write failure can leave a partial trailing raw frame;
-the error and journals must be inspected rather than claiming a complete video.
+Do not run recovery against a live recorder. Interrupted recovery is always
+reported as partial: footage after the last journaled input cannot be inferred.
+Keep the compressed segments, metadata and timestamp journals until inspected.
+The command can be repeated and never needs uncompressed frame files. A machine
+power loss can still lose unsynced data; recovery cannot restore absent inputs.
+Direct Compose shutdown bypasses the normal handshake and retains its existing
+two-minute recorder shutdown allowance. Installed releases can request normal
+finalization with `python3 -m solo_mpc.core.video /workspace/runs/RUN_ID`
+through the container entrypoint after landing and before stopping.
 
 The 1920 × 1080 / 20 FPS output combines a target-following overhead view,
 sensor-observed occupancy map, state instruments, and a FOV panel per UAV.

@@ -446,9 +446,10 @@ every output ineligible for publication. Mission failures freeze their original
 controller/setpoint/flight context in `status/mission-trigger.json` before
 cleanup updates arrive.
 
-Long 1080p recordings write about 124 MB per simulation second to their recovery
-journal. The recorder now synchronizes and evicts journal pages every 32 MiB,
-bounding its dirty-page accumulation without removing recovery frames.
+At that revision, long 1080p recordings wrote about 124 MB per simulation
+second to a raw recovery journal, with page eviction every 32 MiB. The current
+recorder replaces that journal with compressed segments and a bounded one-second
+RAM retry window; see the recording section in the simulation guide.
 
 Two follow-up runs, `20261105T155955Z-4421` and
 `20261105T161044Z-23237`, reproduced all-worker failures even at 0.2 pacing.
@@ -623,3 +624,66 @@ and coverage guides (`reports/video-contact.png`, `tracking.png`, `takeoff.png`,
 `landing.png`, `video-probe.json`). Source timestamp sidecars remain intact.
 Provenance reports `matches_pinned_sources: true`. The container is stopped.
 `git diff --check` passed; no automated tests or harnesses were added.
+
+## Streaming recording verification (November 6, 2026)
+
+Run `20261106T110701Z-13502` used the default full three-UAV fleet, camera
+input and native Gazebo physics:
+
+```bash
+./scripts/dev mpc --record-video
+./scripts/dev mission run --seconds 30
+./scripts/dev evaluate
+./scripts/dev stop
+```
+
+During flight, the recorder's NVENC subprocess was deliberately killed with
+`docker compose exec -T sim pkill -KILL -f '^ffmpeg .*h264_nvenc'`.
+It switched to two-thread CPU encoding and retried the current RAM segment.
+The CPU encoder was subsequently killed with the equivalent `libx264` pattern.
+Recording continued, and normal stop published a **partial** 47.4-second,
+948-frame, 1920 × 1080 / 20 FPS MP4: 941 retained frames and seven held slots
+at frames [140, 147). The GPU fallback occurred at input frame 58. No raw-frame
+files were created. The final video was 44,426,004 bytes. Compressed attempts
+and recovered segments remain under the run's `.encoding` directory.
+
+Full FFmpeg decoding completed without errors. Frame PTS matched `index / 20`
+exactly, and every sidecar simulation stamp advanced by 50,000,000 ns, including
+the gap. Every published source-stamp dictionary matched its selected original
+input. `reports/video-contact.png` was visually inspected at takeoff, gap
+boundaries, tracking and landing; overhead, occupancy, state instruments, three
+FOV panels and coverage guides remain present. `reports/video-probe.json`
+records the decoded count, dimensions, rate and PTS check.
+
+All three UAVs ended IDLE, landed, unowned and disarmed, with actual motor
+speeds below 6e-25 rad/s and no safety watchdog activation. Provenance matched
+the pinned upstream sources. All 897 TRACK nominal solves succeeded. Evaluation
+reported fleet wall p50/p95 133.8/244.1 ms and 62.5% over 100 ms wall time;
+simulation delivery delay p95 was 39 ms, with none over the existing 0.1-second
+simulation period. No limits were relaxed.
+
+The initial run exposed FFprobe advertising 40 FPS for a one-frame fragmented
+segment whose average rate and duration were actually 20 FPS / 0.05 seconds.
+Verification now uses average rate for that special case, preserving that
+valid frame without a spurious encoder-failure warning.
+
+Follow-up `20261106T111257Z-271` restarted the stack with this correction and
+used the same commands with `mission run --seconds 5`. Its healthy NVENC path
+finalized all 447 frames (22.35 seconds) with no fallback, missing frames or
+held slots. Decoded PTS again matched the 20 FPS grid exactly, with no decoder
+errors. Takeoff, tracking and landing samples in `reports/video-contact.png`
+were visually inspected. All three UAVs landed/disarmed, motors fell below
+4e-25 rad/s, and the stack stopped normally. Evaluation retained wall timing
+p50/p95 194.7/307.5 ms (100% over 100 ms wall time); simulation delivery p95 was
+59 ms, with none over the existing simulation control period.
+
+A frozen copy of that run's in-flight compressed files was recovered separately
+under `reports/interrupted-snapshot/` using
+`PYTHONPATH=ros_ws/src/solo_mpc python3 -m solo_mpc.core.video SNAPSHOT --recover`.
+The command retained 125 of 128 journaled frames, held the three missing tail
+slots and reported `partial`, `interrupted=true`; the live recorder continued
+independently. This is snapshot recovery evidence, not a real recorder or host
+power-loss experiment. GPU initialization denial, full disks, prolonged encoder
+stalls, complete recorder death and the larger fleet presets were not exercised
+in this recording change. No automated tests or harnesses were added. Python
+compilation, import/caller checks and `git diff --check` passed.

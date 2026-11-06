@@ -234,8 +234,10 @@ class CameraRecorder(Node):
             for name, video in self.videos.items():
                 video.close()
                 self.get_logger().info(f"{name}: saved {video.frames} camera frames")
-            self.recording_status('finalized' if any(v.frames for v in self.videos.values())
-                                  else 'empty')
+            summaries = [v.summary for v in self.videos.values() if v.summary]
+            state = ('partial' if any(s['state'] == 'partial' for s in summaries) else
+                     'finalized' if any(v.frames for v in self.videos.values()) else 'empty')
+            self.recording_status(state, json.dumps(summaries))
         except BaseException as exc:
             self.recording_status('failed', f'{type(exc).__name__}: {exc}')
             raise
