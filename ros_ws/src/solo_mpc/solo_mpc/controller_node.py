@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from array import array
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +19,8 @@ from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
-from .core.algorithm import VehicleState, create_algorithm
-from .core.cycles import CycleRunner, result_is_current, stopping_result_matches
+from .core.algorithm import CycleInput, VehicleState, create_algorithm
+from .core.cycles import CycleRunner, result_is_current
 from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
 from .core.tracking import ExactTargetTracker
@@ -215,29 +216,32 @@ class Controller(Node):
         start, now, stamp = self.cycle_context
         self.cycle_context = None
         try:
-            results = self.cycles.take()
+            cycle = self.cycles.take()
+            results = cycle.vehicles
+            coordination = cycle.coordination
             reason = ('partial_solver_failure' if any(
-                not out.get('nominal_ok', out['ok']) for out in results.values()) else 'ready')
+                not out.nominal_success for out in results.values()) else 'ready')
         except Exception as exc:
             results, reason = {}, f'controller_error: {exc}'
+            coordination = self.team.diagnostics()
             self.get_logger().error(reason)
         current = self.get_clock().now().nanoseconds * 1e-9
         if not result_is_current(stamp, current, self.cycles.started, self.args.settings_data):
-            results = {n: dict(out, ok=False) for n, out in results.items()}
+            results = {n: replace(out, publication_eligible=False) for n, out in results.items()}
             reason = 'obsolete_cycle'
         elif not all(n in self.flight and self.flight[n].connected and self.flight[n].armed
                      and self.flight[n].mode in ('TAKEOFF', 'TRACK') for n in self.args.names):
-            results = {n: dict(out, ok=False) for n, out in results.items()}
+            results = {n: replace(out, publication_eligible=False) for n, out in results.items()}
             reason = 'flight_state_changed'
         for n, out in results.items():
-            if out['ok'] and not out.get('nominal_ok', True):
+            if out.publication_eligible and out.fallback_used:
                 p, q, at = self.poses[n]
                 v, vt = self.velocities[n]
-                measured = VehicleState(p, v, self.accelerations.get(n, np.zeros(3)), q, at)
-                if not stopping_result_matches(measured, out, stamp, self.args.cfg, velocity_stamp=vt):
-                    results[n] = dict(out, ok=False, reason='stop_plan_measured_state_changed')
+                measured = VehicleState(p, v, self.accelerations.get(n, np.zeros(3)), q, at, vt)
+                results[n] = self.team.revalidate(out, measured)
+                if not results[n].publication_eligible:
                     reason = 'partial_solver_failure'
-        self._publish_cycle(start, now, stamp, reason, results, self.cycles.timing())
+        self._publish_cycle(start, now, stamp, reason, results, self.cycles.timing(), coordination)
         self._publish_occupancy(now)
         if reason == 'ready':
             self.tick()
@@ -293,7 +297,7 @@ class Controller(Node):
                     reason = "stale_scan"
                     break
                 states[n] = VehicleState(
-                    p, v, self.accelerations.get(n, np.zeros(3)), q, at
+                    p, v, self.accelerations.get(n, np.zeros(3)), q, at, vt
                 )
                 try:
                     sp, sq = self.histories[n].at(seconds(scan.header.stamp))
@@ -333,7 +337,7 @@ class Controller(Node):
                     }
                 self.cycle_context = start, now, stamp
                 try:
-                    self.cycles.submit(self.team.step, states, scans, stamp, seers, tracker=self.team.track)
+                    self.cycles.submit(self.team.step, CycleInput(states, scans, stamp, seers, self.team.track))
                 except Exception as exc:
                     self.cycle_context = None
                     reason = f'controller_error: {exc}'
@@ -365,23 +369,24 @@ class Controller(Node):
         msg.data = array('b', cells.tobytes())
         self.occupancy_pub.publish(msg)
 
-    def _publish_cycle(self, start, now, stamp, reason, results, timing=None):
+    def _publish_cycle(self, start, now, stamp, reason, results, timing=None, coordination=None):
         settings = self.args.settings_data
         # A completed solve may already be obsolete. Publisher checks age too.
         for n, out in results.items():
-            if not out["ok"]:
+            if not out.publication_eligible:
                 continue
             trajectory = JointTrajectory()
             trajectory.header.stamp = now.to_msg()
             trajectory.header.frame_id = 'world'
             trajectory.joint_names = ['x', 'y']
-            controls = out.get('controls')
-            if controls is not None:
-                for k, row in enumerate(out['prediction']):
-                    at = int(round(k * self.args.cfg['TIMESTEP'] * 1e9))
+            reference = out.trajectory
+            if reference is not None:
+                controls = reference.accelerations
+                for k, position in enumerate(reference.positions):
+                    at = int(round(k * reference.timestep * 1e9))
                     trajectory.points.append(JointTrajectoryPoint(
-                        positions=list(map(float, row[:2])),
-                        velocities=list(map(float, row[2:4])),
+                        positions=list(map(float, position)),
+                        velocities=list(map(float, reference.velocities[k])),
                         accelerations=list(map(float, controls[min(k, len(controls) - 1)])),
                         time_from_start=Duration(sec=at // 10**9, nanosec=at % 10**9)))
                 self.trajectories[n].publish(trajectory)
@@ -389,7 +394,7 @@ class Controller(Node):
             path.header = trajectory.header
             path.poses = [
                 pose_message([x[0], x[1], settings["flight_altitude"]], now.to_msg())
-                for x in out["prediction"]
+                for x in out.prediction.states
             ]
             self.outputs[n][1].publish(path)
         # Callbacks can receive a newer target while this cycle is solving.
@@ -398,6 +403,10 @@ class Controller(Node):
         reported_at = self.get_clock().now().nanoseconds * 1e-9
         target_age = (None if self.team.track.observed_at is None
                       else reported_at - self.team.track.observed_at)
+        statuses = {n: dict(out.diagnostics, reason=out.reason,
+                            nominal_ok=out.nominal_success, fallback_used=out.fallback_used,
+                            publication_eligible=out.publication_eligible)
+                    for n, out in results.items()}
         record = {
             "stamp": stamp,
             "reported_stamp": reported_at,
@@ -406,7 +415,7 @@ class Controller(Node):
             **(timing or {}),
             "execution": self.execution,
             "reason": reason,
-            **self.team.diagnostics(),
+            **(self.team.diagnostics() if coordination is None else coordination),
             "target_mode": settings["target_mode"],
             "target_input_fresh": target_age is not None and 0 <= target_age <= settings['target_timeout_sim'],
             "target_observation_age": target_age,
@@ -417,13 +426,15 @@ class Controller(Node):
                 n: {
                     "position": p.tolist(),
                     "velocity": self.velocities.get(n, (np.zeros(3), 0))[0].tolist(),
-                    "result": results.get(n, {}).get("reason", reason),
-                    "nominal_ok": results.get(n, {}).get("nominal_ok", False),
-                    "solver_status": results.get(n, {}).get("solver_status"),
-                    "solver_ms": results.get(n, {}).get("solver_ms"),
-                    "solver_cpu_ms": results.get(n, {}).get("solver_cpu_ms"),
+                    "result": statuses.get(n, {}).get("reason", reason),
+                    "nominal_ok": statuses.get(n, {}).get("nominal_ok", False),
+                    "fallback_used": statuses.get(n, {}).get("fallback_used", False),
+                    "publication_eligible": statuses.get(n, {}).get("publication_eligible", False),
+                    "solver_status": statuses.get(n, {}).get("solver_status"),
+                    "solver_ms": statuses.get(n, {}).get("solver_ms"),
+                    "solver_cpu_ms": statuses.get(n, {}).get("solver_cpu_ms"),
                     **{
-                        key: results.get(n, {}).get(key)
+                        key: statuses.get(n, {}).get(key)
                         for key in (
                             "worker_pid", "cycle", "mapping_ms", "path_ms", "corridor_ms",
                             "solver_setup_ms", "input_ms", "capture_ms",

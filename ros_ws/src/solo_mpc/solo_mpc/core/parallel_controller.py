@@ -5,11 +5,8 @@ assignment and prediction exchange remain in the coordinator. No ROS objects or
 CasADi objects cross a process boundary. Spawn avoids inheriting DDS/native state.
 """
 
-from dataclasses import dataclass
 import faulthandler
 import math
-import multiprocessing as mp
-from multiprocessing.connection import wait
 import os
 from pathlib import Path
 import signal
@@ -18,6 +15,7 @@ import threading
 from types import SimpleNamespace
 
 from .controller import TeamController
+from .workers import WorkerPool
 
 
 class MapSnapshot:
@@ -99,132 +97,29 @@ def vehicle_worker(connection, name, names, cfg):
         connection.close()
 
 
-@dataclass
-class Worker:
-    process: object
-    connection: object
-    pid: int | None = None
-    error: str | None = None
-
-
 class ParallelTeamController(TeamController):
     """Same measured-state interface as TeamController; local work is concurrent."""
 
     def __init__(self, names, cfg, timeout=1.0, startup_timeout=30.0, sequential=False):
         super().__init__(names, cfg, local_names=[])
-        self.timeout = timeout
         self.sequential = sequential
-        self.workers = {}
         self.vehicle_metrics = {}
         self.cycle = 0
         self.closed = False
         self._cycle_lock = threading.Lock()
         self.planners = {n: SimpleNamespace(gmap=MapSnapshot(cfg)) for n in names}
-        context = mp.get_context("spawn")
-        try:
-            for n in names:
-                parent, child = context.Pipe()
-                process = context.Process(
-                    target=vehicle_worker, args=(child, n, self.names, self.cfg),
-                    name=f"mpc-{n}", daemon=True,
-                )
-                process.start()
-                child.close()
-                self.workers[n] = Worker(process, parent)
-            ready = self._collect(set(names), "ready", None, startup_timeout)
-            for n, message in ready.items():
-                self.workers[n].pid = message.get("pid")
-                if "error" in message:
-                    raise RuntimeError(f"{n}: worker initialization failed: {message['error']}")
-        except BaseException:
-            self.close()
-            raise
+        self.pool = WorkerPool(names, vehicle_worker, (self.names, self.cfg),
+                               timeout, startup_timeout, on_timeout=self._trace_timeout,
+                               process_prefix="mpc")
 
-    def _disable(self, name, reason):
-        worker = self.workers[name]
-        worker.error = reason
-        if reason.startswith('worker_timeout:') and self.cfg.get('DIAGNOSTIC_DIR') and worker.process.is_alive():
-            # Capture native/Python stacks before terminating a stuck worker.
-            # This runs only after its deadline has already failed.
+    def _trace_timeout(self, worker):
+        # MPC diagnostic policy stays outside reusable process orchestration.
+        if self.cfg.get('DIAGNOSTIC_DIR') and worker.process.is_alive():
             try:
                 os.kill(worker.process.pid, signal.SIGUSR1)
                 worker.process.join(timeout=0.05)
             except ProcessLookupError:
                 pass
-        worker.connection.close()
-        if worker.process.is_alive():
-            worker.process.terminate()
-        worker.process.join(timeout=0.05)
-        if worker.process.is_alive():
-            worker.process.kill()
-            worker.process.join(timeout=0.1)
-
-    def _collect(self, names, phase, cycle, timeout):
-        """Collect whichever worker finishes first; one deadline for the phase."""
-        pending = {self.workers[n].connection: n for n in names}
-        messages = {}
-        deadline = time.perf_counter() + timeout
-        while pending:
-            # A descheduled coordinator can wake after the deadline with timely
-            # replies already queued. Drain those before disabling any worker;
-            # worker completion timestamps still enforce the original deadline.
-            remaining = max(0.0, deadline - time.perf_counter())
-            readable = wait(list(pending), timeout=remaining)
-            if not readable:
-                break
-            for connection in readable:
-                name = pending.pop(connection)
-                try:
-                    message = connection.recv()
-                    if message.get("phase") != phase or (
-                        cycle is not None and message.get("cycle") != cycle
-                    ):
-                        raise ValueError("Worker response does not match the active cycle")
-                    if message["finished_wall"] > deadline:
-                        reason = f"worker_timeout: {phase}"
-                        self._disable(name, reason)
-                        messages[name] = {"error": reason}
-                    else:
-                        messages[name] = message
-                except (EOFError, OSError, ValueError) as exc:
-                    reason = f"worker_disconnected: {exc}"
-                    self._disable(name, reason)
-                    messages[name] = {"error": reason}
-        for name in pending.values():
-            reason = f"worker_timeout: {phase}"
-            self._disable(name, reason)
-            messages[name] = {"error": reason}
-        return messages
-
-    def _dispatch(self, phase, jobs):
-        if self.sequential and phase == 'solve':
-            deadline = time.perf_counter() + self.timeout
-            messages = {}
-            for name, job in jobs.items():
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    messages[name] = {'error': 'fleet_solve_deadline'}
-                else:
-                    messages.update(self._dispatch_batch(phase, {name: job}, remaining))
-            return messages
-        return self._dispatch_batch(phase, jobs, self.timeout)
-
-    def _dispatch_batch(self, phase, jobs, timeout):
-        pending, messages = set(), {}
-        for n, job in jobs.items():
-            worker = self.workers[n]
-            if worker.error:
-                messages[n] = {"error": worker.error}
-                continue
-            try:
-                worker.connection.send({"phase": phase, "cycle": self.cycle, **job})
-                pending.add(n)
-            except (BrokenPipeError, EOFError, OSError) as exc:
-                reason = f"worker_disconnected: {exc}"
-                self._disable(n, reason)
-                messages[n] = {"error": reason}
-        messages.update(self._collect(pending, phase, self.cycle, timeout))
-        return messages
 
     def step(self, states, scans, stamp, seers, tracker=None):
         if not self._cycle_lock.acquire(blocking=False):
@@ -238,10 +133,11 @@ class ParallelTeamController(TeamController):
         if self.closed:
             raise RuntimeError("Parallel controller is closed")
         self.cycle += 1
+        self.pool.cycle = self.cycle
         self.vehicle_metrics = {}
         # Capture predictions before dispatch; no within-cycle solve feeds another.
         predictions = self.neighbor_predictions(states, stamp)
-        mapped = self._dispatch("map", {n: {"scan": scans[n]} for n in self.names})
+        mapped = self.pool.dispatch("map", {n: {"scan": scans[n]} for n in self.names})
         if any("error" in m for m in mapped.values()):
             # Assignment requires all maps. Do not use a missing/stale map as free.
             return {n: {"ok": False, "reason": mapped[n].get("error", "fleet_mapping_failed")}
@@ -250,8 +146,9 @@ class ParallelTeamController(TeamController):
             for key in ('blocked', 'occupied', 'unknown'):
                 setattr(self.planners[n].gmap, key, message[key])
         guidance = self.prepare_guidance(states, predictions, stamp, seers, tracker)
-        solved = self._dispatch("solve", {n: dict(states=states, predictions=predictions,
-                                                 guidance=guidance[n], stamp=stamp) for n in self.names})
+        solved = self.pool.dispatch("solve", {n: dict(states=states, predictions=predictions,
+                                                 guidance=guidance[n], stamp=stamp) for n in self.names},
+                                    ordered=self.sequential, deadline_error="fleet_solve_deadline")
         results = {}
         for n, message in solved.items():
             if "error" in message:
@@ -283,26 +180,10 @@ class ParallelTeamController(TeamController):
             self._close()
 
     def _close(self):
-        """Bounded shutdown, including workers stalled inside a native solve."""
         if self.closed:
             return
         self.closed = True
-        for worker in self.workers.values():
-            if not worker.error:
-                try:
-                    worker.connection.send({"phase": "stop", "cycle": self.cycle})
-                except (BrokenPipeError, EOFError, OSError):
-                    pass
-        deadline = time.perf_counter() + 1.0
-        for worker in self.workers.values():
-            worker.process.join(timeout=max(0, deadline-time.perf_counter()))
-            if worker.process.is_alive():
-                worker.process.terminate()
-                worker.process.join(timeout=0.1)
-                if worker.process.is_alive():
-                    worker.process.kill()
-                    worker.process.join(timeout=0.1)
-            worker.connection.close()
+        self.pool.close()
 
     def __enter__(self):
         return self
