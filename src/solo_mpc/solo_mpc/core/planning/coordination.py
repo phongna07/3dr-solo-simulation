@@ -9,9 +9,15 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 
+LOOKAHEAD_POLICIES = ('plan_end', 'current_velocity')
+
+
 class FleetGuidance:
-    def __init__(self, names, cfg):
+    def __init__(self, names, cfg, lookahead_policy='plan_end'):
+        if lookahead_policy not in LOOKAHEAD_POLICIES:
+            raise ValueError(f'Unknown slot look-ahead policy: {lookahead_policy}')
         self.names, self.cfg = list(names), cfg
+        self.lookahead_policy = lookahead_policy
         self.leader = None
         self.assignment = {}
         self.modes = {n: 'SEARCH' for n in names}
@@ -97,8 +103,14 @@ class FleetGuidance:
         lp = predictions[self.leader]
         points = list(lp[::max(1, cfg['HORIZON_LENGTH'] // 4), :2])
         # Predictions have canonical [px,py,vx,vy,ax,ay] layout.
-        for tau in np.arange(.5, cfg['SLOT_LOOKAHEAD_TIME'] - cfg['HORIZON_LENGTH'] * cfg['TIMESTEP'] + 1e-9, .5):
-            points.append(lp[-1, :2] + lp[-1, 2:4] * tau)
+        if self.lookahead_policy == 'current_velocity':
+            # Upstream robot_jps.py for IMPC-OB, whose plans end at rest: the
+            # whole look-ahead follows the leader's current velocity.
+            for tau in np.arange(.5, cfg['SLOT_LOOKAHEAD_TIME'] + 1e-9, .5):
+                points.append(lp[0, :2] + lp[0, 2:4] * tau)
+        else:
+            for tau in np.arange(.5, cfg['SLOT_LOOKAHEAD_TIME'] - cfg['HORIZON_LENGTH'] * cfg['TIMESTEP'] + 1e-9, .5):
+                points.append(lp[-1, :2] + lp[-1, 2:4] * tau)
         slots = {}
         for n in active:
             cell = cells[assign[n]]

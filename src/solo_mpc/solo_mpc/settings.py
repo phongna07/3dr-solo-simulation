@@ -164,6 +164,11 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     for key, value in derived.items():
         if key not in overrides:
             cfg[key] = value
+    # Baseline impc_ob_rec: reference lengths (r_a = 0.3 m robots) scaled by
+    # L = UAV_SAFE_DISTANCE / (2 * 0.3), as upstream impc_ob.py scales them.
+    impc_length = cfg["UAV_SAFE_DISTANCE"] / 0.6
+    cfg.setdefault("IMPC_EPSILON", 0.2 * impc_length)
+    cfg.setdefault("IMPC_BUFFER", 0.03 * impc_length)
     cfg.setdefault("COLLISION_AVOID_DISTANCE", max(cfg["COLLISION_AVOID_RATIO"] * cfg["ROBOT_RADIUS"],
                                                  2.5 * cfg["UAV_SAFE_DISTANCE"]))
     target_route(scenario, cfg)  # Reject malformed routes before any process starts.
@@ -227,7 +232,8 @@ def validate(scenario, settings, cfg):
             raise ValueError(f"{key} must be a positive integer")
     for key in ("PATH_DEVIATION_THRESHOLD", "KF_PROCESS_NOISE_STD", "KF_OBS_NOISE_STD",
                 "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME", "BASELINE_LEADER_STANDOFF",
-                "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL"):
+                "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL",
+                "IMPC_EPSILON", "IMPC_BUFFER"):
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
     if not 0 < cfg["SLOT_MIN_RATIO"] <= 1:
@@ -274,6 +280,11 @@ def validate(scenario, settings, cfg):
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
     if settings["algorithm"] not in algorithm_names():
         raise ValueError(f"algorithm must be one of {', '.join(algorithm_names())}")
+    if settings["algorithm"] == "impc_ob_rec":
+        if cfg["CORRIDOR_MARGIN"] - cfg["IMPC_BUFFER"] < cfg["ROBOT_RADIUS"]:
+            raise ValueError("impc_ob_rec: CORRIDOR_MARGIN - IMPC_BUFFER must be at least ROBOT_RADIUS")
+        if cfg["IMPC_BUFFER"] >= cfg["IMPC_EPSILON"]:
+            warnings.warn("impc_ob_rec: IMPC_BUFFER is not below IMPC_EPSILON", UserWarning, stacklevel=2)
     if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
         raise ValueError("controller_execution must be parallel or sequential")
     for key, default in [("controller_worker_timeout_wall", 1.0),

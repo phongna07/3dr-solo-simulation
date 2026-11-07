@@ -20,7 +20,8 @@ import numpy as np
 
 from .contracts import (CycleInput, CycleResult, ExecutableTrajectory,
                         NeighborPrediction, VehicleResult, VehicleState)
-from ..planning.coordination import GOAL_POLICIES, FleetGuidance, guidance_goal
+from ..planning.coordination import (GOAL_POLICIES, LOOKAHEAD_POLICIES, FleetGuidance,
+                                     guidance_goal)
 from ..perception.tracking import TargetTracker
 from .workers import WorkerPool
 
@@ -124,8 +125,8 @@ def fleet_worker(connection, name, names, cfg, planner_spec):
 class FleetCoordinator(FleetGuidance):
     """Leadership, assignment, guidance and prediction exchange of the fleet."""
 
-    def __init__(self, names, cfg, goal_policy='pursuit'):
-        super().__init__(names, dict(cfg))
+    def __init__(self, names, cfg, goal_policy='pursuit', lookahead_policy='plan_end'):
+        super().__init__(names, dict(cfg), lookahead_policy)
         if goal_policy not in GOAL_POLICIES:
             raise ValueError(f'Unknown guidance goal policy: {goal_policy}')
         self.goal_policy = goal_policy
@@ -134,6 +135,10 @@ class FleetCoordinator(FleetGuidance):
         self.maps = {n: MapSnapshot(cfg) for n in names}
         self.predictions = {n: None for n in names}
         self.prediction_stamps = {n: -np.inf for n in names}
+        # Small per-vehicle state a planner shares with its teammates (result
+        # key 'broadcast'); like predictions it is from a previous cycle.
+        self.broadcasts = {n: None for n in names}
+        self.broadcast_stamps = {n: -np.inf for n in names}
 
     def prepare_guidance(self, states, predictions, stamp, seers, tracker=None):
         track = self.track if tracker is None else tracker
@@ -149,10 +154,18 @@ class FleetCoordinator(FleetGuidance):
                     goal=guidance_goal(self.goal_policy, states[n].position,
                                        track.pursuit(states[n].position, stamp, self.cfg),
                                        n == self.leader, self.cfg),
-                    slot=slots.get(n), moving_slot=self.moving_slot(n, predictions) if n in slots else None)
+                    slot=slots.get(n), moving_slot=self.moving_slot(n, predictions) if n in slots else None,
+                    peers=self.peer_broadcasts(n, stamp))
             for n in self.names
         }
         return self.guidance
+
+    def peer_broadcasts(self, name, stamp):
+        """Teammates' broadcasts within the neighbor-prediction age limit."""
+        dt = self.cfg['TIMESTEP']
+        return {n: self.broadcasts[n] for n in self.names
+                if n != name and self.broadcasts[n] is not None
+                and 0 <= stamp - self.broadcast_stamps[n] <= 3 * dt}
 
     def neighbor_predictions(self, states, stamp):
         """Age-align cached plans to measured state, frozen before any solve."""
@@ -178,8 +191,9 @@ class ParallelFleet(FleetCoordinator):
     """Map barrier, guidance, per-UAV solve dispatch and prediction commit."""
 
     def __init__(self, names, cfg, planner_spec, goal_policy='pursuit', timeout=1.0,
-                 startup_timeout=30.0, sequential=False, process_prefix='mpc'):
-        super().__init__(names, cfg, goal_policy)
+                 startup_timeout=30.0, sequential=False, process_prefix='mpc',
+                 lookahead_policy='plan_end'):
+        super().__init__(names, cfg, goal_policy, lookahead_policy)
         self.sequential = sequential
         self.vehicle_metrics = {}
         self.cycle = 0
@@ -232,6 +246,9 @@ class ParallelFleet(FleetCoordinator):
                 results[n] = {"ok": False, "reason": message["error"]}
                 continue
             result = message["result"]
+            broadcast = result.pop("broadcast", None)
+            if broadcast is not None:
+                self.broadcasts[n], self.broadcast_stamps[n] = broadcast, stamp
             self.vehicle_metrics[n] = {
                 "worker_pid": message["pid"], "cycle": self.cycle,
                 **{key: mapped[n][key] for key in (
@@ -279,6 +296,7 @@ class FleetAlgorithm:
     NAME = None
     PLANNER = None
     GOAL_POLICY = 'pursuit'
+    SLOT_LOOKAHEAD = 'plan_end'
     UPSTREAM_MODULES = ()
 
     def __init__(self, names, cfg, settings):
@@ -287,6 +305,7 @@ class FleetAlgorithm:
             timeout=settings.get('controller_worker_timeout_wall', 1.0),
             startup_timeout=settings.get('controller_worker_startup_timeout_wall', 30.0),
             sequential=settings.get('controller_execution', 'parallel') == 'sequential',
+            lookahead_policy=self.SLOT_LOOKAHEAD,
         )
 
     @property

@@ -26,6 +26,7 @@ warm start, and stopping plan.
 | `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
 | `core/algorithms/cbf_qp/`, `cbf_qp_lag/` | Upstream CBF-QP safety filter baseline (`CBFQPVehicle`) and its lag-aware subclass |
 | `core/algorithms/pure_mpc/`, `stop_plan.py` | Upstream plain MPC baseline (`PureMPCVehicle`) and the simulation-time stop plan and collection revalidation shared with MPC |
+| `core/algorithms/impc_ob_rec/` | Upstream IMPC-OB baseline with LiDAR recovery (`IMPCOBRecVehicle`): committed local path, time-aligned predetermined trajectory, peer deadlock state |
 | `core/planning/` | Local JPS/Dijkstra (`planner_grid.py`), committed local paths (`paths.py`), leadership/formation (`coordination.py`), trajectory sampling (`references.py`), target route (`target_motion.py`, `geometry.py`) |
 | `core/perception/` | Scan projection and pose history (`sensors.py`), occupancy primitives (`occupancy_grid.py`), explicit sensor rays (`mapping.py`), target estimation (`tracking.py`) |
 | `core/video/` | Mission video encoder and `python3 -m solo_mpc.core.video` (`encoder.py`), composite, occupancy and state panels, shared visual style (`style.py`) |
@@ -285,6 +286,62 @@ and the sigmoid centre is `VMAX/2`. Known upstream behaviour: the cost uses ever
 other hit plus teammates, truncated to `96 + n_others` points, so with more than
 about 192 hits the teammates drop out of the cost (their hard constraints remain).
 `ipopt.max_cpu_time` (0.2, 0.35, 0.75 s) turns slow solves into visible failures.
+
+`algorithm: impc_ob_rec` (`core/algorithms/impc_ob_rec/`) runs the unchanged
+upstream `impc_ob.py` `IMPCOB` with `recover=True` (`UPSTREAM_MODULES`
+`dynamics`, `impc_ob`): per step a convex QCQP over the horizon with terminal
+rest (`v_K = a_K = 0`), inter-UAV MBVC/warning-band planes from the teammates'
+predetermined trajectories, obstacle corridors around this UAV's predetermined
+trajectory extended to the tractive point, and terminal-overlap deadlock
+resolution (growing `eta`, dynamic priority 1 at goal / 2 normal / 3 winner,
+right-hand rule). Inputs: the `baseline_standoff` goal or slot, the hits of the
+latest scan as obstacles (never the accumulated map), the worker's committed
+local JPS path (`PathService`, as MPC) as reference path, and the shared shims
+for teammates in fleet order. The worker builds `IMPCOBProblem` at upstream's
+`max_faces` (24) and runs one hover solve before readiness (about 2.5 s), so no
+cycle pays a rebuild or first-solve cost; `impc_faces` and `impc_warmup_ok`
+are reported. A step is nominal when upstream's `mpc_fail_streak` is 0 after
+`plan()`; the prediction is the full solved state, rebuilt from upstream's
+shifted warm start `_X` with the measured initial row (equal by constraint).
+`impc_recovered` marks nominal steps that needed upstream's `_recover` (braking
+predetermined trajectory, possibly a lowered margin).
+
+A failed step (`impc_failed`: no corridor or failed solve; `impc_planner_failed`:
+no local path, mirroring upstream `robot_jps.py`) ignores upstream's returned
+command. While the shared `StopPlan` (the last solved plan, which ends at rest)
+matches measured state at the elapsed simulation time and upstream
+`_tail_collides` finds its remaining rows at least `CORRIDOR_MARGIN −
+IMPC_BUFFER` from the current hits, it is replayed (`…: previous_plan`,
+`retained_plan`, revalidated at collection); otherwise the vehicle brakes with
+upstream `_brake_traj`/`_brake_u` (`…: brake`). The executed rows become the
+next predetermined trajectory and the neighbor prediction, as upstream
+publishes braking. Telemetry adds `solver_status`/`solver_iterations`
+(`not_solved` when no QCQP ran), `solver_ms` (corridor construction and solve),
+`path_ms`, `obstacle_points`, `impc_fail_total`, `impc_corridor_fail_total`,
+`impc_recover_total`, `impc_priority`, `impc_eta`, `impc_contest`,
+`impc_term_overlap` and `retained_plan`.
+
+Two generic runtime hooks serve it, with unchanged defaults for the other
+algorithms. A worker result may carry `broadcast` (here priority, distance,
+contest); `ParallelFleet` stores it with the cycle stamp, removes it from the
+result, and passes teammates' broadcasts no older than `3 · TIMESTEP` (the
+neighbor-prediction rule) as `guidance['peers']`. `FleetAlgorithm.SLOT_LOOKAHEAD`
+selects how slot contraction looks ahead: `plan_end` (default) extrapolates the
+leader plan's final velocity beyond the horizon; `current_velocity` (upstream
+`robot_jps.py._update_slot_scale` for IMPC-OB, whose plans end at rest) follows
+the leader's current velocity for the whole `SLOT_LOOKAHEAD_TIME`.
+
+Known `impc_ob_rec` deviations: teammates' priority, distance and contest come
+from the previous cycle, not the same step, so two UAVs can hold priority 3 at
+once; the predetermined trajectory is the previous plan shifted by elapsed
+simulation time (upstream: one row per step), and its rows are not translated
+to the measured position; the tail is replayed by simulation time with
+measured-state agreement instead of upstream's counter `left`; the solver
+problem is built at 24 faces with a warm-up solve instead of growing from 8;
+slot look-ahead follows `current_velocity`; `IMPC_EPSILON`/`IMPC_BUFFER` derive
+from L instead of upstream's fixed 1.0/0.15 m (L = 5 there). With
+`HORIZON_LENGTH` 10 every plan must stop within 1 s, which caps cruise speed; this
+is a property of the baseline.
 
 Known CBF deviations: the barrier models a double integrator (with lag
 `ACCEL_TAU` for `cbf_qp_lag`), while the executed chain is measurement latency,
@@ -1133,3 +1190,43 @@ Installed-package check (not flight evidence): in the rebuilt image
 `matches_pinned_sources: true`; `load_settings(..., algorithm='pure_mpc')`
 validated for all three presets, and `PureMPCVehicle` solved and produced both
 fallbacks (`previous_plan`, `brake`) with H+1 rows and H controls.
+
+## IMPC-OB recovery baseline verification (November 7, 2026)
+
+The fleet `broadcast`/`peers` channel, the slot look-ahead policy and the
+`IMPC_EPSILON`/`IMPC_BUFFER` settings were added, the image rebuilt, and the
+unchanged defaults checked with 30 s small50 runs: `mpc`
+`20261107T161949Z-15176` (clearance / min UAV distance 0.719 / 1.817 m, all
+solves succeeded, `solver_ms` p95 59 ms) and `pure_mpc` `20261107T162427Z-21155`
+(0.840 / 1.307 m, all solves succeeded), matching the references above.
+
+`impc_ob_rec` runs are 60 s tracking with the full fleet, camera input and
+1920 × 1080 / 20 FPS recording (all map/state/FOV panels present). Every run
+exited 0, logged no exceptions, landed IDLE and disarmed, and reported
+`matches_pinned_sources: true` at `db96e52` for exactly `dynamics.py` and
+`impc_ob.py`; `impc_faces` stayed 24 and workers became ready after the
+warm-up solve (about 2.5 s).
+
+| Preset | Run | Clearance / min UAV distance (m) | Ready | Nearest UAV–target p50 (m) | `solver_ms` p50/p95/max | Cycles > 100 ms compute |
+|---|---|---|---:|---:|---|---:|
+| small50_3uav | `20261107T162856Z-10125` | 0.294 / 1.660 | 0.993 | 1.21 | 67/115/208 | 41.7 % |
+| large200_5uav | `20261107T163701Z-21692` | 0.240 / 0.945 | 0.922 | 2.09 | 82/147/364 | 91.8 % |
+| scen1 | `20261107T164620Z-24656` | 0.316 / 4.390 | 0.980 | 3.83 | 99/197/764 | 99.5 % |
+
+Failed steps came from IPOPT, not from corridors or paths:
+`Maximum_CpuTime_Exceeded` 4, 49 and 12 times and `Infeasible_Problem_Detected`
+0, 4 and 4 times (small50, large200, scen1). They flew `impc_failed: brake` 2,
+50 and 15 times and `impc_failed: previous_plan` 0, 2 and 0 times; collection
+rejected 2, 1 and 1 replays (`stop_plan_measured_state_changed`). No
+`impc_planner_failed` occurred. Upstream recovery produced 9 nominal
+`impc_recovered` steps on large200 (first uav3 at t ≈ 37 s) and none elsewhere.
+Deadlock resolution acted on large200 (316 terminal-overlap cycles, `eta` up to
+4.3, priority 3 in 223 vehicle cycles, never two UAVs at once); on small50 `eta`
+reached 1.3 and on scen1 it stayed 1.0. The large200 minimum UAV distance
+(0.945 m, below `UAV_SAFE_DISTANCE` but above the 0.72 m body contact distance)
+occurred at t ≈ 62.9 s while uav1 and uav4 both braked after CPU-limit
+failures; upstream braking ignores teammates. Obstacle clearance is lower than
+MPC's because the obstacle margin is `CORRIDOR_MARGIN − IMPC_BUFFER` from the
+UAV centre. On large200 and scen1 most vehicle cycles were `search` (the fleet
+lost the target, as with `pure_mpc`). These are baseline results, not tuning
+targets; CPU-limit failures remain visible as `partial_solver_failure`.

@@ -422,7 +422,10 @@ class Controller(Node):
                             "map_started_wall", "map_finished_wall",
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",
                             "obstacle_points", "cbf_deadlock", "cbf_infeasible_total",
-                            "cbf_deadlock_total",
+                            "cbf_deadlock_total", "retained_plan", "impc_recovered",
+                            "impc_fail_total", "impc_corridor_fail_total", "impc_recover_total",
+                            "impc_priority", "impc_eta", "impc_contest", "impc_term_overlap",
+                            "impc_faces", "impc_warmup_ok",
                         )
                     },
                     "armed": bool(n in self.flight and self.flight[n].armed),
