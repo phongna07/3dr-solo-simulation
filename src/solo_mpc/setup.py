@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from setuptools import find_packages, setup
 
-upstream = Path('../../../external/motion_planning_MPC')
+upstream = Path('../../external/motion_planning_MPC')
 # Unchanged upstream modules executed at runtime; the pin helper hashes the same list.
 runtime_sources = json.loads(Path('UPSTREAM.json').read_text())['runtime_sources']
 upstream_files = [upstream / name for name in (*runtime_sources, 'LICENSE.md')]

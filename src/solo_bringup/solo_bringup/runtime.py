@@ -47,8 +47,8 @@ def create_run(config, run_id=''):
         if source.exists():
             shutil.copy2(source, run / 'metadata' / filename)
     hashes = {}
-    for source_root in ('/workspace/config', '/workspace/ros_ws/src/solo_bringup',
-                        '/workspace/ros_ws/src/solo_mpc'):
+    for source_root in ('/workspace/config', '/workspace/src/solo_bringup',
+                        '/workspace/src/solo_mpc'):
         for file in sorted(Path(source_root).rglob('*')):
             if file.is_file() and '__pycache__' not in file.parts:
                 hashes[str(file.relative_to('/workspace'))] = hashlib.sha256(file.read_bytes()).hexdigest()

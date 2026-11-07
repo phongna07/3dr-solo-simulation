@@ -11,7 +11,7 @@ import sys
 import numpy as np
 
 # Use the same spline as the simulated target, including its sampled segments.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ros_ws/src/solo_mpc"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/solo_mpc"))
 from solo_mpc.core.target_motion import target_route
 
 
@@ -127,7 +127,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=200205)
     parser.add_argument("--output", type=Path, default=Path(
-        "ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml"))
+        "src/solo_mpc/scenarios/large200_5uav.yaml"))
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(generate(args.seed))

@@ -25,7 +25,7 @@ def main():
         parser.error('Upstream submodule has local changes; preserve them before changing its pin')
     commit = git('rev-parse', '--verify', '--end-of-options', f'{args.revision}^{{commit}}')
     subprocess.run(['git', '-C', str(upstream), 'checkout', '--detach', commit], check=True)
-    path = root / 'ros_ws/src/solo_mpc/UPSTREAM.json'
+    path = root / 'src/solo_mpc/UPSTREAM.json'
     metadata = json.loads(path.read_text())
     if metadata['commit'] != commit:
         metadata.update(commit=commit, pinned_on=date.today().isoformat())
@@ -37,7 +37,7 @@ def main():
     path.write_text(json.dumps(metadata, indent=2) + '\n')
     print(f'Pinned upstream runtime sources to {commit}. Upstream source is unchanged.')
     print('Restart development processes; rebuild release images. Validate a mission before committing the pin.')
-    print('Review git diff and git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json')
+    print('Review git diff and git add external/motion_planning_MPC src/solo_mpc/UPSTREAM.json')
 
 
 if __name__ == '__main__':

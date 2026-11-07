@@ -16,7 +16,7 @@ than adding a separate document for each feature or experiment.
 
 - `external/motion_planning_MPC/`: colleague-owned Git submodule. Solver
   `mpc_problem.py` and predictive `dynamics.py` execute directly from this source.
-- `ros_ws/src/solo_mpc/solo_mpc/core/upstream.py`: isolated upstream imports and
+- `src/solo_mpc/solo_mpc/core/upstream.py`: isolated upstream imports and
   actual source provenance; do not import upstream simulator/global config.
 - `core/mpc_problem.py`: local compatibility adapter, retaining inactive-neighbor
   conditioning and optional speed recovery. Do not restore copied solver code.
@@ -29,15 +29,15 @@ than adding a separate document for each feature or experiment.
 - Other `solo_mpc/core/` modules: local planning, occupancy/mapping, target
   estimation, coordination, and persistent per-UAV workers; keep ROS imports out.
   These remain local ports and do not automatically follow upstream changes.
-- `ros_ws/src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
+- `src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
   mission supervision, recording, and evaluation.
-- `ros_ws/src/solo_mpc/launch/mpc.launch.py`: single simulation launch entry point.
-- `ros_ws/src/solo_mpc/solo_mpc/flight_node.py`: one exclusive process per UAV; token-checked commands,
+- `src/solo_mpc/launch/mpc.launch.py`: single simulation launch entry point.
+- `src/solo_mpc/solo_mpc/flight_node.py`: one exclusive process per UAV; token-checked commands,
   body velocity/enable output, measured takeoff/landing and motor shutdown.
-- `ros_ws/src/solo_mpc/gazebo/`: `SoloFlightSafety`, camera/gimbal/coverage plugins.
-- `ros_ws/src/solo_mpc/models/`: vendored original Iris assets and licenses.
-- `ros_ws/src/solo_bringup/`: fleet validation, readiness, run files, flight helpers.
-- `ros_ws/src/solo_mpc_interfaces/`: mission service, `FlightState`, `FlightCommand`.
+- `src/solo_mpc/gazebo/`: `SoloFlightSafety`, camera/gimbal/coverage plugins.
+- `src/solo_mpc/models/`: vendored original Iris assets and licenses.
+- `src/solo_bringup/`: fleet validation, readiness, run files, flight helpers.
+- `src/solo_mpc_interfaces/`: mission service, `FlightState`, `FlightCommand`.
 - `config/`, package `config/` and `scenarios/`: fleet/controller/scenario settings.
 - `docker/`, `compose*.yaml`, `locks/`: runtime, deployment, pinned dependencies.
 - `runs/`, `artifacts/`: generated evidence, ignored by Git; do not delete prior runs.
@@ -58,7 +58,7 @@ globally, or copy the solver into this project to avoid an interface mismatch.
 To update to an authorized revision, fetch in the submodule and run
 `./scripts/pin-mpc-upstream COMMIT_OR_REF`. The helper rejects local submodule
 changes, checks out a detached revision, and refreshes
-`ros_ws/src/solo_mpc/UPSTREAM.json`. Review the upstream diff, validate, and include
+`src/solo_mpc/UPSTREAM.json`. Review the upstream diff, validate, and include
 both the gitlink and metadata when committing. Preserve provenance and licenses.
 Do not advance the pin just because a newer remote revision exists.
 

@@ -144,7 +144,7 @@ def generate_launch_description():
     from ament_index_python.packages import get_package_share_directory
 
     share = Path(get_package_share_directory("solo_mpc"))
-    live = Path("/workspace/ros_ws/src/solo_mpc")
+    live = Path("/workspace/src/solo_mpc")
     if os.environ.get("SOLO_DEV") == "1" and live.exists():
         share = live
     return LaunchDescription(

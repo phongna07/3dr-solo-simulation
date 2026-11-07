@@ -10,8 +10,8 @@ editing a YAML file does not reconfigure an active experiment.
 | Input | Default | Purpose |
 |---|---|---|
 | Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names and native Gazebo spawn poses |
-| Scenario | [small50_3uav.yaml](../ros_ws/src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
-| Controller | [controller.yaml](../ros_ws/src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
+| Scenario | [small50_3uav.yaml](../src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
+| Controller | [controller.yaml](../src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
 
 Use container paths for CLI overrides:
 
@@ -96,8 +96,8 @@ camera observations, solver failures, landing and finalized video for new runs.
 `./scripts/dev run --preset large200_5uav --record-video` selects these matching inputs:
 
 - [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five native multicopters, each with its own ROS flight process and Gazebo safety plugin.
-- [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
-- [controller-large200.yaml](../ros_ws/src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 6 m LiDAR range and a 0.35 s solver CPU cap. The original large scenario supplies its 2.2 m/s MPC speed bound; target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
+- [large200_5uav.yaml](../src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
+- [controller-large200.yaml](../src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 6 m LiDAR range and a 0.35 s solver CPU cap. The original large scenario supplies its 2.2 m/s MPC speed bound; target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
 
 The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
 downward camera footprint. Followers start 2.625 m left, right, behind and ahead.

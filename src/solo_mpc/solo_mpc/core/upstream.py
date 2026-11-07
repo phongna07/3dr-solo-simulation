@@ -24,7 +24,7 @@ def _source_directory():
     else:
         core = Path(__file__).resolve().parent
         for ancestor in core.parents:
-            if ancestor / 'ros_ws/src/solo_mpc/solo_mpc/core' == core:
+            if ancestor / 'src/solo_mpc/solo_mpc/core' == core:
                 directory = ancestor / 'external/motion_planning_MPC'
                 break
             candidate = ancestor / 'share/solo_mpc/upstream'

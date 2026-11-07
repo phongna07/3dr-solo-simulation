@@ -26,8 +26,8 @@ ENTRYPOINT ["/usr/local/bin/solo-entrypoint"]
 
 # Keep application changes after expensive dependency/compiler layers.
 FROM common_build AS application_build
-COPY external/motion_planning_MPC /opt/external/motion_planning_MPC
-COPY ros_ws/src /opt/solo_ws/src
+COPY external/motion_planning_MPC /opt/solo_ws/external/motion_planning_MPC
+COPY src /opt/solo_ws/src
 RUN source /opt/ros/jazzy/setup.bash && cd /opt/solo_ws && \
     colcon build --event-handlers console_direct+ --cmake-args -DBUILD_TESTING=OFF
 ARG SOURCE_REVISION=unknown
@@ -72,7 +72,7 @@ ENV PYTHONPATH=/opt/venvs/mpc/lib/python3.12/site-packages \
 # not invalidate the solver dependency layers. Preserve debs for offline release.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && preserve-apt
 FROM simulation_dependencies AS simulation_camera_build
-COPY ros_ws/src/solo_mpc/gazebo /opt/solo_gazebo/src
+COPY src/solo_mpc/gazebo /opt/solo_gazebo/src
 RUN cmake -S /opt/solo_gazebo/src -B /opt/solo_gazebo/build \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/solo_gazebo && \
     cmake --build /opt/solo_gazebo/build -j"$BUILD_JOBS" && \

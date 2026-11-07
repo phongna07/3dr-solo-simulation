@@ -262,7 +262,7 @@ retained compressed footage using the simulation image (or a host with Python,
 OpenCV and FFmpeg):
 
 ```bash
-PYTHONPATH=ros_ws/src/solo_mpc python3 -m solo_mpc.core.video runs/RUN_ID --recover
+PYTHONPATH=src/solo_mpc python3 -m solo_mpc.core.video runs/RUN_ID --recover
 ```
 
 Do not run recovery against a live recorder. Interrupted recovery is always

@@ -4,7 +4,7 @@ Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy and
 native Gazebo Harmonic multicopters in Docker. The default three-UAV scenario
 uses a 50 × 30 m field and a 3 m flight altitude. Vehicle physics runs in 3D;
 MPC plans horizontally, with separate altitude control. Vendored original Iris
-assets in `ros_ws/src/solo_mpc/models` retain vehicle geometry and inertias;
+assets in `src/solo_mpc/models` retain vehicle geometry and inertias;
 `MulticopterVelocityControl` writes an `Actuators` component consumed by four
 `MulticopterMotorModel` systems applying rotor forces and torques. Vehicles are
 not moved kinematically.
@@ -80,10 +80,10 @@ The server otherwise runs headlessly. See the simulation guide for GPU setup.
 
 ```text
 external/motion_planning_MPC/  Unchanged upstream solver submodule
-ros_ws/src/solo_mpc/          Solver adapter, local planning, ROS launch/nodes, Gazebo plugins
-ros_ws/src/solo_mpc/models/   Vendored original Iris assets and licenses
-ros_ws/src/solo_bringup/      Fleet validation, readiness, run files, flight helpers
-ros_ws/src/solo_mpc_interfaces/ Mission and owner-checked flight interfaces
+src/solo_mpc/                Solver adapter, local planning, ROS launch/nodes, Gazebo plugins
+src/solo_mpc/models/         Vendored original Iris assets and licenses
+src/solo_bringup/            Fleet validation, readiness, run files, flight helpers
+src/solo_mpc_interfaces/     Mission and owner-checked flight interfaces
 config/                      Simulation fleet configuration
 scripts/dev                  Primary host CLI
 scripts/pin-mpc-upstream      Select an upstream revision and refresh provenance

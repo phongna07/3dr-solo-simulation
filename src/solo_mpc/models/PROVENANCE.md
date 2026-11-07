@@ -36,7 +36,7 @@ No ArduPilot wrapper or external model download is needed to read the base model
 or scenery.
 
 `SOLO_MODEL_PATH`, `GZ_SIM_RESOURCE_PATH`, and `SDF_PATH` select the live
-`/workspace/ros_ws/src/solo_mpc/models` directory in development and
+`/workspace/src/solo_mpc/models` directory in development and
 `/opt/solo_ws/install/solo_mpc/share/solo_mpc/models` in the installed runtime.
 The ROS package installs the entire tree, including license, provenance, and
 checksums. Gazebo can resolve the unchanged `model://` mesh URIs without a

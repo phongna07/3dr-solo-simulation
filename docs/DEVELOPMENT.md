@@ -224,14 +224,14 @@ For the latest fetched `feature/compare` revision, use
 at that exact commit rather than following future branch updates automatically.
 
 The helper refuses a dirty submodule, checks out a detached revision, and updates
-`ros_ws/src/solo_mpc/UPSTREAM.json` with its commit and the hashes of its
+`src/solo_mpc/UPSTREAM.json` with its commit and the hashes of its
 `runtime_sources`, the same list `setup.py` bundles. It does not fetch, stage,
 or modify upstream files. Use `HEAD` to refresh metadata for an
 already-selected revision; `pinned_on` changes only with the commit. Inspect the upstream diff and validate a
 mission, then include both the gitlink and metadata in your parent commit:
 
 ```bash
-git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json
+git add external/motion_planning_MPC src/solo_mpc/UPSTREAM.json
 ```
 
 Only the upstream `runtime_sources` execute directly (for MPC, `mpc_problem.py`
@@ -398,7 +398,7 @@ written. This protects process-death diagnostics, not host power-loss durability
 Inside the simulation container:
 
 ```bash
-PYTHONPATH=/workspace/ros_ws/src/solo_mpc OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1   python3 -m solo_mpc.replay_optimizer   /workspace/runs/RUN_ID/optimizer-inputs/uav1/solve-0001.json
+PYTHONPATH=/workspace/src/solo_mpc OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1   python3 -m solo_mpc.replay_optimizer   /workspace/runs/RUN_ID/optimizer-inputs/uav1/solve-0001.json
 ```
 
 Replay uses recorded budgets. `--iteration-only` removes the CPU cap for a
@@ -779,7 +779,7 @@ p50/p95 194.7/307.5 ms (100% over 100 ms wall time); simulation delivery p95 was
 
 A frozen copy of that run's in-flight compressed files was recovered separately
 under `reports/interrupted-snapshot/` using
-`PYTHONPATH=ros_ws/src/solo_mpc python3 -m solo_mpc.core.video SNAPSHOT --recover`.
+`PYTHONPATH=src/solo_mpc python3 -m solo_mpc.core.video SNAPSHOT --recover`.
 The command retained 125 of 128 journaled frames, held the three missing tail
 slots and reported `partial`, `interrupted=true`; the live recorder continued
 independently. This is snapshot recovery evidence, not a real recorder or host
