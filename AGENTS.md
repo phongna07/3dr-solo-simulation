@@ -30,7 +30,9 @@ than adding a separate document for each feature or experiment.
   upstream baseline through `upstream_robot.py` shims and `command_rollout.py`;
   `cbf_qp/` (`CBFQPVehicle`) and `cbf_qp_lag/` (lag-aware subclass) run unchanged
   upstream `cbfqp.py` through the same adapters; `pure_mpc/` (`PureMPCVehicle`) runs
-  unchanged upstream `pure_mpc.py` with the shared `stop_plan.py` fallback; no copied
+  unchanged upstream `pure_mpc.py` with the shared `stop_plan.py` fallback;
+  `impc_ob_rec/` (`IMPCOBRecVehicle`) runs unchanged upstream `impc_ob.py` (recover)
+  with the same fallback and the fleet `broadcast`/`peers` channel; no copied
   baseline code.
 - Other `solo_mpc/core/` packages: `planning/` (local grid planning, paths,
   coordination, references, target route), `perception/` (sensors, occupancy/mapping,
