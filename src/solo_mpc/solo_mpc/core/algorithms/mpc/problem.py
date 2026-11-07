@@ -10,7 +10,7 @@ from collections import OrderedDict
 import casadi as ca
 import numpy as np
 
-from . import upstream as _sources
+from ... import upstream as _sources
 
 UPSTREAM_MODULES = ('dynamics', 'mpc_problem')
 dynamics = _sources.load('dynamics')

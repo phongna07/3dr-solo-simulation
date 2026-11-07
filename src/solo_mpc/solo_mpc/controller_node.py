@@ -19,8 +19,9 @@ from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
-from .core.algorithm import CycleInput, VehicleState, algorithm_class
-from .core.cycles import CycleRunner, result_is_current
+from .core.runtime.contracts import CycleInput, VehicleState
+from .core.runtime.cycles import CycleRunner, result_is_current
+from .core.runtime.registry import algorithm_class
 from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
 from .core.tracking import ExactTargetTracker

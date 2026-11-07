@@ -18,10 +18,10 @@ import threading
 
 import numpy as np
 
-from .algorithm import (CycleInput, CycleResult, ExecutableTrajectory,
+from .contracts import (CycleInput, CycleResult, ExecutableTrajectory,
                         NeighborPrediction, VehicleResult, VehicleState)
-from .coordination import GOAL_POLICIES, FleetGuidance, guidance_goal
-from .tracking import TargetTracker
+from ..coordination import GOAL_POLICIES, FleetGuidance, guidance_goal
+from ..tracking import TargetTracker
 from .workers import WorkerPool
 
 
@@ -59,7 +59,7 @@ def fleet_worker(connection, name, names, cfg, planner_spec):
             trace = (Path(cfg['DIAGNOSTIC_DIR']).parent / 'logs' /
                      f'worker-{name}.traceback.log').open('a')
             faulthandler.register(signal.SIGUSR1, file=trace, all_threads=True)
-        from .mapping import SensorGrid, warmup_scan_integration
+        from ..mapping import SensorGrid, warmup_scan_integration
         grid = SensorGrid(
             cfg["WORLD_BOUNDS"],
             resolution=cfg["GRID_RESOLUTION"],

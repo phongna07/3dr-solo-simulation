@@ -19,13 +19,13 @@ warm start, and stopping plan.
 |---|---|
 | `external/motion_planning_MPC/` | Colleague-owned, unchanged solver and predictive dynamics |
 | `solo_mpc/core/upstream.py` | Lazy private import of declared upstream modules and their source provenance |
-| `solo_mpc/core/mpc_problem.py` | Local solver compatibility adjustments |
-| `core/algorithm.py` | ROS-free `Algorithm`/`VehiclePlanner`/`VehicleState` contracts and the algorithm registry |
-| `core/fleet.py` | Generic worker entry, map barrier, frozen predictions, guidance goal policy, solve dispatch and result translation |
-| `core/mpc_algorithm.py`, `core/controller.py` | MPC selection and `MPCVehicle`: corridors, solver cache, warm start, retained stopping plans |
+| `core/runtime/contracts.py`, `registry.py` | ROS-free `Algorithm`/`VehiclePlanner`/`VehicleState` contracts and the algorithm registry |
+| `core/runtime/fleet.py` | Generic worker entry, map barrier, frozen predictions, guidance goal policy, solve dispatch and result translation |
+| `core/runtime/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
+| `core/algorithms/mpc/` | MPC selection (`algorithm.py`) and `MPCVehicle` (`vehicle.py`): corridors, solver cache, warm start, retained stopping plans; `problem.py` local solver compatibility adjustments; `capture.py` optimizer-input capture and replay |
+| `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
 | `core/paths.py`, `coordination.py`, `tracking.py` | Committed local paths, leadership/formation, target estimation |
 | `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
-| `core/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
 | `controller_node.py`, `frame_node.py`, `target_node.py` | ROS input/output, odometry twist rotation, ground-truth target publication |
 | `setpoint_node.py` | Source-stamped trajectory sampling, position/altitude feedback, expiry and proximity guard |
 | `flight_node.py` | Per-UAV ownership, flight service/state, world-to-body commands, takeoff and landing |
@@ -48,10 +48,11 @@ backend is used. ROS commands cross `SoloFlightSafety` before reaching the nativ
 velocity controller; bridges never expose a bypass to its internal control input.
 
 The ROS-free `Algorithm` protocol takes a `CycleInput` and returns a
-`CycleResult`. `core/algorithm.py` registers each algorithm name with a lazily
-imported class; settings validation, `--algorithm` and the controller use the
-same registry. Every registered algorithm composes `ParallelFleet` with an
-importable `VehiclePlanner` (`module:Class`, constructed inside each spawned
+`CycleResult`. `core/runtime/registry.py` names each algorithm after a subpackage
+of `core/algorithms/`, discovered without importing it, and imports the package's
+`ALGORITHM` class only when selected; settings validation, `--algorithm` and the
+controller use the same registry. Every registered algorithm composes
+`ParallelFleet` with an importable `VehiclePlanner` (`module:Class`, constructed inside each spawned
 worker with the worker-owned map) and a guidance goal policy. `FleetAlgorithm`
 translates worker results at this boundary. Each class declares
 `UPSTREAM_MODULES`; `core/upstream.py` loads those modules on first use, and the
@@ -59,6 +60,20 @@ controller records their actual hashes and the selected `algorithm` in
 `metadata/controller_sources.jsonl`. `algorithm: mpc` selects `MPCAlgorithm`
 (`MPCVehicle`, `pursuit` goals); its mathematics, guidance, limits and retained
 stopping behavior are unchanged by the registry.
+
+To add an algorithm `NAME`:
+
+1. Create `core/algorithms/NAME/` with `__init__.py` exporting `ALGORITHM` and
+   no other imports, so discovery stays cheap.
+2. In `algorithm.py`, subclass `FleetAlgorithm` (`core/runtime/fleet.py`) with
+   `NAME`, `PLANNER = f'{__package__}.vehicle:NAMEVehicle'`, `GOAL_POLICY`
+   (from `coordination.GOAL_POLICIES`) and `UPSTREAM_MODULES`.
+3. In `vehicle.py`, implement the `VehiclePlanner` protocol
+   (`core/runtime/contracts.py`). Load upstream code only through
+   `core/upstream.py`, declaring new modules in its `IMPORTS` and in
+   `UPSTREAM.json` `runtime_sources`; keep ROS imports out.
+4. Select it with `algorithm: NAME` or `./scripts/dev run --algorithm NAME`,
+   rebuild with `./scripts/dev build sim`, and verify a full-fleet mission.
 
 `CycleInput` carries measured `VehicleState` values, projected `ScanRays`, a
 common source epoch, seers and a target-estimate snapshot. Pose and velocity
@@ -92,7 +107,7 @@ captured ROS input epoch, including its nanoseconds, rather than completion time
 rejection, disconnected-worker disabling and bounded shutdown. MPC supplies the
 worker entry point, phase payloads, ordered-solve policy and timeout traceback
 observer. The generic runtime imports no MPC planner, solver or capture module.
-`ParallelFleet` (`core/fleet.py`) supplies the worker entry point, phase
+`ParallelFleet` (`core/runtime/fleet.py`) supplies the worker entry point, phase
 payloads, ordered-solve policy and timeout traceback observer for every
 algorithm. It freezes fleet predictions before mapping/guidance, requires all
 maps, and commits predictions only after the solve barrier. Each worker builds
@@ -161,19 +176,19 @@ timestamps do not integrate the same evidence twice. See
 
 ### Baseline algorithms
 
-`algorithm: apf` (`core/baselines/apf.py`) runs the unchanged upstream `apf.py`
+`algorithm: apf` (`core/algorithms/apf/`) runs the unchanged upstream `apf.py`
 artificial potential field per UAV (`UPSTREAM_MODULES` `dynamics`, `apfc`,
 `apf`; APF calls `apfc.speed_limit`) through the same `ParallelFleet`, map
 barrier, leadership/assignment/slot contraction and ROS execution path as MPC.
-Shared adapters live in `core/baselines/`:
+Adapters shared by upstream baselines live in `core/algorithms/`:
 
-- `shim.py`: `UpstreamRobot` exposes the attributes upstream planners read
+- `upstream_robot.py`: `UpstreamRobot` exposes the attributes upstream planners read
   (`index` in fleet order, which seeds upstream's per-robot RNG `1000 + index`;
   `state = [x, y, z, vx, vy, vz]` and `accel` from the measured `VehicleState`;
   `states_prediction`; `mpc_fail_streak`). Teammate shims are rebuilt each
   cycle from the frozen measured snapshot and neighbor predictions. Converters
   map upstream `[x, y, z, vx, vy, 0]` rows to local `[px, py, vx, vy, ax, ay]`.
-- `rollout.py`: upstream applies a baseline command for one `TIMESTEP`. The
+- `command_rollout.py`: upstream applies a baseline command for one `TIMESTEP`. The
   executable trajectory applies it for step 0 with upstream `dynamics.model`,
   then brakes to rest with upstream `impc_ob._brake_u`. Normal operation samples
   only the first interval because a new plan arrives every cycle; a missed cycle
@@ -379,7 +394,9 @@ recording when visual behavior is relevant. Preserve the specific
 run directory and report limits as well as successful outcomes.
 
 `metadata/controller_sources.jsonl` and optimizer captures identify actual loaded
-source hashes, the pinned commit, and `matches_pinned_sources`. Each UAV retains
+source hashes, the pinned commit, and `matches_pinned_sources`; each capture's
+`sources` hashes every `core/` module, keyed by its path relative to `core/`
+(earlier runs keyed only the top-level `core/*.py` files by name). Each UAV retains
 up to `diagnostic_capture_cycles` complete calls under `optimizer-inputs/`.
 Pending records survive worker termination; successful records include nominal
 and backup plans/warm starts. Copy a record before the ring overwrites it.

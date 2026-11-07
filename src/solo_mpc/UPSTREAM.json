@@ -33,7 +33,7 @@
     "apfc.py",
     "apf.py"
   ],
-  "solver_integration": "Unchanged submodule runtime_sources loaded lazily per algorithm by core/upstream.py: mpc_problem.py and dynamics.py for mpc (core/mpc_problem.py applies local compatibility adjustments); apf.py, apfc.py and dynamics.py for apf (core/baselines/ adapters).",
+  "solver_integration": "Unchanged submodule runtime_sources loaded lazily per algorithm by core/upstream.py: mpc_problem.py and dynamics.py for mpc (core/algorithms/mpc/problem.py applies local compatibility adjustments); apf.py, apfc.py and dynamics.py for apf (core/algorithms/apf/ with the shared core/algorithms/ baseline adapters).",
   "ported_algorithms_commit": "d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae",
   "pinned_on": "2026-11-05"
 }

@@ -11,10 +11,9 @@ import time
 
 import numpy as np
 
-from .. import upstream
-from ..fleet import FleetAlgorithm
-from .rollout import command_trajectory
-from .shim import UpstreamRobot, from_upstream, neighbor_robots
+from ... import upstream
+from ..command_rollout import command_trajectory
+from ..upstream_robot import UpstreamRobot, from_upstream, neighbor_robots
 
 
 class APFVehicle:
@@ -51,10 +50,3 @@ class APFVehicle:
 
     def close(self):
         pass
-
-
-class APFAlgorithm(FleetAlgorithm):
-    NAME = 'apf'
-    PLANNER = 'solo_mpc.core.baselines.apf:APFVehicle'
-    GOAL_POLICY = 'baseline_standoff'
-    UPSTREAM_MODULES = ('dynamics', 'apfc', 'apf')

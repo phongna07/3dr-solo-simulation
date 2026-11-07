@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from .upstream import provenance
+from ...upstream import provenance
 
 
 def serializable(value):
@@ -44,8 +44,9 @@ class CaptureJournal:
     def __init__(self, directory, name, limit):
         self.root = Path(directory, name)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.sources = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                        for p in Path(__file__).parent.glob('*.py')}
+        core = Path(__file__).resolve().parents[2]
+        self.sources = {str(p.relative_to(core)): hashlib.sha256(p.read_bytes()).hexdigest()
+                        for p in sorted(core.rglob('*.py'))}
         self.inputs = []
         self.lengths = [0, 0]
         self.capacity = 1024 * 1024
@@ -162,7 +163,7 @@ class SolverCapture:
 
 def replay(path, iteration_only=False):
     """Replay a complete capture using its solver options; never starts ROS."""
-    from .mpc_problem import MPCProblem
+    from .problem import MPCProblem
     record = json.loads(Path(path).read_text())
     if record.get('schema') != 1:
         raise ValueError('Unsupported optimizer capture schema')

@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import yaml
 
-from .core.algorithm import algorithm_names
+from .core.runtime.registry import algorithm_names
 from .core.target_motion import target_route
 
 DEFAULTS = dict(

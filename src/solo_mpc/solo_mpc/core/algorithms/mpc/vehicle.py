@@ -3,7 +3,7 @@
 Solver and predictive dynamics load directly from the pinned upstream submodule.
 Grid planning remains a local port of motion_planning_MPC. Corridors, solver
 cache, warm start and retained stopping plans belong to one vehicle's worker;
-leadership, assignment, mapping and prediction exchange live in core/fleet.py.
+leadership, assignment, mapping and prediction exchange live in core/runtime/fleet.py.
 """
 
 from dataclasses import dataclass
@@ -11,10 +11,10 @@ import time
 
 import _pydecomp as pdc
 import numpy as np
-from .coordination import path_carrot
+from ...coordination import path_carrot
 
-from .mpc_problem import SolverCache
-from .paths import PathService
+from .problem import SolverCache
+from ...paths import PathService
 
 # The pinned pydecomp wheel exposes its computation in _pydecomp. Import the
 # binding directly: its package initializer also loads plotting libraries,
@@ -41,7 +41,7 @@ class MPCVehicle:
             self.paths = PathService(self.cfg, grid)
             self.solver_cache = SolverCache(len(names) - 1, self.cfg)
             self.solver = self.solver_cache.select(4, 4)
-            from .diagnostics import SolverCapture
+            from .capture import SolverCapture
             SolverCapture.prepare(self.cfg, name)
         except BaseException:
             self.close()
@@ -51,7 +51,7 @@ class MPCVehicle:
         return {"corridor_faces": self.solver.n_faces}
 
     def close(self):
-        from .diagnostics import SolverCapture
+        from .capture import SolverCapture
         SolverCapture.close()
 
     def _corridor_seed(self, position, path):
@@ -219,7 +219,7 @@ class MPCVehicle:
             w_tra=0.0 if guidance['slot'] is not None else cfg['W_tra'],
         )
         metrics['input_ms'] = (time.perf_counter() - started) * 1000
-        from .diagnostics import SolverCapture
+        from .capture import SolverCapture
         started = time.perf_counter()
         capture = SolverCapture(cfg, n, self.solver, stamp, inputs)
         capture_ms = (time.perf_counter() - started) * 1000

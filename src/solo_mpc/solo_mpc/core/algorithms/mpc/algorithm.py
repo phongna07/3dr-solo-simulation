@@ -2,13 +2,13 @@
 
 from dataclasses import replace
 
-from .algorithm import VehicleResult, VehicleState
-from .fleet import FleetAlgorithm
+from ...runtime.contracts import VehicleResult, VehicleState
+from ...runtime.fleet import FleetAlgorithm
 
 
 class MPCAlgorithm(FleetAlgorithm):
     NAME = 'mpc'
-    PLANNER = 'solo_mpc.core.controller:MPCVehicle'
+    PLANNER = f'{__package__}.vehicle:MPCVehicle'
     GOAL_POLICY = 'pursuit'
     UPSTREAM_MODULES = ('dynamics', 'mpc_problem')
 

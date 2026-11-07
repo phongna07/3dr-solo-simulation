@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .core.diagnostics import replay
+from .core.algorithms.mpc.capture import replay
 
 
 def main():

@@ -5,13 +5,12 @@ express ownership; arrays are owned by that snapshot, never live ROS messages.
 """
 
 from dataclasses import dataclass, field
-import importlib
 from typing import Protocol, TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from .sensors import ScanRays
+    from ..sensors import ScanRays
 
 
 @dataclass
@@ -103,23 +102,3 @@ class Algorithm(Protocol):
     def occupancy_maps(self) -> list: ...
     def diagnostics(self) -> dict: ...
     def close(self) -> None: ...
-
-
-# Name -> (module, class), imported only when selected.
-ALGORITHMS = {'mpc': ('.mpc_algorithm', 'MPCAlgorithm'),
-              'apf': ('.baselines.apf', 'APFAlgorithm')}
-
-
-def algorithm_names():
-    return tuple(ALGORITHMS)
-
-
-def algorithm_class(name):
-    if name not in ALGORITHMS:
-        raise ValueError(f'Unknown algorithm: {name}; use one of {", ".join(ALGORITHMS)}')
-    module, attribute = ALGORITHMS[name]
-    return getattr(importlib.import_module(module, __package__), attribute)
-
-
-def create_algorithm(name, names, cfg, settings) -> Algorithm:
-    return algorithm_class(name)(names, cfg, settings)
