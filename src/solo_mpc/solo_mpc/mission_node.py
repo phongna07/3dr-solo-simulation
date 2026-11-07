@@ -17,6 +17,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.clock import Clock, ClockType
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.signals import SignalHandlerOptions
 from solo_bringup.flight import Flight, FlightReleased, Ownership
 from solo_bringup.startup import ComponentProgress
@@ -106,6 +107,10 @@ class MissionSupervisor(Flight):
                 )
             )
 
+        # Latched simulation-time tracking interval; the recorder trims to it.
+        self.window_publisher = self.create_publisher(
+            String, "/mission/tracking_window",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.request_services = [
             self.create_service(StartMission, "/mission/start", self.request_start),
             self.create_service(Trigger, "/mission/stop", self.request_stop),
@@ -127,6 +132,15 @@ class MissionSupervisor(Flight):
                 },
                 "target": pose_arrays(self.target["pose"])[0].tolist() if self.target else None,
             }) + "\n")
+
+    def publish_window(self):
+        # Each message is complete: depth 1 retains only the latest interval.
+        end = self.tracking_end_sim
+        self.window_publisher.publish(String(data=json.dumps({
+            "mission_id": self.mission_id,
+            "begin_ns": self.tracking_begin_sim.nanoseconds,
+            "end_ns": end.nanoseconds if end is not None else None,
+        })))
 
     def service_call(self, name, value=None):
         client = self.mission_clients[name]
@@ -308,6 +322,8 @@ class MissionSupervisor(Flight):
                     self.supervise()
                 finally:
                     self.tracking_end_sim = self.get_clock().now()
+                    if self.tracking_begin_sim is not None:
+                        self.publish_window()
             elif operation == "reset":
                 self.cancellable = True
                 self.check_stop()
@@ -388,6 +404,7 @@ class MissionSupervisor(Flight):
         goal = np.asarray(self.scenario["target"]["waypoints"][-1])[:2]
         begin_wall = time.monotonic()
         begin_sim = self.tracking_begin_sim = self.get_clock().now()
+        self.publish_window()
         failure_since = None
         arrival_since = None
         while rclpy.ok():

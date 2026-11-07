@@ -415,7 +415,7 @@ def finalize_recording(run):
             print(f"Video {state}: {run / 'recorded-mission.mp4'}; {status.get('detail', '')}", flush=True)
             return
         if state == 'empty':
-            print('No airborne camera frames were recorded', flush=True)
+            print('No mission tracking frames were recorded', flush=True)
             return
         if state == 'failed':
             raise RuntimeError(f"Video finalization failed: {status.get('detail')}")

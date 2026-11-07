@@ -14,7 +14,7 @@ import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseStamped, TwistStamped
@@ -62,10 +62,10 @@ class CameraRecorder(Node):
             0.1, self.flush_composite, clock=Clock(clock_type=ClockType.STEADY_TIME),
         ) if combined else None)
         self.states = {}
-        self.poses = {}
-        self.ground_altitudes = {}
-        self.recording = set()
-        self.subscriptions_keep = []
+        self.window = None
+        self.subscriptions_keep = [self.create_subscription(
+            String, '/mission/tracking_window', self.tracking_window,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))]
         self.image_subscriptions = {}
         self.map_positions = {name: deque(maxlen=256) for name in self.vehicle_names}
         if combined:
@@ -88,15 +88,21 @@ class CameraRecorder(Node):
             for name in names:
                 self.subscribe_images(name)
         for name in self.vehicle_names:
-            for typ, suffix, callback in (
-                (FlightState, 'flight/state', self.state),
-                (PoseStamped, 'mpc/pose', self.pose),
-            ):
-                self.subscriptions_keep.append(self.create_subscription(
-                    typ, f'/{name}/{suffix}',
-                    lambda msg, n=name, cb=callback: cb(n, msg), qos_profile_sensor_data,
-                ))
-        self.get_logger().info(f"Waiting for armed UAV takeoff before recording in {output_dir}")
+            self.subscriptions_keep.append(self.create_subscription(
+                FlightState, f'/{name}/flight/state',
+                lambda msg, n=name: self.state(n, msg), qos_profile_sensor_data,
+            ))
+        self.get_logger().info(f"Waiting for mission tracking before recording in {output_dir}")
+
+    def tracking_window(self, msg):
+        try:
+            window = json.loads(msg.data)
+            begin, end = int(window['begin_ns']), window['end_ns']
+            self.window = (begin, None if end is None else int(end))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            self.get_logger().warning('Ignoring invalid mission tracking window')
+            return
+        self.get_logger().info(f"Mission tracking window: {self.window}")
 
     def state(self, name, msg):
         self.states[name] = (msg, time.monotonic())
@@ -117,13 +123,6 @@ class CameraRecorder(Node):
             )
             self.image_subscriptions[name] = subscription
             self.subscriptions_keep.append(subscription)
-
-    def pose(self, name, msg):
-        z = msg.pose.position.z
-        self.poses[name] = (z, time.monotonic())
-        state = self.states.get(name)
-        if state is None or not state[0].armed:
-            self.ground_altitudes[name] = z
 
     def map_pose(self, name, msg):
         if msg.header.frame_id != 'world':
@@ -183,33 +182,29 @@ class CameraRecorder(Node):
             positions, self.vehicle_names, stamp)
         self.composite.write('occupancy', panel, stamp)
 
-    def flying(self, name):
-        state = self.states.get(name)
-        pose = self.poses.get(name)
-        now = time.monotonic()
-        return bool(
-            state and state[0].connected and state[0].armed
-            and now - state[1] < 60.0 and pose and now - pose[1] < 3.0
-            and name in self.ground_altitudes
-            and pose[0] > self.ground_altitudes[name] + 0.15
-        )
+    def in_window(self, stamp_ns):
+        return bool(self.window and self.window[0] <= stamp_ns
+                    and (self.window[1] is None or stamp_ns <= self.window[1]))
 
     def image(self, name, msg):
         if self.recording_closed:
             return
         key = 'combined' if self.composite else name
-        if key not in self.recording:
-            vehicles = self.vehicle_names if self.overhead or self.composite else (name,)
-            if not any(self.flying(n) for n in vehicles):
+        stamp = msg.header.stamp
+        stamp_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
+        # Record only mission tracking, omitting takeoff and landing. The
+        # overhead feed sets the composite timeline; FOVs may buffer early
+        # so their panels hold current images at the first output frame.
+        if not self.composite or name == 'overhead':
+            if not self.in_window(stamp_ns):
                 return
-            self.recording.add(key)
+        elif self.window and self.window[1] is not None and stamp_ns > self.window[1]:
+            return
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         except CvBridgeError as exc:
             self.get_logger().error(f"{name}: cannot convert camera frame: {exc}")
             return
-        stamp = msg.header.stamp
-        stamp_ns = stamp.sec * 1_000_000_000 + stamp.nanosec
         video = self.videos[key]
         before = video.frames
         if self.composite:
@@ -223,10 +218,11 @@ class CameraRecorder(Node):
         if self.composite and not self.recording_closed:
             self.composite.flush()
 
-    def recording_status(self, state, detail=''):
-        write_status(self.output_dir / 'status/recording.json', {
-            'state': state, 'detail': detail, 'updated_wall_unix': time.time(),
-        })
+    def recording_status(self, state, detail='', window=None):
+        record = {'state': state, 'detail': detail, 'updated_wall_unix': time.time()}
+        if window:
+            record['tracking_window_ns'] = list(window)
+        write_status(self.output_dir / 'status/recording.json', record)
 
     def finish_recording(self):
         if self.recording_closed:
@@ -242,7 +238,7 @@ class CameraRecorder(Node):
             summaries = [v.summary for v in self.videos.values() if v.summary]
             state = ('partial' if any(s['state'] == 'partial' for s in summaries) else
                      'finalized' if any(v.frames for v in self.videos.values()) else 'empty')
-            self.recording_status(state, json.dumps(summaries))
+            self.recording_status(state, json.dumps(summaries), window=self.window)
         except BaseException as exc:
             self.recording_status('failed', f'{type(exc).__name__}: {exc}')
             raise
@@ -285,7 +281,7 @@ def main():
         node = CameraRecorder(names, args.output_dir, args.fps, overhead=args.overhead,
                               combined=args.combined, vehicle_names=vehicles)
         if progress:
-            progress.update('initialized', 'Waiting for armed UAV takeoff')
+            progress.update('initialized', 'Waiting for mission tracking')
         previous_signals = {
             sig: signal.signal(sig, shutdown) for sig in (signal.SIGINT, signal.SIGTERM)
         }

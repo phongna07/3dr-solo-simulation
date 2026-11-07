@@ -512,6 +512,7 @@ flight-process liveness. Do not weaken these layers to pass a mission.
 | `/mpc/status`, `/mpc/setpoint_status`, `/mpc/occupancy_grid` | Controller/publisher diagnostics and visualization map |
 | `/target/progress` | JSON scenario waypoints reached by the target route clock |
 | `/mission/start`, `/mission/stop`, `/mission/reset`, `/mission/status` | Persistent mission requests |
+| `/mission/tracking_window` | Latched JSON simulation-time tracking interval (`begin_ns`, `end_ns`) that trims the recording |
 | `/mpc/enable`, `/target/run`, `/target/reset` | Publishing and target ownership |
 | `/solo/readiness`, `/clock` | Health and simulation clock |
 

@@ -36,9 +36,9 @@ requested simulation duration. CLI elapsed progress remains labeled in wall
 seconds. Configure `simulation_real_time_factor` in the controller YAML;
 see [timing and expiry](CONFIGURATION.md#timing-and-expiry). Recorded playback
 retains normal target/UAV speeds at the existing 1920 × 1080 / 20 FPS.
-The exported video also includes recorded takeoff/landing and keeps recording
-until the stack stops, so its total duration can exceed `--seconds`. Compare its
-timestamp sidecar and tracking interval, not the host command's elapsed time.
+The exported video covers only the tracking interval, omitting takeoff and
+landing, so its duration matches the tracking simulation time rather than the
+host command's elapsed time. Compare its timestamp sidecar with that interval.
 
 After the mission client returns, `run` always requests `mission stop`
 (idempotent after a completed mission; it confirms settled ground and disarm),
@@ -210,7 +210,11 @@ release images need rebuilding.
 
 Select `--record-video` at launch; it also enables the UAV cameras shown in the FOV panels.
 Every `run` exit (success, failure or Ctrl+C) and a manual `stop` finalize
-`recorded-mission.mp4`; GUI closure does not. Recording starts at takeoff and continues through landing.
+`recorded-mission.mp4`; GUI closure does not. Recording covers only mission tracking:
+the supervisor publishes the latched simulation-time `/mission/tracking_window`, and
+the recorder drops overhead frames outside it, so takeoff and landing are omitted.
+`status/recording.json` records the applied `tracking_window_ns`. A mission that
+fails before tracking begins produces no video (`empty`).
 
 MP4 recording streams composed BGR frames directly to FFmpeg, trying
 `h264_nvenc` first. Actual initialization, pipe, flush or segment verification
