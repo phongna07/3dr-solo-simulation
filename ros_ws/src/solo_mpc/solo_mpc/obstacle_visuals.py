@@ -21,8 +21,11 @@ LIDAR_VISIBILITY_MASK = (CAMERA_VISIBILITY_MASK | LIDAR_PROXY_FLAGS) & ~CITY_VIS
 class Mesh:
     """Small flat-shaded mesh writer, batched by material rather than window."""
 
-    def __init__(self, palette):
+    def __init__(self, palette, ambient=1.0):
         self.palette = palette
+        # Scene ambient is full white; a lower ambient term lets the sun shade
+        # solid models instead of flattening every face to its full color.
+        self.ambient = ambient
         self.faces = {name: [] for name in palette}
 
     def face(self, material, points):
@@ -99,7 +102,8 @@ class Mesh:
             profile = ET.SubElement(effect, "profile_COMMON")
             technique = ET.SubElement(profile, "technique", sid="common")
             phong = ET.SubElement(technique, "phong")
-            for channel, value in (("ambient", (*color, 1)), ("diffuse", (*color, 1)),
+            ambient = tuple(c * self.ambient for c in color)
+            for channel, value in (("ambient", (*ambient, 1)), ("diffuse", (*color, 1)),
                                    ("specular", (0.12, 0.12, 0.12, 1))):
                 ET.SubElement(ET.SubElement(phong, channel), "color").text = " ".join(map(str, value))
             # Subtle self illumination keeps window grids legible in shade.
@@ -192,9 +196,13 @@ def street_mesh(path, bounds):
 
 def building_mesh(path, width, depth, obstacle_height, index):
     height = obstacle_height * (1.8 + 0.18 * (index % 5))
-    facades = [(0.48, 0.52, 0.56), (0.61, 0.56, 0.47), (0.36, 0.43, 0.50)]
-    mesh = Mesh(dict(wall=facades[index % 3], glass=(0.08, 0.22, 0.32),
-                     lit=(0.86, 0.72, 0.40), trim=(0.25, 0.30, 0.34), roof=(0.30, 0.33, 0.35)))
+    # Display colors chosen to separate from the dark asphalt: warm sandstone,
+    # terracotta brick and slate facades with deep glass and a darker roof deck.
+    facades = [(196, 170, 132), (164, 92, 66), (112, 128, 146)]
+    mesh = Mesh(dict(wall=srgb_material(*facades[index % 3]),
+                     glass=srgb_material(30, 46, 64), lit=srgb_material(255, 200, 112),
+                     trim=srgb_material(58, 60, 64), roof=srgb_material(104, 100, 96)),
+                ambient=0.55)
     mesh.box("wall", (0, 0, height / 2), (width, depth, height))
     # Windows are flat quads with a small offset, batched into two submeshes.
     # No thousands of SDF entities, textures, or overlapping coplanar surfaces.
@@ -241,9 +249,12 @@ def building_mesh(path, width, depth, obstacle_height, index):
 
 def tree_mesh(path, radius, obstacle_height, index):
     height = obstacle_height * (1.25 + 0.08 * (index % 4))
-    mesh = Mesh(dict(bark=(0.28, 0.16, 0.08), leaf0=(0.12, 0.30, 0.08),
-                     leaf1=(0.20, 0.40, 0.10), leaf2=(0.28, 0.46, 0.13),
-                     leaf3=(0.16, 0.35, 0.07)))
+    # Saturated foliage, alternating blue-green and yellow-green crowns.
+    leaves = ([(30, 84, 44), (44, 108, 52), (66, 130, 58), (24, 70, 40)],
+              [(52, 96, 30), (72, 122, 36), (98, 144, 44), (44, 82, 28)])[index % 2]
+    mesh = Mesh(dict(bark=srgb_material(84, 56, 36),
+                     **{f"leaf{i}": srgb_material(*c) for i, c in enumerate(leaves)}),
+                ambient=0.55)
     mesh.trunk(radius * 0.18, height * 0.73)
     mesh.crown((0, 0, height * 0.70), (radius * 0.78, radius * 0.78, height * 0.30), index)
     for branch in range(3):
