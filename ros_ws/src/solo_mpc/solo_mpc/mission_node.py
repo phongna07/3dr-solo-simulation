@@ -25,6 +25,7 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 import yaml
 
+from .core.target_motion import GOAL_TOLERANCE
 from .ros_utils import pose_arrays, qos_profile_sensor_data, seconds
 
 
@@ -54,6 +55,7 @@ class MissionSupervisor(Flight):
         self.cancellable = False
         self.shutdown_requested = False
         self.duration = 0.0
+        self.tracking_begin_sim = self.tracking_end_sim = None
         self.mission_clients = {
             name: self.create_client(typ, name)
             for name, typ in [
@@ -64,6 +66,7 @@ class MissionSupervisor(Flight):
         }
         self.snapshots = {}
         self.target = {}
+        self.target_progress = {}
         self.delivery = {}
         self.mission_subscriptions = [
             self.create_subscription(
@@ -76,6 +79,12 @@ class MissionSupervisor(Flight):
                 PoseStamped,
                 "/target/ground_truth",
                 lambda msg: self.target.update(pose=msg),
+                10,
+            ),
+            self.create_subscription(
+                String,
+                "/target/progress",
+                lambda msg: self.target_progress.update(json.loads(msg.data)),
                 10,
             ),
             self.create_subscription(
@@ -176,10 +185,16 @@ class MissionSupervisor(Flight):
             raise RuntimeError("; ".join(errors))
 
     def status(self):
+        tracking = {"duration_sim": self.duration, "elapsed_sim": None}
+        if self.tracking_begin_sim is not None:
+            end = self.tracking_end_sim if self.tracking_end_sim is not None else self.get_clock().now()
+            tracking["elapsed_sim"] = (end - self.tracking_begin_sim).nanoseconds * 1e-9
         return {"state": self.mission_state, "mission_id": self.mission_id,
                 "error": self.error, "run_dir": str(self.run_dir),
                 "ownership": {n: owner.value for n, owner in self.ownership.items()},
                 "landing": self.landing_status,
+                "tracking": tracking,
+                "target_progress": self.target_progress,
                 "failure_context": self.failure_context,
                 "controller": self.snapshots}
 
@@ -230,6 +245,8 @@ class MissionSupervisor(Flight):
                     self.ownership[name] = Ownership.UNOWNED
             self.mission_id = uuid.uuid4().hex
             self.duration = request.seconds
+            self.tracking_begin_sim = self.tracking_end_sim = None
+            self.target_progress = {}
             self.error = ""
             self.stop_requested = False
             self.pending = "start"
@@ -287,7 +304,10 @@ class MissionSupervisor(Flight):
                 self.truth_log = open(truth_path, "a", buffering=1)
                 self.prepare_flight()
                 self.mission_state = "tracking"
-                self.supervise()
+                try:
+                    self.supervise()
+                finally:
+                    self.tracking_end_sim = self.get_clock().now()
             elif operation == "reset":
                 self.cancellable = True
                 self.check_stop()
@@ -367,7 +387,7 @@ class MissionSupervisor(Flight):
     def supervise(self):
         goal = np.asarray(self.scenario["target"]["waypoints"][-1])[:2]
         begin_wall = time.monotonic()
-        begin_sim = self.get_clock().now()
+        begin_sim = self.tracking_begin_sim = self.get_clock().now()
         failure_since = None
         arrival_since = None
         while rclpy.ok():
@@ -376,7 +396,7 @@ class MissionSupervisor(Flight):
             self.check_stop()
             if (
                 self.target
-                and np.linalg.norm(pose_arrays(self.target["pose"])[0][:2] - goal) < 0.05
+                and np.linalg.norm(pose_arrays(self.target["pose"])[0][:2] - goal) < GOAL_TOLERANCE
             ):
                 positions = [
                     np.asarray(v["position"])[:2]

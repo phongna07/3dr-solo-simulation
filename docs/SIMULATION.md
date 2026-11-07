@@ -25,6 +25,11 @@ before enabling target motion and control. Startup can take several minutes
 with slow rendering. `--seconds` limits tracking using Gazebo's simulation clock,
 excluding startup/takeoff/landing; omit it or use `--seconds 0` to attempt the
 complete route. Reaching the route goal or a safety stop can end tracking earlier.
+While tracking, `mission run`/`start` progress reports elapsed over requested
+tracking simulation seconds (`tracking: 12.3/30s sim`) when `--seconds` is
+positive, otherwise scenario waypoints the target has reached, counting its
+start, over all route waypoints (`target waypoints: 4/12`). The completed,
+stopped or failed line repeats the final value.
 
 Physics defaults to **0.2× real time** to give MPC more wall time between
 simulation steps. `--seconds 30` requests 30 simulation seconds of tracking,

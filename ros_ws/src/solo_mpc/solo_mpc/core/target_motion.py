@@ -4,6 +4,9 @@ import numpy as np
 
 from .geometry import catmull_rom
 
+# The mission completes, and pauses the target, within this XY goal distance.
+GOAL_TOLERANCE = 0.05
+
 
 def startup_route_time(elapsed, ramp_seconds):
     """Ramp the route clock from rest; pauses retain the same elapsed clock."""
@@ -36,4 +39,6 @@ def target_route(scenario, cfg):
         path, knots = points.copy(), np.arange(len(points))
     lengths = np.linalg.norm(np.diff(path, axis=0), axis=1)
     durations = lengths / np.repeat(speeds, np.diff(knots))
-    return path, np.r_[0.0, np.cumsum(durations)]
+    times = np.r_[0.0, np.cumsum(durations)]
+    # Route-clock time at which the target reaches each scenario waypoint.
+    return path, times, times[knots]

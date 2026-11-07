@@ -120,6 +120,16 @@ def main(args=None):
                 controller = snapshot.get("controller", {})
                 details = []
                 landing = snapshot.get('landing', {})
+                tracking = snapshot.get('tracking', {})
+                route = snapshot.get('target_progress', {})
+                # Terminal states repeat the final tracking progress.
+                reports = state == 'tracking' or state in TERMINAL
+                if reports and tracking.get('duration_sim', 0) > 0:
+                    if tracking.get('elapsed_sim') is not None:
+                        details.append(f"tracking: {tracking['elapsed_sim']:.1f}/"
+                                       f"{tracking['duration_sim']:g}s sim")
+                elif reports and route:
+                    details.append(f"target waypoints: {route['waypoints_reached']}/{route['waypoints']}")
                 if state == 'landing' and landing:
                     details.append(f"landing: {landing['elapsed_sim']:.1f}/{landing['timeout_sim']:g}s sim, "
                                    f"{landing['elapsed_wall']:.0f}s wall")

@@ -304,6 +304,7 @@ flight-process liveness. Do not weaken these layers to pass a mission.
 | `/uavN/cmd_vel`, `/uavN/enable` | Exclusive per-UAV flight output: body `geometry_msgs/Twist`, `std_msgs/Bool`, through safety plugin |
 | `/uavN/motor_speed`, `/uavN/safety_active` | Actual rotor telemetry `actuator_msgs/Actuators` and independent safety `std_msgs/Bool` |
 | `/mpc/status`, `/mpc/setpoint_status`, `/mpc/occupancy_grid` | Controller/publisher diagnostics and visualization map |
+| `/target/progress` | JSON scenario waypoints reached by the target route clock |
 | `/mission/start`, `/mission/stop`, `/mission/reset`, `/mission/status` | Persistent mission requests |
 | `/mpc/enable`, `/target/run`, `/target/reset` | Publishing and target ownership |
 | `/solo/readiness`, `/clock` | Health and simulation clock |

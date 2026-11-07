@@ -1,14 +1,17 @@
 """Simulation-only target motion, evaluated at Gazebo clock time."""
 
+import json
+
 import numpy as np
 from geometry_msgs.msg import PoseStamped
 from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.pose_pb2 import Pose
 from gz.transport13 import Node as GazeboNode
 from rclpy.node import Node
+from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
-from .core.target_motion import startup_route_time, target_route
+from .core.target_motion import GOAL_TOLERANCE, startup_route_time, target_route
 from .ros_utils import pose_message, run_node
 
 
@@ -20,8 +23,9 @@ class MovingTarget(Node):
         self.started = 0.0
         self.elapsed = 0.0
         self.gz = GazeboNode()
-        self.path, self.times = target_route(args.scenario_data, args.cfg)
+        self.path, self.times, self.waypoint_times = target_route(args.scenario_data, args.cfg)
         self.publisher = self.create_publisher(PoseStamped, "/target/ground_truth", 10)
+        self.progress = self.create_publisher(String, "/target/progress", 10)
         self.create_service(SetBool, "/target/run", self.set_running)
         self.create_service(Trigger, "/target/reset", self.reset)
         self.create_timer(0.05, self.tick)
@@ -67,6 +71,13 @@ class MovingTarget(Node):
         )
         if ok and response.data:
             self.publisher.publish(pose_message(point, sampled_at.to_msg()))
+        # The start waypoint counts as reached; the mission goal counts as N/N.
+        reached = int(np.searchsorted(self.waypoint_times, route_elapsed, side="right"))
+        if np.linalg.norm(point[:2] - self.path[-1]) < GOAL_TOLERANCE:
+            reached = len(self.waypoint_times)
+        self.progress.publish(String(data=json.dumps({
+            "waypoints_reached": reached, "waypoints": len(self.waypoint_times),
+        })))
         if route_elapsed >= self.times[-1]:
             self.running = False
             self.elapsed = elapsed
