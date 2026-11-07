@@ -196,10 +196,9 @@ def street_mesh(path, bounds):
 
 def building_mesh(path, width, depth, obstacle_height, index):
     height = obstacle_height * (1.8 + 0.18 * (index % 5))
-    # Display colors chosen to separate from the dark asphalt: warm sandstone,
-    # terracotta brick and slate facades with deep glass and a darker roof deck.
-    facades = [(196, 170, 132), (164, 92, 66), (112, 128, 146)]
-    mesh = Mesh(dict(wall=srgb_material(*facades[index % 3]),
+    # Display colors chosen to separate from the dark asphalt: slate facades
+    # with deep glass and a darker roof deck.
+    mesh = Mesh(dict(wall=srgb_material(112, 128, 146),
                      glass=srgb_material(30, 46, 64), lit=srgb_material(255, 200, 112),
                      trim=srgb_material(58, 60, 64), roof=srgb_material(104, 100, 96)),
                 ambient=0.55)

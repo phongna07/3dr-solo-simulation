@@ -197,6 +197,12 @@ corridor and collision constraints, solver CPU cap, and command expiry remain
 in effect; the upstream source is unchanged. Omit the override or set it to
 `false` to use the adapter's default strict speed bounds.
 
+In SEARCH mode the local controller passes the upstream `W_search_track` pull a
+carrot on the planned path, `VMAX` × `HORIZON_LENGTH` × `TIMESTEP` ahead, instead
+of the predicted target; the target is used only once the path is shorter than
+that. A straight-line pull towards a target ~100 m away (scen1) otherwise pins
+UAVs against building faces and drives IPOPT into its CPU cap.
+
 Derived values include inflation radius, world bounds, standoff distance,
 formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`
 includes body radius, three Gaussian LiDAR-noise standard deviations, ray spacing,
