@@ -5,6 +5,7 @@ express ownership; arrays are owned by that snapshot, never live ROS messages.
 """
 
 from dataclasses import dataclass, field
+import importlib
 from typing import Protocol, TYPE_CHECKING
 
 import numpy as np
@@ -79,7 +80,22 @@ class CycleResult:
     coordination: dict
 
 
+class VehiclePlanner(Protocol):
+    """One UAV's numerical planner, constructed inside its persistent worker.
+
+    ``grid`` is the worker-owned SensorGrid; ``scan`` is the latest integrated
+    ScanRays. ``solve`` returns the worker result dict (``ok``, ``reason``,
+    ``prediction``, ``controls`` and optional ``trajectory``/``nominal_ok``).
+    """
+
+    def __init__(self, name, names, cfg, grid): ...
+    def solve(self, states, predictions, guidance, stamp, scan) -> dict: ...
+    def payload_metrics(self) -> dict: ...
+    def close(self) -> None: ...
+
+
 class Algorithm(Protocol):
+    UPSTREAM_MODULES: tuple[str, ...]
     track: TargetEstimate
 
     def step(self, inputs: CycleInput) -> CycleResult: ...
@@ -89,9 +105,20 @@ class Algorithm(Protocol):
     def close(self) -> None: ...
 
 
-def create_algorithm(name, names, cfg, settings) -> Algorithm:
-    if name != 'mpc':
-        raise ValueError(f'Unknown algorithm: {name}')
-    from .mpc_algorithm import MPCAlgorithm
+# Name -> (module, class), imported only when selected.
+ALGORITHMS = {'mpc': ('.mpc_algorithm', 'MPCAlgorithm')}
 
-    return MPCAlgorithm(names, cfg, settings)
+
+def algorithm_names():
+    return tuple(ALGORITHMS)
+
+
+def algorithm_class(name):
+    if name not in ALGORITHMS:
+        raise ValueError(f'Unknown algorithm: {name}; use one of {", ".join(ALGORITHMS)}')
+    module, attribute = ALGORITHMS[name]
+    return getattr(importlib.import_module(module, __package__), attribute)
+
+
+def create_algorithm(name, names, cfg, settings) -> Algorithm:
+    return algorithm_class(name)(names, cfg, settings)

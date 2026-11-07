@@ -1,9 +1,12 @@
 from glob import glob
+import json
 from pathlib import Path
 from setuptools import find_packages, setup
 
 upstream = Path('../../../external/motion_planning_MPC')
-upstream_files = [upstream / name for name in ('mpc_problem.py', 'dynamics.py', 'LICENSE.md')]
+# Unchanged upstream modules executed at runtime; the pin helper hashes the same list.
+runtime_sources = json.loads(Path('UPSTREAM.json').read_text())['runtime_sources']
+upstream_files = [upstream / name for name in (*runtime_sources, 'LICENSE.md')]
 if any(not path.is_file() for path in upstream_files):
     raise RuntimeError('Initialize the MPC submodule: git submodule update --init --recursive')
 

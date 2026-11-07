@@ -126,3 +126,13 @@ def path_carrot(position, path, distance):
             return a + (b - a) * (distance / length) if length else a.copy()
         distance -= length
     return None
+
+
+GOAL_POLICIES = ('pursuit',)
+
+
+def guidance_goal(policy, position, pursuit, leader, cfg):
+    """Goal before formation slots; 'pursuit' is upstream's lead-pursuit goal."""
+    if policy == 'pursuit':
+        return pursuit
+    raise ValueError(f'Unknown guidance goal policy: {policy}')

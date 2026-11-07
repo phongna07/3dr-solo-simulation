@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import yaml
 
+from .core.algorithm import algorithm_names
 from .core.target_motion import target_route
 
 DEFAULTS = dict(
@@ -97,7 +98,8 @@ DEFAULTS = dict(
 )
 
 
-def load_settings(scenario_path, settings_path):
+def load_settings(scenario_path, settings_path, algorithm=None):
+    """``algorithm`` (e.g. from MPC_ALGORITHM) overrides the settings file."""
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
     settings.setdefault('simulation_real_time_factor', 0.2)
@@ -116,6 +118,8 @@ def load_settings(scenario_path, settings_path):
                 or not math.isfinite(value) or value <= 0):
             raise ValueError(f'{key} must be finite and positive')
     settings.setdefault('algorithm', 'mpc')
+    if algorithm:
+        settings['algorithm'] = algorithm
     settings.setdefault('position_kp', 1.0)
     settings.setdefault('acceleration_feedforward_time', 0.22)
     for key in ('position_kp', 'acceleration_feedforward_time'):
@@ -262,6 +266,8 @@ def validate(scenario, settings, cfg):
                           UserWarning, stacklevel=2)
     if cfg["MPC_SOLVER"] != "ipopt":
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
+    if settings["algorithm"] not in algorithm_names():
+        raise ValueError(f"algorithm must be one of {', '.join(algorithm_names())}")
     if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
         raise ValueError("controller_execution must be parallel or sequential")
     for key, default in [("controller_worker_timeout_wall", 1.0),

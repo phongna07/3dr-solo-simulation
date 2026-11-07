@@ -2,50 +2,15 @@
 
 from dataclasses import replace
 
-from .algorithm import (CycleInput, CycleResult, ExecutableTrajectory,
-                        NeighborPrediction, VehicleResult, VehicleState)
-from .parallel_controller import ParallelTeamController
+from .algorithm import VehicleResult, VehicleState
+from .fleet import FleetAlgorithm
 
 
-class MPCAlgorithm:
-    def __init__(self, names, cfg, settings):
-        self.controller = ParallelTeamController(
-            names, cfg,
-            timeout=settings.get('controller_worker_timeout_wall', 1.0),
-            startup_timeout=settings.get('controller_worker_startup_timeout_wall', 30.0),
-            sequential=settings.get('controller_execution', 'parallel') == 'sequential',
-        )
-
-    @property
-    def track(self):
-        return self.controller.track
-
-    @track.setter
-    def track(self, tracker):
-        self.controller.track = tracker
-
-    def step(self, inputs: CycleInput) -> CycleResult:
-        raw = self.controller.step(inputs.states, inputs.scans, inputs.source_stamp,
-                                   inputs.seers, tracker=inputs.tracker)
-        dt = self.controller.cfg['TIMESTEP']
-        vehicles = {}
-        for name, out in raw.items():
-            rows, controls = out.get('prediction'), out.get('controls')
-            prediction = (None if rows is None else
-                          NeighborPrediction(inputs.source_stamp, dt, rows))
-            trajectory = (None if rows is None or controls is None else
-                          ExecutableTrajectory(inputs.source_stamp, dt,
-                                               rows[:, :2], rows[:, 2:4], controls))
-            ok = out['ok']
-            nominal = out.get('nominal_ok', ok)
-            vehicles[name] = VehicleResult(
-                nominal_success=nominal, fallback_used=ok and not nominal,
-                publication_eligible=ok, reason=out['reason'],
-                trajectory=trajectory, prediction=prediction,
-                diagnostics={key: value for key, value in out.items() if key not in (
-                    'ok', 'nominal_ok', 'reason', 'prediction', 'controls',
-                    'position', 'velocity', 'acceleration')})
-        return CycleResult(inputs.source_stamp, vehicles, self.diagnostics())
+class MPCAlgorithm(FleetAlgorithm):
+    NAME = 'mpc'
+    PLANNER = 'solo_mpc.core.controller:MPCVehicle'
+    GOAL_POLICY = 'pursuit'
+    UPSTREAM_MODULES = ('dynamics', 'mpc_problem')
 
     def revalidate(self, result: VehicleResult, state: VehicleState) -> VehicleResult:
         """Preserve MPC's retained-stop measured-state check at collection."""
@@ -66,15 +31,3 @@ class MPCAlgorithm:
                           ('BACKUP_POSITION_TOLERANCE', 'BACKUP_VELOCITY_TOLERANCE', 'BACKUP_ACCEL_TOLERANCE')))
         return result if matches else replace(
             result, publication_eligible=False, reason='stop_plan_measured_state_changed')
-
-    def occupancy_maps(self):
-        return [planner.gmap for planner in self.controller.planners.values()
-                if planner.gmap.occupied is not None and planner.gmap.unknown is not None]
-
-    def diagnostics(self):
-        c = self.controller
-        return dict(algorithm='mpc', leader=c.leader, controller_modes=dict(c.modes),
-                    assignment=dict(c.assignment), slot_scales=dict(c.slot_scales))
-
-    def close(self):
-        self.controller.close()

@@ -11,19 +11,21 @@ of ROS and preserve measured-state control and independent flight supervision.
 one native ROS flight process per UAV, readiness, bridges, frame/target
 nodes, the algorithm adapter, independent setpoint publisher, and mission
 supervisor. The GUI is a separate
-client. Each persistent UAV worker owns its map, planner, corridor, solver cache,
-committed path, warm start, and stopping plan.
+client. Each persistent UAV worker owns its map and the selected algorithm's
+vehicle planner; for MPC that is its committed path, corridor, solver cache,
+warm start, and stopping plan.
 
 | Location | Responsibility |
 |---|---|
 | `external/motion_planning_MPC/` | Colleague-owned, unchanged solver and predictive dynamics |
-| `solo_mpc/core/upstream.py` | Private import of upstream solver/dynamics and source provenance |
+| `solo_mpc/core/upstream.py` | Lazy private import of declared upstream modules and their source provenance |
 | `solo_mpc/core/mpc_problem.py` | Local solver compatibility adjustments |
-| `core/algorithm.py`, `core/mpc_algorithm.py` | ROS-free `Algorithm`/`VehicleState` boundary and existing MPC integration |
-| `core/controller.py`, `coordination.py`, `tracking.py` | Measured-state planning, formation, estimation, retained stopping plans |
+| `core/algorithm.py` | ROS-free `Algorithm`/`VehiclePlanner`/`VehicleState` contracts and the algorithm registry |
+| `core/fleet.py` | Generic worker entry, map barrier, frozen predictions, guidance goal policy, solve dispatch and result translation |
+| `core/mpc_algorithm.py`, `core/controller.py` | MPC selection and `MPCVehicle`: corridors, solver cache, warm start, retained stopping plans |
+| `core/paths.py`, `coordination.py`, `tracking.py` | Committed local paths, leadership/formation, target estimation |
 | `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
 | `core/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
-| `core/parallel_controller.py` | MPC worker payloads, map barrier, frozen predictions, guidance and solve diagnostics |
 | `controller_node.py`, `frame_node.py`, `target_node.py` | ROS input/output, odometry twist rotation, ground-truth target publication |
 | `setpoint_node.py` | Source-stamped trajectory sampling, position/altitude feedback, expiry and proximity guard |
 | `flight_node.py` | Per-UAV ownership, flight service/state, world-to-body commands, takeoff and landing |
@@ -46,10 +48,17 @@ backend is used. ROS commands cross `SoloFlightSafety` before reaching the nativ
 velocity controller; bridges never expose a bypass to its internal control input.
 
 The ROS-free `Algorithm` protocol takes a `CycleInput` and returns a
-`CycleResult`. The only factory selection remains `algorithm: mpc`.
-`MPCAlgorithm` composes the MPC coordinator rather than inheriting its planner
-and solver internals. It translates existing numerical outputs at this boundary;
-MPC mathematics, guidance, limits and retained stopping behavior are unchanged.
+`CycleResult`. `core/algorithm.py` registers each algorithm name with a lazily
+imported class; settings validation, `--algorithm` and the controller use the
+same registry. Every registered algorithm composes `ParallelFleet` with an
+importable `VehiclePlanner` (`module:Class`, constructed inside each spawned
+worker with the worker-owned map) and a guidance goal policy. `FleetAlgorithm`
+translates worker results at this boundary. Each class declares
+`UPSTREAM_MODULES`; `core/upstream.py` loads those modules on first use, and the
+controller records their actual hashes and the selected `algorithm` in
+`metadata/controller_sources.jsonl`. `algorithm: mpc` selects `MPCAlgorithm`
+(`MPCVehicle`, `pursuit` goals); its mathematics, guidance, limits and retained
+stopping behavior are unchanged by the registry.
 
 `CycleInput` carries measured `VehicleState` values, projected `ScanRays`, a
 common source epoch, seers and a target-estimate snapshot. Pose and velocity
@@ -83,12 +92,15 @@ captured ROS input epoch, including its nanoseconds, rather than completion time
 rejection, disconnected-worker disabling and bounded shutdown. MPC supplies the
 worker entry point, phase payloads, ordered-solve policy and timeout traceback
 observer. The generic runtime imports no MPC planner, solver or capture module.
-The MPC coordinator still freezes fleet predictions before mapping/guidance,
-requires all maps, and commits predictions only after the solve barrier. Each
-worker retains its own numerical state. Development source loading and installed
+`ParallelFleet` (`core/fleet.py`) supplies the worker entry point, phase
+payloads, ordered-solve policy and timeout traceback observer for every
+algorithm. It freezes fleet predictions before mapping/guidance, requires all
+maps, and commits predictions only after the solve barrier. Each worker builds
+its `SensorGrid`, keeps the latest integrated scan, and retains its planner's
+numerical state. Development source loading and installed
 package discovery use the same modules; bundled upstream sources are unchanged.
 
-`TeamController.step(states, scans, stamp, seers)` has no ROS imports and never
+`ParallelFleet.step(states, scans, stamp, seers)` has no ROS imports and never
 advances a simulated replacement for the measured vehicle. Workers freeze a
 common prediction snapshot before solving. Spawn avoids inheriting DDS/native
 solver state. Late results are rejected; timed-out workers stop until controller
@@ -168,16 +180,18 @@ For the latest fetched `feature/compare` revision, use
 at that exact commit rather than following future branch updates automatically.
 
 The helper refuses a dirty submodule, checks out a detached revision, and updates
-`ros_ws/src/solo_mpc/UPSTREAM.json` with its commit and solver/dynamics hashes.
-It does not fetch, stage, or modify upstream files. Use `HEAD` to refresh metadata
-for an already-selected revision. Inspect the upstream diff and validate a
+`ros_ws/src/solo_mpc/UPSTREAM.json` with its commit and the hashes of its
+`runtime_sources`, the same list `setup.py` bundles. It does not fetch, stage,
+or modify upstream files. Use `HEAD` to refresh metadata for an
+already-selected revision; `pinned_on` changes only with the commit. Inspect the upstream diff and validate a
 mission, then include both the gitlink and metadata in your parent commit:
 
 ```bash
 git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json
 ```
 
-Only upstream `mpc_problem.py` and `dynamics.py` execute directly. Planning,
+Only the upstream `runtime_sources` execute directly (for MPC, `mpc_problem.py`
+and `dynamics.py`). Planning,
 formation, target estimation, and configuration remain local ports; changes in
 upstream `robot_jps.py`, planners, or `config.py` require deliberate integration.
 A remote push or parent `git pull` does not select a newer upstream revision.

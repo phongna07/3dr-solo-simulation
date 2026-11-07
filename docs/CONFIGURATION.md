@@ -31,9 +31,11 @@ initialization advances much slower than wall time. The former
 odometry, flight state, motor telemetry and ready algorithm workers still gate
 flight; process failures and a stopped container still fail startup.
 
-Controller settings select `algorithm: mpc` through the small ROS-free algorithm
-factory. This uses the existing MPC implementation and unchanged upstream
-solver/dynamics; see [Development](DEVELOPMENT.md#architecture). All three presets
+Controller settings select a registered `algorithm` (default `mpc`) through the
+small ROS-free algorithm registry; `./scripts/dev run --algorithm NAME`
+(`MPC_ALGORITHM`) overrides it for one run. `mpc` uses the existing MPC
+implementation and unchanged upstream solver/dynamics; see
+[Development](DEVELOPMENT.md#architecture). All three presets
 retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
 backend selection or one-UAV migration stage.
 
@@ -301,7 +303,7 @@ safety watchdogs keep their independent wall-time budgets.
 
 | Setting | Default |
 |---|---:|
-| `algorithm` | `mpc` |
+| `algorithm` | `mpc` (registered names; `--algorithm` overrides) |
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |

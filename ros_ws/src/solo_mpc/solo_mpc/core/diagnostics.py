@@ -144,7 +144,7 @@ class SolverCapture:
             schema=1, sequence=sequence, stamp=stamp, wall=time.time(), vehicle=name,
             cfg=cfg, n_others=solver.n_others, n_faces=solver.n_faces,
             inputs=inputs, backup_init=solver._bk_init, outcome='pending',
-            upstream=provenance(),
+            upstream=provenance(solver.UPSTREAM_MODULES),
             sources=self.journal.sources,
         ))
         self.journal.pending(sequence, self.record)

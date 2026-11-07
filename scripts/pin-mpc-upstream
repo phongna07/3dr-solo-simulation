@@ -27,13 +27,15 @@ def main():
     subprocess.run(['git', '-C', str(upstream), 'checkout', '--detach', commit], check=True)
     path = root / 'ros_ws/src/solo_mpc/UPSTREAM.json'
     metadata = json.loads(path.read_text())
-    metadata.update(commit=commit, pinned_on=date.today().isoformat())
+    if metadata['commit'] != commit:
+        metadata.update(commit=commit, pinned_on=date.today().isoformat())
+    # The same runtime list that setup.py bundles into the installed package.
     metadata['sha256'].update({
         name: hashlib.sha256((upstream / name).read_bytes()).hexdigest()
-        for name in ('mpc_problem.py', 'dynamics.py')
+        for name in metadata['runtime_sources']
     })
     path.write_text(json.dumps(metadata, indent=2) + '\n')
-    print(f'Pinned MPC solver to {commit}. Upstream source is unchanged.')
+    print(f'Pinned upstream runtime sources to {commit}. Upstream source is unchanged.')
     print('Restart development processes; rebuild release images. Validate a mission before committing the pin.')
     print('Review git diff and git add external/motion_planning_MPC ros_ws/src/solo_mpc/UPSTREAM.json')
 

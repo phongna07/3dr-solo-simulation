@@ -90,6 +90,7 @@ for regeneration and parameter details.
 | Command | Purpose |
 |---|---|
 | `run --record-video` | Record overhead, map, state instruments, and all UAV FOVs |
+| `run --algorithm NAME` | Override the settings `algorithm` for this run; the resolved value is in `runs/<run-id>/config/controller.yaml` |
 | `run --gui` / `gui` | Attach Gazebo viewer (log `runs/<run-id>.gui.log`); closing it leaves the mission running |
 | `mission status` | Mission state, ownership, errors, and controller diagnostics |
 | `mission stop` | Pause target, disable publishing, land owned UAVs, await settled ground and motor shutdown |

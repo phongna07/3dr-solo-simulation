@@ -44,6 +44,7 @@ Usage: ./scripts/dev COMMAND [arguments]
                                   finalize any video and stop the simulation
       [--preset small50_3uav|large200_5uav|scen1]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
+      [--algorithm NAME]          Override the settings algorithm (mpc)
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
       [--gui]                     Also open the Gazebo GUI (log: runs/<run-id>.gui.log)
   mission status|stop             Inspect or land the fleet of a running simulation
@@ -183,6 +184,7 @@ case "$command" in
         --fleet) export FLEET_CONFIG="${2:?fleet path required}"; shift 2 ;;
         --scenario) export MPC_SCENARIO="${2:?scenario path required}"; shift 2 ;;
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
+        --algorithm) export MPC_ALGORITHM="${2:?algorithm name required}"; shift 2 ;;
         --seconds) mission_seconds="${2:?simulation seconds required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
         --record-video) export MPC_RECORD_VIDEO=true; shift ;;

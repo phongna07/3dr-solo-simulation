@@ -10,8 +10,11 @@ from collections import OrderedDict
 import casadi as ca
 import numpy as np
 
-from .upstream import dynamics, solver as upstream
+from . import upstream as _sources
 
+UPSTREAM_MODULES = ('dynamics', 'mpc_problem')
+dynamics = _sources.load('dynamics')
+upstream = _sources.load('mpc_problem')
 BIG = upstream.BIG
 
 
@@ -108,6 +111,8 @@ def speed_recovery_limits(x0, cfg, steps):
 
 
 class MPCProblem(upstream.MPCProblem):
+    UPSTREAM_MODULES = UPSTREAM_MODULES
+
     def __init__(self, n_others, n_faces, cfg):
         # Construct fallback through this adapter too, without altering upstream's
         # module globals or building an unused upstream fallback NLP.

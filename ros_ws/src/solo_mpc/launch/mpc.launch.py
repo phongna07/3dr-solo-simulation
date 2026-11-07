@@ -23,7 +23,10 @@ from solo_mpc.world import bridge_config, generate_mpc_world
 def start(context):
     get = lambda n: LaunchConfiguration(n).perform(context)
     fleet = load_config(get("fleet"))
-    scenario, settings, cfg = load_settings(get("scenario"), get("settings"))
+    # MPC_ALGORITHM (./scripts/dev run --algorithm) is resolved here, before the
+    # run snapshot below, so every node and the evaluation read one value.
+    scenario, settings, cfg = load_settings(get("scenario"), get("settings"),
+                                            os.environ.get("MPC_ALGORITHM"))
     record_video = get("record_video") == "true"
     # Target input is exact ground truth; UAV cameras exist only for recording.
     camera_enabled = record_video
@@ -54,7 +57,7 @@ def start(context):
                                   '--state-timeout', '60'],
     )
     actions += [critical(monitor)] + observed(monitor, progress, 'readiness-monitor')
-    progress.stage('Preparing MPC nodes and sensor bridges')
+    progress.stage(f"Preparing {settings['algorithm']} nodes and sensor bridges")
     # Snapshot the same resolved inputs used for world generation and flight.
     shutil.copyfile(get("scenario"), run / "config/scenario.yaml")
     (run / "config/controller.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
