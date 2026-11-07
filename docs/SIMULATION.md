@@ -192,10 +192,15 @@ No new CPU/performance acceptance thresholds apply.
 
 ## Recording
 
-The Gazebo ground uses asphalt gray `#404341` with yellow `#C4B06A` double
-centerlines and white `#C5C8C6` dashed lane dividers, edges and zebra crossings.
+The Gazebo ground uses asphalt gray `#404341` with muted yellow `#827A56` double
+centerlines and muted white `#828684` dashed lane dividers, edges and zebra
+crossings, blended halfway toward the asphalt so the UAVs stand out.
 Display colors are converted to linear material values for Ogre2; illumination
 and shadows still affect the captured pixels.
+Iris colors are brightened: the original near-black body (which matched the
+asphalt) is lifted to light graphite `#969BA5`, the propellers keep their original
+blue/green, and all parts lose the metallic term and gain faint emission. Only visual
+materials change, not the vendored SDF, collision, inertia or rotor physics.
 Eight-metre-wide streets repeat on a fixed 24 m world-aligned perpendicular
 grid across the ground, independently of scenario obstacles and target routes.
 Buildings and trees can cover the paint. Markings are batched visual meshes
@@ -289,8 +294,8 @@ to keep every state row visible for three- and five-UAV fleets. Compact state
 rows reclaim the space from the removed timing lines; the map and state panels
 automatically resize together at their shared width. Labels and fleet
 colors follow the configured order.
-Colored coverage rays/outlines appear in the overhead view and GUI, but are
-excluded from UAV images and LiDAR. They show flat-ground camera projections;
+Colored coverage rays/outlines appear in the overhead view and GUI at 55% of
+the fleet color brightness (same hue and line width), but are excluded from UAV images and LiDAR. They show flat-ground camera projections;
 obstacles can occlude the view. Distant UAVs can be outside the overhead frame.
 
 State instruments use world ENU position (m), velocity (m/s), estimated and

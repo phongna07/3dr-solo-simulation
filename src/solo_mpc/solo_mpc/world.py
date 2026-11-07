@@ -30,6 +30,7 @@ def fleet_world(config, source):
     for uav in config['uavs']:
         model = copy.deepcopy(template)
         model.set('name', uav['name'])
+        fleet_livery(model)
         pose = model.find('pose')
         if pose is None:
             pose = ET.SubElement(model, 'pose')
@@ -38,6 +39,35 @@ def fleet_world(config, source):
         native_multicopter(model, uav['name'])
         world.append(model)
     return tree
+
+
+# The original 0.05 black body matches the asphalt; lift it to graphite.
+BODY_COLOR = (150, 155, 165)
+
+
+def fleet_livery(model):
+    """Brighten the original Iris colors: graphite body, blue/green propellers.
+
+    Propellers keep their original hue. Dropping the metallic term and adding
+    faint self-illumination lifts every part; only visual materials change, not
+    collision, inertial, joint or rotor physics.
+    """
+    body = ' '.join(map(str, srgb_material(*BODY_COLOR)))
+    for link in model.findall('link'):
+        for visual in link.findall('visual'):
+            material = visual.find('material')
+            if link.get('name') == 'base_link':
+                material.find('ambient').text = body
+                material.find('diffuse').text = body
+            color = [float(c) for c in material.find('diffuse').text.split()[:3]]
+            glow = 0.4 if link.get('name') == 'base_link' else 0.8
+            emissive = material.find('emissive')
+            if emissive is None:
+                emissive = element(material, 'emissive')
+            emissive.text = ' '.join(str(glow * c) for c in color)
+            metal = material.find('pbr/metal')
+            metal.find('metalness').text = '0'
+            metal.find('roughness').text = '0.5'
 
 
 def element(parent, tag, text=None, **attrs):
@@ -214,8 +244,13 @@ def sensors(model, name, settings, cfg, camera_enabled=True, color_index=0):
     element(clip, "far", 100)
 
 
+# Dim the coverage rays/outlines (hue and line width unchanged) behind the UAVs.
+COVERAGE_BRIGHTNESS = 0.55
+
+
 def coverage_color(index):
-    return " ".join(str(c / 255) for c in reversed(vehicle_color(index))) + " 1"
+    return " ".join(str(COVERAGE_BRIGHTNESS * c / 255)
+                    for c in reversed(vehicle_color(index))) + " 1"
 
 
 def coverage_gui(world, names, settings):

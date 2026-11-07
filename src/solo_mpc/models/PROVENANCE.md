@@ -31,7 +31,10 @@ upstream plugin binaries, and unused gimbal assets are deliberately not
 vendored. The previous world generator removed the gimbal; only the unchanged
 Iris geometry is needed to preserve the previous vehicle presentation. The world
 generator flattens `iris_with_standoffs/model.sdf` and adds the native Gazebo Harmonic flight
-systems; the original body/rotor geometry and material definitions stay intact.
+systems; the original body/rotor geometry stays intact. Only in the generated
+world, the body/leg visuals are lifted to graphite and all propeller visuals
+keep their hue but are brightened; the vendored SDF, collision and inertial
+elements are unchanged.
 No ArduPilot wrapper or external model download is needed to read the base model
 or scenery.
 

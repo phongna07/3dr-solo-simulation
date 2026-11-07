@@ -154,8 +154,9 @@ def street_mesh(path, bounds):
     Batch upward-facing quads into two materials, with no collision or LiDAR
     geometry. Leave intersections clear and set paint 6 mm above the ground.
     """
-    mesh = Mesh(dict(yellow=srgb_material(196, 176, 106),
-                     white=srgb_material(197, 200, 198)))
+    # Muted paint, halfway to the asphalt, so markings stay behind the UAVs.
+    mesh = Mesh(dict(yellow=srgb_material(130, 122, 86),
+                     white=srgb_material(130, 134, 132)))
     xmin, ymin, xmax, ymax = bounds
     pitch, half_width = 24.0, 4.0
 
