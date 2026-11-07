@@ -420,6 +420,7 @@ class Controller(Node):
                             "solver_iterations", "planning_and_solve_ms",
                             "map_started_wall", "map_finished_wall",
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",
+                            "obstacle_points",
                         )
                     },
                     "armed": bool(n in self.flight and self.flight[n].armed),

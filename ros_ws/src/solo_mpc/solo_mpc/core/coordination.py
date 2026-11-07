@@ -128,11 +128,22 @@ def path_carrot(position, path, distance):
     return None
 
 
-GOAL_POLICIES = ('pursuit',)
+GOAL_POLICIES = ('pursuit', 'baseline_standoff')
 
 
 def guidance_goal(policy, position, pursuit, leader, cfg):
-    """Goal before formation slots; 'pursuit' is upstream's lead-pursuit goal."""
-    if policy == 'pursuit':
+    """Goal before formation slots; 'pursuit' is upstream's lead-pursuit goal.
+
+    'baseline_standoff' (upstream robot_jps.py baselines): the leader keeps
+    BASELINE_LEADER_STANDOFF from the predicted target, on the line from the
+    target through the leader, instead of flying onto it.
+    """
+    if policy not in GOAL_POLICIES:
+        raise ValueError(f'Unknown guidance goal policy: {policy}')
+    if policy == 'pursuit' or not leader:
         return pursuit
-    raise ValueError(f'Unknown guidance goal policy: {policy}')
+    target = np.asarray(pursuit, float)[:2]
+    offset = np.asarray(position, float)[:2] - target
+    distance = np.linalg.norm(offset)
+    direction = offset / distance if distance > 1e-6 else np.array([1.0, 0.0])
+    return target + cfg['BASELINE_LEADER_STANDOFF'] * direction

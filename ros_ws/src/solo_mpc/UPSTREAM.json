@@ -8,7 +8,9 @@
     "planner_jps.py": "41790ac67d684d0968addd5e13db95170d0ab7606d18418a548a46f877435be3",
     "geometry.py": "4c4b6928193243c02bbf5cebceed370568d0c696f20ab500d250e95d1700c509",
     "robot_jps.py": "5dd78fab4fd2c2c30d70ac84d06ce87c23db3ca00d78019aeec74787b6f5df82",
-    "config.py": "349f59bc3e26e0dcf88701212c58259bd8967c3ab53bd54f982b2a26b0117039"
+    "config.py": "349f59bc3e26e0dcf88701212c58259bd8967c3ab53bd54f982b2a26b0117039",
+    "apfc.py": "c5de1035570ba31434520b04a3f78078e141ef43d39605d051392ccde110be42",
+    "apf.py": "2ae1d5a2b5f80d5a2feb30d49b8fb55cc690695a9c726f251808920b7348bf99"
   },
   "adaptations": [
     "Relative imports and explicit grid defaults; numerical MPC, local JPS and dynamics retained. Planner warmup compiles both contiguous and noncontiguous windows before worker readiness.",
@@ -19,16 +21,19 @@
     "2026-10-20: Restored upstream distance-gated per-UAV modes, leader/assignment hysteresis, predictive contraction, path carrots, moving slots, travel-time pursuit and target filter covariance; see docs/DEVELOPMENT.md#verification-and-optimizer-replay.",
     "Coherent elapsed-time/reanchored six-state neighbor snapshots, responsive asynchronous ROS cycles, source-stamped expiry and measured-state fallback validation are intentional physical adaptations.",
     "Runtime CPU/worker caps retained; direct read-only upstream parity uses iteration-only reference settings. Bounded complete optimizer input and backup-warm-start capture added for future replay.",
-    "2026-10-29: Solver and predictive dynamics now execute directly from the unchanged pinned submodule. Inactive-neighbor conditioning and optional speed recovery remain in a local adapter; planning, mapping and coordination remain local ports."
+    "2026-10-29: Solver and predictive dynamics now execute directly from the unchanged pinned submodule. Inactive-neighbor conditioning and optional speed recovery remain in a local adapter; planning, mapping and coordination remain local ports.",
+    "2026-11-07: Baseline algorithm 'apf' executes unchanged upstream apf.py (with apfc.py speed_limit and dynamics.py) per UAV through the shared fleet runtime. Local adapters supply measured-state robot shims, latest-scan LiDAR hit obstacles, the upstream leader standoff goal and a one-step command rollout that brakes to rest (upstream impc_ob braking rule)."
   ],
   "inspected_on": "2026-10-29",
   "repository": "https://github.com/thuhangkhuat/motion_planning_MPC.git",
   "submodule": "external/motion_planning_MPC",
   "runtime_sources": [
     "dynamics.py",
-    "mpc_problem.py"
+    "mpc_problem.py",
+    "apfc.py",
+    "apf.py"
   ],
-  "solver_integration": "Unchanged submodule mpc_problem.py and dynamics.py loaded by core/upstream.py; core/mpc_problem.py applies local compatibility adjustments.",
+  "solver_integration": "Unchanged submodule runtime_sources loaded lazily per algorithm by core/upstream.py: mpc_problem.py and dynamics.py for mpc (core/mpc_problem.py applies local compatibility adjustments); apf.py, apfc.py and dynamics.py for apf (core/baselines/ adapters).",
   "ported_algorithms_commit": "d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae",
   "pinned_on": "2026-11-05"
 }

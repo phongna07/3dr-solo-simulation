@@ -106,7 +106,8 @@ class Algorithm(Protocol):
 
 
 # Name -> (module, class), imported only when selected.
-ALGORITHMS = {'mpc': ('.mpc_algorithm', 'MPCAlgorithm')}
+ALGORITHMS = {'mpc': ('.mpc_algorithm', 'MPCAlgorithm'),
+              'apf': ('.baselines.apf', 'APFAlgorithm')}
 
 
 def algorithm_names():

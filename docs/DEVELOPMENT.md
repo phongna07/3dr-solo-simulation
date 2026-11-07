@@ -159,6 +159,50 @@ and empty scan cycles can be inspected alongside solver outcomes. Repeated scan
 timestamps do not integrate the same evidence twice. See
 [sensor geometry and projection limits](CONFIGURATION.md#sensors-and-target-input).
 
+### Baseline algorithms
+
+`algorithm: apf` (`core/baselines/apf.py`) runs the unchanged upstream `apf.py`
+artificial potential field per UAV (`UPSTREAM_MODULES` `dynamics`, `apfc`,
+`apf`; APF calls `apfc.speed_limit`) through the same `ParallelFleet`, map
+barrier, leadership/assignment/slot contraction and ROS execution path as MPC.
+Shared adapters live in `core/baselines/`:
+
+- `shim.py`: `UpstreamRobot` exposes the attributes upstream planners read
+  (`index` in fleet order, which seeds upstream's per-robot RNG `1000 + index`;
+  `state = [x, y, z, vx, vy, vz]` and `accel` from the measured `VehicleState`;
+  `states_prediction`; `mpc_fail_streak`). Teammate shims are rebuilt each
+  cycle from the frozen measured snapshot and neighbor predictions. Converters
+  map upstream `[x, y, z, vx, vy, 0]` rows to local `[px, py, vx, vy, ax, ay]`.
+- `rollout.py`: upstream applies a baseline command for one `TIMESTEP`. The
+  executable trajectory applies it for step 0 with upstream `dynamics.model`,
+  then brakes to rest with upstream `impc_ob._brake_u`. Normal operation samples
+  only the first interval because a new plan arrives every cycle; a missed cycle
+  flies the braking tail until setpoint expiry.
+- Goal policy `baseline_standoff` (`coordination.guidance_goal`): satellites use
+  their slot; the leader flies to `BASELINE_LEADER_STANDOFF` from the pursuit
+  goal on the target-to-leader line (upstream `robot_jps.py` baselines); others
+  use the pursuit goal.
+
+`APFVehicle` keeps one upstream `APF` per worker (persistent RNG). Obstacles are
+the hit endpoints of the worker's latest integrated scan; teammate returns are
+already removed by `project_scan`, and teammates enter as upstream robots. Its
+`NeighborPrediction` is upstream's constant-velocity prediction (what upstream
+teammates see, and the leader look-ahead for slots); its `ExecutableTrajectory`
+is the rollout. Results report `tracking`/`search`, plan time as `solver_ms`/
+`solver_cpu_ms` and `obstacle_points`; non-finite output is
+`apf_invalid_output`. There is no path service, corridor or retained stop, so
+`revalidate` is the identity. The map still integrates for slot contraction and
+the occupancy panel.
+
+Known deviations from upstream: all UAVs plan against the previous cycle's
+teammate predictions (upstream stepped robots sequentially); obstacles are
+LiDAR hits of the latest scan rather than upstream's simulated LiDAR points;
+state and acceleration are measured and delayed. Upstream scales the APF
+repulsion range with `VMAX`: with `VMAX` 1.2 m/s, `L = Lc = 1.2 m`, while
+braking from `VMAX` needs about 0.6 m including acceleration lag. Close
+obstacle approaches are a baseline result, not a tuning target. Measured speed
+above `VMAX` makes the first trajectory row exceed setpoint limits, as for MPC.
+
 ## Upstream submodule
 
 Initialize before building, or clone the parent with `--recurse-submodules`:
@@ -865,3 +909,34 @@ configuration changes or upstream edits were added. The simulation is stopped.
 
 A Ctrl+C sent during an earlier failure cleanup was ignored and cleanup completed.
 `matches_pinned_sources` was true. No GUI (`--gui`) run was performed.
+
+## Algorithm registry and APF baseline verification (November 7, 2026)
+
+The fleet runtime was generalized behind the algorithm registry, then the
+upstream `apf` baseline was added. All runs are 60 s tracking with the full
+fleet, camera input and recording. Every run exited 0, landed, and finalized
+its video with all panels; `matches_pinned_sources` was true and listed only
+the selected algorithm's modules. The pre-refactor references were flown from
+an unchanged `main` checkout.
+
+| Preset | Algorithm | Run | Clearance / min UAV distance (m) | Ready | Nearest UAV–target p50 (m) |
+|---|---|---|---|---:|---:|
+| small50_3uav | mpc, `main` | `20261107T063228Z-18112` | 0.716 / 1.862 | 1.000 | 1.15 |
+| small50_3uav | mpc | `20261107T065857Z-27847` | 0.722 / 1.815 | 1.000 | 1.15 |
+| small50_3uav | `--algorithm mpc` | `20261107T072239Z-4779` | 0.720 / 1.834 | 1.000 | 1.14 |
+| small50_3uav | mpc, after APF | `20261107T075756Z-15275` | 0.721 / 1.844 | 1.000 | 1.16 |
+| large200_5uav | mpc, `main` | `20261107T063935Z-6265` | 0.697 / 1.288 | 1.000 | 1.09 |
+| large200_5uav | mpc | `20261107T070604Z-5790` | 0.698 / 1.297 | 1.000 | 1.08 |
+| scen1 | mpc, `main` | `20261107T064750Z-3032` | 0.254 / 2.716 | 0.934 | 3.54 |
+| scen1 | mpc | `20261107T071419Z-32071` | 0.258 / 2.702 | 0.920 | 3.54 |
+| small50_3uav | apf | `20261107T073358Z-7564` | 0.693 / 1.596 | 1.000 | 1.19 |
+| large200_5uav | apf | `20261107T074124Z-24976` | 0.741 / 0.843 | 1.000 | 1.51 |
+| scen1 | apf | `20261107T074937Z-31150` | 0.216 / 2.315 | 1.000 | 2.98 |
+
+MPC solver-time distributions and reason counts matched the references. The
+scen1 deadline-limited solves (`mpc_failed`, ~770 ms maxima) are present on
+`main` too. Three post-refactor optimizer captures replayed with zero error.
+APF plans take under 1 ms per UAV. Its baseline results are reported, not tuned:
+on large200_5uav uav1 and uav5 came within 0.84 m (below `UAV_SAFE_DISTANCE`
+1 m) at t ≈ 34.9 s and followers spent more cycles in `search`; on scen1 the
+fleet spent most cycles in `search` with 0.22 m minimum obstacle body clearance.

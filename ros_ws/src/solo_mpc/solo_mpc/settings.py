@@ -155,6 +155,7 @@ def load_settings(scenario_path, settings_path, algorithm=None):
         TRACK_EXIT_HYSTERESIS=cfg["TRACK_EXIT_HYSTERESIS_RATIO"] * cfg["VIEWING_RADIUS"],
         SWITCH_MARGIN=cfg["SWITCH_MARGIN_RATIO"] * cfg["VIEWING_RADIUS"],
         STANDOFF_DISTANCE=cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"] * cfg["STANDOFF_TIME"],
+        BASELINE_LEADER_STANDOFF=cfg["CBF_BOX_RATIO"] * cfg["VIEWING_RADIUS"],
     )
     for key, value in derived.items():
         if key not in overrides:
@@ -221,7 +222,7 @@ def validate(scenario, settings, cfg):
         if isinstance(cfg[key], bool) or not isinstance(cfg[key], int) or cfg[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
     for key in ("PATH_DEVIATION_THRESHOLD", "KF_PROCESS_NOISE_STD", "KF_OBS_NOISE_STD",
-                "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME"):
+                "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME", "BASELINE_LEADER_STANDOFF"):
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
     if not 0 < cfg["SLOT_MIN_RATIO"] <= 1:
