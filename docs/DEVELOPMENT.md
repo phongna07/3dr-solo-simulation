@@ -24,6 +24,7 @@ warm start, and stopping plan.
 | `core/runtime/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
 | `core/algorithms/mpc/` | MPC selection (`algorithm.py`) and `MPCVehicle` (`vehicle.py`): corridors, solver cache, warm start, retained stopping plans; `problem.py` local solver compatibility adjustments; `capture.py` optimizer-input capture and replay |
 | `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
+| `core/algorithms/cbf_qp/`, `cbf_qp_lag/` | Upstream CBF-QP safety filter baseline (`CBFQPVehicle`) and its lag-aware subclass |
 | `core/planning/` | Local JPS/Dijkstra (`planner_grid.py`), committed local paths (`paths.py`), leadership/formation (`coordination.py`), trajectory sampling (`references.py`), target route (`target_motion.py`, `geometry.py`) |
 | `core/perception/` | Scan projection and pose history (`sensors.py`), occupancy primitives (`occupancy_grid.py`), explicit sensor rays (`mapping.py`), target estimation (`tracking.py`) |
 | `core/video/` | Mission video encoder and `python3 -m solo_mpc.core.video` (`encoder.py`), composite, occupancy and state panels, shared visual style (`style.py`) |
@@ -218,6 +219,42 @@ repulsion range with `VMAX`: with `VMAX` 1.2 m/s, `L = Lc = 1.2 m`, while
 braking from `VMAX` needs about 0.6 m including acceleration lag. Close
 obstacle approaches are a baseline result, not a tuning target. Measured speed
 above `VMAX` makes the first trajectory row exceed setpoint limits, as for MPC.
+
+`algorithm: cbf_qp` and `cbf_qp_lag` (`core/algorithms/cbf_qp/`, `cbf_qp_lag/`)
+run the unchanged upstream `cbfqp.py` safety barrier certificates (Wang, Ames,
+Egerstedt 2017) per UAV (`UPSTREAM_MODULES` `dynamics`, `apfc`, `cbfqp`;
+`CBFQP.plan` calls `apfc.speed_limit`, and its deadlock LP uses
+`scipy.optimize.linprog`). Both share `CBFQPVehicle`; `cbf_qp_lag` only sets
+`lag_aware=True`, which enforces every barrier on the current state and on the
+state `T_d = ACCEL_TAU + TIMESTEP` (0.3 s) ahead with measured accelerations. The
+shared shims, goal policy, latest-scan hit obstacles and rollout are those of
+APF. The nominal PD aims at the same goal; its feed-forward `r_dot` is guidance
+`target_velocity`, the unclipped target filter velocity that `FleetCoordinator`
+adds for every vehicle (upstream `target_tracker.get_velocity()`). Gains are the
+upstream `CBF_QP_GAMMA`/`KP`/`KD`. One `CBFQP` persists per worker; status comes
+from its own counters read around `plan()`: a new `n_infeasible` (empty QP,
+upstream hybrid braking at `alpha`) is reason `cbf_infeasible_brake` with
+`nominal_ok=False`, so the command still publishes as a visible fallback and the
+cycle reports `partial_solver_failure` (lower readiness). Telemetry records
+`cbf_deadlock` (a Sec. VII resolution this cycle), `cbf_infeasible_total` and
+`cbf_deadlock_total`; non-finite output is `cbf_invalid_output`. Braking is
+computed from the cycle's measured state, so `revalidate` is the identity.
+
+Derived ranges at local limits (`alpha = UMAX/√2`, `beta = VMAX`): with UMAX 2.0
+and VMAX 1.2 (small50/large200), `alpha ≈ 1.41`, obstacle rows within
+`CORRIDOR_MARGIN + 1.71 m` and neighbors within `D_N ≈ UAV_SAFE_DISTANCE + 3.09 m`;
+with scen1's UMAX 3.0 and VMAX 2.2, `alpha ≈ 2.12`, `CORRIDOR_MARGIN + 3.34 m`
+and `UAV_SAFE_DISTANCE + 4.89 m`. Every LiDAR hit within reach is a barrier row
+(twice for the lag variant), and the exact projection is quadratic in rows, so
+`solver_ms` grows with scan density; worker deadlines stay unchanged.
+
+Known CBF deviations: the barrier models a double integrator (with lag
+`ACCEL_TAU` for `cbf_qp_lag`), while the executed chain is measurement latency,
+the control cycle, setpoint P control with acceleration feed-forward and native
+velocity control, so the barrier is not a guarantee here. Barriers use the
+acceleration estimated from measured velocity; teammates are planned against the
+previous cycle; obstacles are LiDAR hits; deadlock detection (`|v|, |u| < 0.05`)
+may never trigger under measurement noise.
 
 ## Upstream submodule
 
@@ -958,3 +995,54 @@ APF plans take under 1 ms per UAV. Its baseline results are reported, not tuned:
 on large200_5uav uav1 and uav5 came within 0.84 m (below `UAV_SAFE_DISTANCE`
 1 m) at t ≈ 34.9 s and followers spent more cycles in `search`; on scen1 the
 fleet spent most cycles in `search` with 0.22 m minimum obstacle body clearance.
+
+## CBF baseline verification (November 7, 2026)
+
+Guidance first gained `target_velocity`; the small50 regressions below were
+flown with only that change. The `cbf_qp`/`cbf_qp_lag` runs followed a rebuild.
+All runs are 60 s tracking with the full fleet, camera input and 1920 × 1080 /
+20 FPS recording; every run exited 0, landed and disarmed (zero motor speed,
+`safety_active` false) and `matches_pinned_sources` was true, listing exactly
+the selected algorithm's modules (`dynamics.py`, `apfc.py`, `cbfqp.py` for CBF).
+
+| Preset | Algorithm | Run | Clearance / min UAV distance (m) | Ready | Nearest UAV–target p50 (m) |
+|---|---|---|---|---:|---:|
+| small50_3uav | mpc, guidance velocity | `20261107T113037Z-176` | 0.714 / 1.836 | 1.000 | 1.14 |
+| small50_3uav | apf, guidance velocity | `20261107T113812Z-30116` | 0.693 / 1.597 | 1.000 | 1.19 |
+| small50_3uav | cbf_qp | `20261107T115311Z-27714` | 0.314 / 2.422 | 1.000 | 0.74 |
+| small50_3uav | cbf_qp_lag | `20261107T120046Z-2674` | 0.319 / 2.422 | 1.000 | 0.74 |
+| large200_5uav | cbf_qp | `20261107T120822Z-20351` | 0.498 / 1.293 | 1.000 | 0.87 |
+| large200_5uav | cbf_qp_lag | `20261107T121715Z-7705` | 0.508 / 1.278 | 1.000 | 0.87 |
+| scen1 | cbf_qp | `20261107T122610Z-19008` | 0.282 / 0.840 | 0.935 | 2.23 |
+| scen1 | cbf_qp_lag | `20261107T123508Z-13927` | 0.389 / 1.384 | 1.000 | 2.24 |
+
+The regressions match the November 7 references. Clearance is body clearance
+from ground-truth geometry; the CBF keeps the UAV centre `CORRIDOR_MARGIN` from
+LiDAR hits, so the centre margin (clearance + `ROBOT_RADIUS` − `CORRIDOR_MARGIN`)
+was +0.15, +0.16, +0.21, +0.22, −0.06 and +0.05 m in table order. The CBF
+baselines close in on obstacles more than MPC and APF do.
+
+Neither variant recorded an infeasible QP or deadlock on small50 or large200,
+where the two variants gave nearly identical motion. On scen1, plain `cbf_qp`
+recorded 47 `cbf_infeasible_brake` cycles (uav1 39, uav2 8), mostly at
+t ≈ 43.7–45.4 s with isolated brakes to 55 s, while both UAVs searched beside one
+building with about 140 hits in reach. The
+braking UAVs came within 0.84 m of each other (below `UAV_SAFE_DISTANCE` 1 m) at
+t = 44.6 s; its closest obstacle approach was 0.06 m inside the margin. The controller reported
+`partial_solver_failure` (readiness 0.935, visible in the recording). On the
+same preset `cbf_qp_lag` recorded no braking, kept 1.38 m and stayed outside
+the margin; this is one run per variant, so part of the difference may be
+run-to-run spread. No deadlock resolution triggered in any run, yet on scen1
+both variants stalled: uav1, in `search` 40–50 m from the target, stayed within
+1 m of its position against the same building from t = 44 s to 57.9 s
+(`cbf_qp`) and 56.7 s (`cbf_qp_lag`), creeping at about 0.1 m/s, above the
+upstream `|v| < 0.05` detection, before sliding free along the wall. small50 and
+large200 had no slow span (< 0.1 m/s for ≥ 2 s) after tracking began. Plan time grows with
+barrier rows: `solver_ms` p95/max was 1.4/3.2 ms (small50, plain), 2.4/9.4
+(small50, lag), 3.5/9.5 and 20/63 (large200), 8.7/30 and 64/496 ms (scen1). On scen1
+lag, 12.7 % of fleet cycles exceeded 100 ms compute; no worker deadline was
+missed. These are baseline results, not tuning targets.
+
+Installed-package check (not flight evidence): in the rebuilt image
+`upstream.load('cbfqp')` resolved `share/solo_mpc/upstream`, matched the pinned
+hashes, and `CBFQP._deadlock_type` ran its `scipy.optimize.linprog` LP.

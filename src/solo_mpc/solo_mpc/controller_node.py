@@ -421,7 +421,8 @@ class Controller(Node):
                             "solver_iterations", "planning_and_solve_ms",
                             "map_started_wall", "map_finished_wall",
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",
-                            "obstacle_points",
+                            "obstacle_points", "cbf_deadlock", "cbf_infeasible_total",
+                            "cbf_deadlock_total",
                         )
                     },
                     "armed": bool(n in self.flight and self.flight[n].armed),

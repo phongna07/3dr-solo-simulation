@@ -35,7 +35,9 @@ Controller settings select a registered `algorithm` (default `mpc`) through the
 small ROS-free algorithm registry; `./scripts/dev run --algorithm NAME`
 (`MPC_ALGORITHM`) overrides it for one run. `mpc` uses the existing MPC
 implementation and unchanged upstream solver/dynamics; `apf` runs the unchanged
-upstream artificial potential field baseline on the same leader/slot layers; see
+upstream artificial potential field baseline on the same leader/slot layers;
+`cbf_qp` and `cbf_qp_lag` run the unchanged upstream safety barrier certificate
+QP filter (plain and lag-aware) on the same layers; see
 [Development](DEVELOPMENT.md#baseline-algorithms). All three presets
 retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
 backend selection or one-UAV migration stage.
@@ -188,7 +190,9 @@ file that may have been overridden.
 | `CORRIDOR_BOX` / `CORRIDOR_MAX_FACES` | 1.5 m / 16 | Decomposition half size and initial solver allocation |
 | `SPEED_RECOVERY` | true | Local adapter recovery for initially overspeed measured states |
 | `IPOPT_OPTIONS` | 500 iterations / 0.2 s CPU | Solver limits; worker deadline remains independent |
-| `BASELINE_LEADER_STANDOFF` | `CBF_BOX_RATIO` × `VIEWING_RADIUS` (derived) | Baseline (`apf`) leader goal distance from the predicted target |
+| `BASELINE_LEADER_STANDOFF` | `CBF_BOX_RATIO` × `VIEWING_RADIUS` (derived) | Baseline (`apf`, `cbf_qp`, `cbf_qp_lag`) leader goal distance from the predicted target |
+| `CBF_QP_GAMMA` | 1.0 | Baselines `cbf_qp`/`cbf_qp_lag`: class-K function κ(h) = γh³ (upstream value) |
+| `CBF_QP_KP` / `CBF_QP_KD` | 1.0 / 2.0 | Nominal PD u = −KP(p − r) − KD(v − ṙ) to the guidance goal (upstream values) |
 
 The supplied controller enables `SPEED_RECOVERY` in the local adapter. It permits
 only the initial predicted overspeed that its maximum-effort braking model cannot
@@ -311,7 +315,7 @@ safety watchdogs keep their independent wall-time budgets.
 
 | Setting | Default |
 |---|---:|
-| `algorithm` | `mpc` (or `apf`; `--algorithm` overrides) |
+| `algorithm` | `mpc` (or `apf`, `cbf_qp`, `cbf_qp_lag`; `--algorithm` overrides) |
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |
