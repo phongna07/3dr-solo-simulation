@@ -40,7 +40,7 @@ SOURCE_DIRECTORY = _source_directory()
 SOURCE_HASHES = {}
 # Upstream module -> sibling modules its source imports by bare name.
 IMPORTS = {'dynamics': (), 'mpc_problem': ('dynamics',), 'apfc': ('dynamics',),
-           'apf': ('apfc',)}
+           'apf': ('apfc',), 'cbfqp': ('apfc',)}
 
 
 def _load(name, imports=None):
