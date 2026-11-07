@@ -262,8 +262,6 @@ def validate(scenario, settings, cfg):
                           UserWarning, stacklevel=2)
     if cfg["MPC_SOLVER"] != "ipopt":
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
-    if settings["target_mode"] not in ("camera", "ground_truth"):
-        raise ValueError("target_mode must be camera or ground_truth")
     if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
         raise ValueError("controller_execution must be parallel or sequential")
     for key, default in [("controller_worker_timeout_wall", 1.0),

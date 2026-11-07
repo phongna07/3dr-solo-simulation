@@ -43,7 +43,6 @@ Usage: ./scripts/dev COMMAND [arguments]
   mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
       [--preset small50_3uav|large200_5uav|scen1]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
-      [--ground-truth-target]     Track exact timestamped target positions without camera detection
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
   mission run|start|stop|status|reset [--seconds SIM_SECONDS]
   evaluate                       Evaluate the latest MPC flight log
@@ -151,7 +150,6 @@ case "$command" in
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
         --no-wait) wait_ready=false; shift ;;
-        --ground-truth-target) export MPC_TARGET_MODE=ground_truth; shift ;;
         --record-video) export MPC_RECORD_VIDEO=true; shift ;;
         *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
       esac

@@ -63,8 +63,8 @@ second; recorded video retains normal motion at 20 FPS. `--seconds 30` requests
 of the actual simulation rate. See the configuration
 guide for `simulation_real_time_factor`.
 
-The default uses camera detections and LiDAR. Add `--ground-truth-target` to
-`mpc` to supply timestamped target positions directly. Add `--record-video` for
+The controller uses exact timestamped ground-truth target positions and every
+UAV's LiDAR; there is no camera target detection. Add `--record-video` for
 a synchronized overhead/map/state/UAV-camera recording, or `--gui` for a viewer.
 The server otherwise runs headlessly. See the simulation guide for GPU setup.
 

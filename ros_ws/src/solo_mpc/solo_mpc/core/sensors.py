@@ -71,23 +71,6 @@ def project_scan(
     return ScanRays(origin, endpoints, hits, stamp)
 
 
-def pixel_to_ground(pixel, intrinsic, position, quaternion, ground_z=0.05):
-    """Intersect an optical-frame pixel ray with a horizontal world plane.
-
-    Position and quaternion describe the CAMERA OPTICAL frame in world axes
-    (+X right, +Y down, +Z forward), not the airframe. The simulated gimbal's
-    pose is supplied by stabilized_camera_pose at the image timestamp.
-    """
-    ray = np.linalg.solve(np.asarray(intrinsic).reshape(3, 3), [*pixel, 1.0])
-    direction = Rotation.from_quat(quaternion).apply(ray)
-    if direction[2] >= -1e-6:
-        raise ValueError("Camera ray does not intersect ground in front of the camera")
-    scale = (ground_z - position[2]) / direction[2]
-    if scale <= 0:
-        raise ValueError("Ground plane is behind camera")
-    return np.asarray(position) + scale * direction
-
-
 class PoseHistory:
     def __init__(self, tolerance=0.3, capacity=100):
         from collections import deque

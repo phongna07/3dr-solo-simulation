@@ -8,7 +8,7 @@ of ROS and preserve measured-state control and independent flight supervision.
 ## Architecture
 
 `scripts/dev` starts Docker Compose; `solo_mpc/launch/mpc.launch.py` owns Gazebo,
-one native ROS flight process per UAV, readiness, bridges, frame/perception/target
+one native ROS flight process per UAV, readiness, bridges, frame/target
 nodes, the algorithm adapter, independent setpoint publisher, and mission
 supervisor. The GUI is a separate
 client. Each persistent UAV worker owns its map, planner, corridor, solver cache,
@@ -24,7 +24,7 @@ committed path, warm start, and stopping plan.
 | `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
 | `core/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
 | `core/parallel_controller.py` | MPC worker payloads, map barrier, frozen predictions, guidance and solve diagnostics |
-| `controller_node.py`, `frame_node.py`, `perception_node.py` | ROS input/output, odometry twist rotation, marker detection |
+| `controller_node.py`, `frame_node.py`, `target_node.py` | ROS input/output, odometry twist rotation, ground-truth target publication |
 | `setpoint_node.py` | Source-stamped trajectory sampling, position/altitude feedback, expiry and proximity guard |
 | `flight_node.py` | Per-UAV ownership, flight service/state, world-to-body commands, takeoff and landing |
 | `mission_node.py`, `mission.py`, `evaluate.py` | Supervision, request CLI, measured-flight evaluation |
@@ -312,8 +312,8 @@ flight-process liveness. Do not weaken these layers to pass a mission.
 
 Do not write automated tests. Run a representative mission, inspect measured
 telemetry, logs and evaluation, and stop normally; see [Simulation](SIMULATION.md).
-For a solver change, ground-truth target mode isolates optimization from camera
-detection; add recording when visual behavior is relevant. Preserve the specific
+Ground-truth target input keeps solver changes isolated from perception; add
+recording when visual behavior is relevant. Preserve the specific
 run directory and report limits as well as successful outcomes.
 
 `metadata/controller_sources.jsonl` and optimizer captures identify actual loaded
@@ -354,6 +354,7 @@ existing run directories remain available for inspection. Current presets are
 On November 5, 2026, the rebuilt native image completed these full-fleet
 missions using default camera target detection, every UAV's LiDAR, and
 `--record-video`. No ground-truth target override or one-UAV phase was used.
+Camera detection has since been removed; current runs always use ground truth.
 There is no legacy backend.
 
 | Preset | UAVs | Tracking limit | Actual `runs/` directory | Fleet cycles ready / total | Failed nominal UAV solves |

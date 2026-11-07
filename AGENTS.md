@@ -98,14 +98,14 @@ active imports, packaging, or runtime behavior change.
 Routine simulation verification is authorized without additional confirmation:
 
 ```bash
-./scripts/dev mpc --ground-truth-target
+./scripts/dev mpc
 ./scripts/dev mission run --seconds 30
 ./scripts/dev evaluate
 ./scripts/dev stop
 ```
 
-Add `--record-video` when visual behavior is relevant, or use default camera mode
-to check perception. The duration limits tracking simulation time, not startup,
+Add `--record-video` when visual behavior or the UAV FOV panels are relevant.
+Target input is always ground truth; there is no camera detection. The duration limits tracking simulation time, not startup,
 takeoff, or landing. Use longer runs when needed. Stop any existing simulation
 before a new one. If a command fails, inspect it and explicitly complete cleanup; commands
 after a failed `&&` are skipped. Confirm landing/disarm. Use `stop --force` only

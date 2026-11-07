@@ -1,7 +1,7 @@
 """Upstream robot_jps mode/assignment/slot semantics over a fleet snapshot.
 
-Camera mode supplies physical detections; external mode supplies geometric
-visibility from a fresh global position. SEARCH is active target pursuit:
+The ROS adapter supplies geometric visibility from a fresh ground-truth
+target position. SEARCH is active target pursuit:
 distant followers join formation after passing the leader-distance hysteresis.
 """
 

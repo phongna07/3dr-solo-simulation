@@ -368,7 +368,6 @@ class MissionSupervisor(Flight):
         goal = np.asarray(self.scenario["target"]["waypoints"][-1])[:2]
         begin_wall = time.monotonic()
         begin_sim = self.get_clock().now()
-        target_paused = False
         failure_since = None
         arrival_since = None
         while rclpy.ok():
@@ -384,11 +383,7 @@ class MissionSupervisor(Flight):
                     for v in self.snapshots.get("vehicles", {}).values()
                 ]
                 distances = [np.linalg.norm(p - goal) for p in positions]
-                tracking_radius = (
-                    self.scenario["viewing_radius"]
-                    if self.settings.get("target_mode", "camera") == "ground_truth"
-                    else self.settings["flight_altitude"] * np.tan(self.settings["camera_hfov"] / 2)
-                )
+                tracking_radius = self.scenario["viewing_radius"]
                 if (
                     len(distances) == len(self.names)
                     and max(distances) < self.settings.get("arrival_fleet_radius", 6.0)
@@ -436,20 +431,8 @@ class MissionSupervisor(Flight):
                 ):
                     raise RuntimeError("Planner inputs or solves remained unavailable")
             age = self.snapshots.get("target_observation_age")
-            if age is not None and self.settings.get("target_mode", "camera") == "ground_truth":
-                if age > self.settings["target_timeout_sim"]:
-                    raise RuntimeError("External target position stopped updating")
-            elif age is not None:
-                # Pause during camera occlusion while UAVs SEARCH from their
-                # last observation. Exact external input has no reacquisition.
-                lost = age > self.settings["target_timeout_sim"]
-                if lost != target_paused:
-                    self.service_call("/target/run", not lost)
-                    target_paused = lost
-                if age > self.settings["target_search_timeout_sim"]:
-                    raise RuntimeError(
-                        "Target could not be reacquired within SEARCH timeout"
-                    )
+            if age is not None and age > self.settings["target_timeout_sim"]:
+                raise RuntimeError("External target position stopped updating")
             if not all(
                 self.connected(n)
                 and self.states[n].armed

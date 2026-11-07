@@ -63,18 +63,18 @@ For the scaled upstream layout in a 200 × 200 m field at 6 m flight altitude:
 ./scripts/dev stop
 ```
 
-Add `--ground-truth-target` to isolate flight/control from marker perception.
+Target input is always exact ground truth; UAV cameras only feed recordings.
 The complete route is much longer than this representative check and contains
 2.6 m/s sprint legs. A duration-limited mission is not evidence of completing
 the route or all handoffs. Retain the actual run ID and inspect the evaluation,
-per-UAV solver/worker timing, camera observations, landing and finalized video.
+per-UAV solver/worker timing, target freshness, landing and finalized video.
 Budget wall time from the selected pacing and observed clock rate, plus
 takeoff/landing. Recording temporarily retains raw video until finalization;
 check free disk space before long missions.
 
 The original large preset's route takes about 464 simulation seconds, with
 several early slalom bends through nearby obstacles: at least 39 wall minutes at
-0.2×. Target-loss pauses can extend the route. Consult the actual clock rate.
+0.2×. Consult the actual clock rate.
 A time-limited run covers only part of it; rendering five sensors and a large
 obstacle field can make simulation slower than wall time. Use the observed clock
 rate when choosing a verification duration. Select `--preset small50_3uav` to
@@ -83,7 +83,6 @@ for regeneration and parameter details.
 
 | Command | Purpose |
 |---|---|
-| `mpc --ground-truth-target` | Exact timestamped target input; omit detectors/cameras unless recording |
 | `mpc --record-video` | Record overhead, map, state instruments, and all UAV FOVs |
 | `mpc --gui` / `gui` | Attach Gazebo viewer; closing it leaves simulation running |
 | `mpc --no-wait` / `wait` | Start asynchronously / wait indefinitely for readiness |
@@ -175,7 +174,8 @@ clearance and successful commands alone do not establish continuous safety.
 The three current presets completed recorded full-fleet native missions on
 November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
 for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;
-no ground-truth target override was used. Telemetry confirmed settled landing,
+no ground-truth target override was used (detection has since been removed).
+Telemetry confirmed settled landing,
 released ownership and actual rotor shutdown for every vehicle. Finalized videos
 were decoded and visually sampled with the original composition intact. See
 [Development](DEVELOPMENT.md#native-migration-verification) for exact run
@@ -195,7 +195,7 @@ Buildings and trees can cover the paint. Markings are batched visual meshes
 collision geometry. Restart the development stack to regenerate the scenery;
 release images need rebuilding.
 
-Select `--record-video` at launch, optionally with `--ground-truth-target`.
+Select `--record-video` at launch; it also enables the UAV cameras shown in the FOV panels.
 Normal `stop` and automatic shutdown after a failed `mpc` or `mission run`
 finalize `recorded-mission.mp4`; successful mission completion and normal GUI
 closure do not. Recording starts at takeoff and continues through landing.
@@ -307,7 +307,7 @@ UAV images, and occupancy map; repeated source stamps identify held feeds.
 The Full HD overhead bridge and recorder use reliable ROS delivery with a
 20-image history so lost DDS fragments can be retransmitted. Best-effort
 delivery of these large images can cause periodic freezes even when Gazebo
-renders at 20 FPS; the smaller perception feeds retain sensor-data QoS.
+renders at 20 FPS; the smaller UAV camera feeds retain sensor-data QoS.
 Restart the stack after changing recording code or bridge configuration.
 Rendering/encoding adds load. Add rosbag recording from `shell` only when needed,
 using a fresh output directory and stopping it before the container.

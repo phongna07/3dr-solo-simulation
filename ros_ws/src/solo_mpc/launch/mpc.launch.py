@@ -24,12 +24,9 @@ def start(context):
     get = lambda n: LaunchConfiguration(n).perform(context)
     fleet = load_config(get("fleet"))
     scenario, settings, cfg = load_settings(get("scenario"), get("settings"))
-    if get("target_mode"):
-        settings["target_mode"] = get("target_mode")
-    if settings["target_mode"] not in ("camera", "ground_truth"):
-        raise ValueError("Invalid target_mode")
     record_video = get("record_video") == "true"
-    camera_enabled = settings["target_mode"] == "camera" or record_video
+    # Target input is exact ground truth; UAV cameras exist only for recording.
+    camera_enabled = record_video
     if len(fleet["uavs"]) != len(scenario["starts"]):
         raise ValueError("Fleet/scenario UAV count mismatch")
     for uav, point in zip(fleet["uavs"], scenario["starts"]):
@@ -120,19 +117,9 @@ def start(context):
         parameters=[{"use_sim_time": True}], output="both",
     )
     actions += observed(supervisor, progress, 'mission-supervisor', initializes=True)
-    # Each camera callback runs in its own process, independently of the other
-    # vehicles and of all optimization workers. Reuse the installed executable.
-    for uav in fleet["uavs"] if settings["target_mode"] == "camera" else []:
-        name = f"camera-detector-{uav['name']}"
-        node = Node(
-            package="solo_mpc", executable="marker_detector",
-            arguments=args + ["--vehicle", uav["name"], '--startup-component', name],
-            parameters=[{"use_sim_time": True}], output="both",
-        )
-        actions += observed(node, progress, name, initializes=True)
     if record_video:
         # Run the live module so recording needs no image rebuild in development.
-        # Disk writes run independently of camera detection and flight control.
+        # Disk writes run independently of flight control.
         recorder = ExecuteProcess(
             cmd=[
                 "python3", "-m", "solo_mpc.camera_recorder", "--combined",
@@ -181,9 +168,6 @@ def generate_launch_description():
                 "record_video",
                 default_value=os.environ.get("MPC_RECORD_VIDEO", "false"),
                 choices=["true", "false"],
-            ),
-            DeclareLaunchArgument(
-                "target_mode", default_value=os.environ.get("MPC_TARGET_MODE", "")
             ),
             DeclareLaunchArgument("run_id", default_value=os.environ.get("RUN_ID", "")),
             OpaqueFunction(function=start),

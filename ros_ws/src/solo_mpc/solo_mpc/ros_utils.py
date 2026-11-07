@@ -16,7 +16,7 @@ def arguments(description):
     parser.add_argument("--fleet", required=True)
     parser.add_argument("--run-dir", default="")
     parser.add_argument("--world", default="mpc_small50")
-    parser.add_argument("--vehicle", help="Run the camera detector for one fleet vehicle")
+    parser.add_argument("--vehicle", help="Run the per-vehicle process for one fleet vehicle")
     parser.add_argument('--startup-component', help='Component name in the launch startup inventory')
     args, ros = parser.parse_known_args()
     from pathlib import Path

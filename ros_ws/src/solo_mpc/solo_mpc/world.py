@@ -274,7 +274,8 @@ def overhead_camera(target, settings):
 
 def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
                        record_video=False):
-    camera_enabled = settings["target_mode"] == "camera" or record_video
+    # UAV cameras feed only the recorded FOV panels and coverage overlays.
+    camera_enabled = record_video
     if camera_enabled and settings["camera_width"] != settings["camera_height"]:
         raise ValueError("World-stabilized visibility model requires a square camera image")
     output = Path(destination)

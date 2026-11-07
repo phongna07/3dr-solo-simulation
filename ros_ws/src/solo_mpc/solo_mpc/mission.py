@@ -135,10 +135,10 @@ def main(args=None):
                 for name, vehicle in sorted(vehicles.items()):
                     if vehicle.get("result"):
                         result = vehicle['result']
-                        if result == 'search' and controller.get('target_mode') == 'ground_truth':
+                        if result == 'search':
                             result = 'search (target pursuit)'
                         details.append(f"{name}: {result}")
-                if state != 'landing' and controller.get('target_mode') == 'ground_truth' and 'target_input_fresh' in controller:
+                if state != 'landing' and 'target_input_fresh' in controller:
                     details.append('external target: ' + ('fresh' if controller['target_input_fresh'] else 'stale'))
                 suffix = f"; {'; '.join(details)}" if details else ""
                 progress(f"Mission {state} ({now - begin:.0f}s wall elapsed){suffix}")

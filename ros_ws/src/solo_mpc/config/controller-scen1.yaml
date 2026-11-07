@@ -24,7 +24,6 @@ publish_rate: 20.0
 state_timeout_sim: 0.5
 sensor_timeout_sim: 0.5
 target_timeout_sim: 1.5
-target_search_timeout_sim: 8.0
 planner_failure_timeout_sim: 3.0
 arrival_fleet_radius: 13.0
 arrival_timeout_sim: 30.0
@@ -33,11 +32,9 @@ command_timeout_wall: 3.0
 pose_timeout_wall: 3.0
 flight_timeout_sim: 2.5
 flight_timeout_wall: 3.0
-target_mode: camera
 altitude_kp: 1.0
 vertical_speed_limit: 0.5
 frame_history_tolerance: 0.3
-marker_min_pixels: 4
 params:
   ROBOT_RADIUS: 0.5
   # Scaled scen1 bounds; retain physical Iris radius and at least 1 m separation.

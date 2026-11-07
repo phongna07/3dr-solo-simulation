@@ -19,7 +19,7 @@ Use container paths for CLI overrides:
 ./scripts/dev mpc --fleet /workspace/config/fleet-custom.yaml   --scenario /workspace/config/scenario-custom.yaml   --settings /workspace/config/controller-custom.yaml
 ```
 
-`.env` supports `FLEET_CONFIG`, `MPC_SCENARIO`, `MPC_SETTINGS`, `MPC_TARGET_MODE`,
+`.env` supports `FLEET_CONFIG`, `MPC_SCENARIO`, `MPC_SETTINGS`,
 `SIM_IMAGE`,
 `ROS_DOMAIN_ID` (42), `BUILD_JOBS` (4), and `LIBGL_ALWAYS_SOFTWARE`.
 The runner supplies host UID/GID and a fresh run ID. Select GPU/display overrides
@@ -212,7 +212,8 @@ Camera defaults are 160 × 160 at 8 Hz, square images, and approximately 53.13°
 horizontal FOV. The ideal Gazebo gimbal keeps the camera downward and world-aligned,
 with its optical center 0.04 m below the body. It cancels attitude motion without
 mechanical dynamics. The ground footprint is about 2.96 × 2.96 m at 3 m body
-altitude. Projection assumes a known flat target plane; occlusion remains possible.
+altitude. UAV cameras are created only with `--record-video`; they feed the
+recorded FOV panels and coverage overlays, not target estimation.
 
 Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 3 m range, and 0.01 m
 Gaussian range-noise standard deviation. Each UAV integrates its own remaining
@@ -238,16 +239,14 @@ ground return reconstructed above it can remain as a false occupied cell.
 Sparse/empty scans add no evidence in unseen directions, and persistent maps can
 retain old evidence. An optimistic map is not proof that unobserved space is clear.
 
-`camera` mode uses magenta-marker detections. During brief loss the estimate
-coasts, then searches; prolonged loss pauses the cooperative simulated target.
-`./scripts/dev mpc --ground-truth-target` instead provides exact timestamped target
-positions, omitting detectors/cameras unless recording. Velocity, confidence,
-and lead pursuit remain estimated. A stale external target fails the mission
-with landing cleanup. The CLI flag overrides environment/YAML target selection.
+The target node publishes exact timestamped ground-truth positions on
+`/target/ground_truth`; the controller consumes them directly, with no camera
+detection. Velocity, confidence, and lead pursuit remain estimated. A target
+older than `target_timeout_sim` fails the mission with landing cleanup.
 
 `SEARCH` means target pursuit; a distant UAV can be in SEARCH even with fresh
-external input. Formation membership still uses viewing-distance gates. The
-resolved source and `target_input_fresh` are reported in logs and status.
+external input. Formation membership still uses viewing-distance gates.
+`target_input_fresh` is reported in logs and status.
 
 ## Timing and expiry
 

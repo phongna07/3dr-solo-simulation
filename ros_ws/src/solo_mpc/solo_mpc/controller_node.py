@@ -48,7 +48,6 @@ class Controller(Node):
             n: PoseHistory(args.settings_data["frame_history_tolerance"])
             for n in args.names
         }
-        self.observed = {}
         self.last_observation = -np.inf
         self.subscriptions_keep = []
         self.outputs = {}
@@ -88,8 +87,6 @@ class Controller(Node):
                 (LaserScan, "scan", self.scan),
                 (FlightState, "flight/state", self.state),
             ]
-            if args.settings_data["target_mode"] == "camera":
-                subscriptions.append((PoseStamped, "target/observation", self.observation))
             for typ, suffix, cb in subscriptions:
                 self.subscriptions_keep.append(
                     self.create_subscription(
@@ -99,24 +96,17 @@ class Controller(Node):
                         qos_profile_sensor_data,
                     )
                 )
-        if args.settings_data["target_mode"] == "ground_truth":
-            self.subscriptions_keep.append(
-                self.create_subscription(
-                    PoseStamped,
-                    "/target/ground_truth",
-                    lambda msg: self.observation("ground_truth", msg),
-                    10,
-                )
-            )
+        self.subscriptions_keep.append(
+            self.create_subscription(PoseStamped, "/target/ground_truth", self.observation, 10)
+        )
         cfg = dict(args.cfg)
         if args.run_dir:
             cfg['DIAGNOSTIC_DIR'] = str(Path(args.run_dir, 'optimizer-inputs'))
             cfg['DIAGNOSTIC_CAPTURE_CYCLES'] = args.settings_data.get('diagnostic_capture_cycles', 128)
         self.team = create_algorithm(args.settings_data.get('algorithm', 'mpc'),
                                      args.names, cfg, args.settings_data)
-        if args.settings_data["target_mode"] == "ground_truth":
-            self.team.track = ExactTargetTracker(
-                cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
+        self.team.track = ExactTargetTracker(
+            cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
         self.cycles = CycleRunner()
         self.cycle_context = None
         self.last_cycle_stamp = -np.inf
@@ -178,18 +168,13 @@ class Controller(Node):
     def state(self, n, msg):
         self.flight[n] = msg
 
-    def observation(self, n, msg):
-        sources = ("ground_truth",) if self.args.settings_data["target_mode"] == "ground_truth" else self.args.names
-        if n not in sources:
-            return
+    def observation(self, msg):
         stamp = seconds(msg.header.stamp)
         now = self.get_clock().now().nanoseconds * 1e-9
         position = pose_arrays(msg)[0]
         if (msg.header.frame_id != 'world' or not np.isfinite(position).all()
                 or not 0 <= now - stamp <= self.args.settings_data['target_timeout_sim']):
             return
-        if stamp > self.observed.get(n, -np.inf):
-            self.observed[n] = stamp
         if self.team.track.observe(position, stamp):
             self.last_observation = stamp
 
@@ -279,10 +264,7 @@ class Controller(Node):
             reason = 'waiting_for_flight_altitude'
         elif (
             self.team.track.observed_at is None
-            or not 0 <= stamp - self.team.track.observed_at <= settings[
-                "target_timeout_sim" if settings["target_mode"] == "ground_truth"
-                else "target_search_timeout_sim"
-            ]
+            or not 0 <= stamp - self.team.track.observed_at <= settings["target_timeout_sim"]
         ):
             reason = "target_unavailable"
         else:
@@ -321,20 +303,14 @@ class Controller(Node):
                     reason = "scan_pose_unavailable"
                     break
             if reason == "ready":
+                # Geometric tracking/formation gates need no camera visibility.
+                target = self.team.track.position(stamp)
                 seers = {
                     n
-                    for n, at in self.observed.items()
-                    if 0 <= stamp - at < settings["sensor_timeout_sim"]
+                    for n in names
+                    if max(abs(self.poses[n][0][:2] - target))
+                    <= cfg["VIEWING_RADIUS"]
                 }
-                if settings["target_mode"] == "ground_truth":
-                    # Geometric tracking/formation gates need no camera visibility.
-                    target = self.team.track.position(stamp)
-                    seers = {
-                        n
-                        for n in names
-                        if max(abs(self.poses[n][0][:2] - target))
-                        <= cfg["VIEWING_RADIUS"]
-                    }
                 self.cycle_context = start, now, stamp
                 try:
                     self.cycles.submit(self.team.step, CycleInput(states, scans, stamp, seers, self.team.track))
@@ -416,7 +392,7 @@ class Controller(Node):
             "execution": self.execution,
             "reason": reason,
             **(self.team.diagnostics() if coordination is None else coordination),
-            "target_mode": settings["target_mode"],
+            "target_mode": "ground_truth",
             "target_input_fresh": target_age is not None and 0 <= target_age <= settings['target_timeout_sim'],
             "target_observation_age": target_age,
             "target_estimate": None
@@ -470,5 +446,5 @@ class Controller(Node):
 
 def main():
     run_node(
-        Controller, "Multi-UAV MPC using measured ROS states and sensor observations"
+        Controller, "Multi-UAV MPC using measured ROS states and ground-truth target input"
     )
