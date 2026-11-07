@@ -1,4 +1,4 @@
-"""ROS adapter around the independent measured-state TeamController."""
+"""ROS adapter around the selected ROS-free measured-state fleet algorithm."""
 
 import hashlib
 import json
@@ -19,7 +19,7 @@ from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
-from .core.algorithm import CycleInput, VehicleState, create_algorithm
+from .core.algorithm import CycleInput, VehicleState, algorithm_class
 from .core.cycles import CycleRunner, result_is_current
 from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
 from .core.sensors import PoseHistory, project_scan
@@ -56,6 +56,8 @@ class Controller(Node):
         self.occupancy_pub = self.create_publisher(
             OccupancyGrid, OCCUPANCY_TOPIC, qos_profile_sensor_data)
         self.log = None
+        algorithm = args.settings_data.get('algorithm', 'mpc')
+        algorithm_type = algorithm_class(algorithm)
         if args.run_dir:
             for directory in ('telemetry', 'metadata'):
                 Path(args.run_dir, directory).mkdir(parents=True, exist_ok=True)
@@ -71,7 +73,8 @@ class Controller(Node):
                 source_log.write(
                     json.dumps(
                         {"wall": time.time(), "sha256": sources, "config": args.cfg,
-                         "upstream": provenance()}
+                         "algorithm": algorithm,
+                         "upstream": provenance(algorithm_type.UPSTREAM_MODULES)}
                     )
                     + "\n"
                 )
@@ -103,8 +106,7 @@ class Controller(Node):
         if args.run_dir:
             cfg['DIAGNOSTIC_DIR'] = str(Path(args.run_dir, 'optimizer-inputs'))
             cfg['DIAGNOSTIC_CAPTURE_CYCLES'] = args.settings_data.get('diagnostic_capture_cycles', 128)
-        self.team = create_algorithm(args.settings_data.get('algorithm', 'mpc'),
-                                     args.names, cfg, args.settings_data)
+        self.team = algorithm_type(args.names, cfg, args.settings_data)
         self.team.track = ExactTargetTracker(
             cfg['KF_PROCESS_NOISE_STD'], cfg['KF_OBS_NOISE_STD'])
         self.cycles = CycleRunner()
@@ -418,6 +420,7 @@ class Controller(Node):
                             "solver_iterations", "planning_and_solve_ms",
                             "map_started_wall", "map_finished_wall",
                             "solve_started_wall", "solve_finished_wall", "corridor_faces",
+                            "obstacle_points",
                         )
                     },
                     "armed": bool(n in self.flight and self.flight[n].armed),

@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import yaml
 
+from .core.algorithm import algorithm_names
 from .core.target_motion import target_route
 
 DEFAULTS = dict(
@@ -97,7 +98,8 @@ DEFAULTS = dict(
 )
 
 
-def load_settings(scenario_path, settings_path):
+def load_settings(scenario_path, settings_path, algorithm=None):
+    """``algorithm`` (e.g. from MPC_ALGORITHM) overrides the settings file."""
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
     settings.setdefault('simulation_real_time_factor', 0.2)
@@ -116,6 +118,8 @@ def load_settings(scenario_path, settings_path):
                 or not math.isfinite(value) or value <= 0):
             raise ValueError(f'{key} must be finite and positive')
     settings.setdefault('algorithm', 'mpc')
+    if algorithm:
+        settings['algorithm'] = algorithm
     settings.setdefault('position_kp', 1.0)
     settings.setdefault('acceleration_feedforward_time', 0.22)
     for key in ('position_kp', 'acceleration_feedforward_time'):
@@ -151,6 +155,7 @@ def load_settings(scenario_path, settings_path):
         TRACK_EXIT_HYSTERESIS=cfg["TRACK_EXIT_HYSTERESIS_RATIO"] * cfg["VIEWING_RADIUS"],
         SWITCH_MARGIN=cfg["SWITCH_MARGIN_RATIO"] * cfg["VIEWING_RADIUS"],
         STANDOFF_DISTANCE=cfg["VIEWING_RADIUS"] - scenario["tar_max_speed"] * cfg["STANDOFF_TIME"],
+        BASELINE_LEADER_STANDOFF=cfg["CBF_BOX_RATIO"] * cfg["VIEWING_RADIUS"],
     )
     for key, value in derived.items():
         if key not in overrides:
@@ -217,7 +222,7 @@ def validate(scenario, settings, cfg):
         if isinstance(cfg[key], bool) or not isinstance(cfg[key], int) or cfg[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
     for key in ("PATH_DEVIATION_THRESHOLD", "KF_PROCESS_NOISE_STD", "KF_OBS_NOISE_STD",
-                "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME"):
+                "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME", "BASELINE_LEADER_STANDOFF"):
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
     if not 0 < cfg["SLOT_MIN_RATIO"] <= 1:
@@ -262,6 +267,8 @@ def validate(scenario, settings, cfg):
                           UserWarning, stacklevel=2)
     if cfg["MPC_SOLVER"] != "ipopt":
         raise ValueError("This ROS port currently supports the validated IPOPT backend")
+    if settings["algorithm"] not in algorithm_names():
+        raise ValueError(f"algorithm must be one of {', '.join(algorithm_names())}")
     if settings.get("controller_execution", "parallel") not in ("parallel", "sequential"):
         raise ValueError("controller_execution must be parallel or sequential")
     for key, default in [("controller_worker_timeout_wall", 1.0),

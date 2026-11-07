@@ -1,8 +1,10 @@
-"""Load the unchanged upstream solver without importing its simulator/config.
+"""Load unchanged upstream modules without importing its simulator/config.
 
-Upstream is a flat script repository. Its ``import dynamics`` is bound privately
-to the dynamics next to the solver, without changing sys.path, sys.modules['dynamics'],
-or the process-wide importer. Spawned UAV workers load their own module instances.
+Upstream is a flat script repository. Its sibling imports (``import dynamics``)
+are bound privately to the declared modules next to it, without changing
+sys.path, sys.modules['dynamics'], or the process-wide importer. Modules load
+on first use, so each algorithm loads and hashes only its own sources. Spawned
+UAV workers load their own module instances.
 """
 
 import builtins
@@ -31,21 +33,23 @@ def _source_directory():
                 break
         else:
             raise ImportError('Cannot locate MPC upstream sources; rebuild the solo_mpc package')
-    for name in ('mpc_problem.py', 'dynamics.py'):
-        if not (directory / name).is_file():
-            raise ImportError(
-                f'Missing upstream {directory / name}. Run '
-                'git submodule update --init --recursive in 3dr-solo-simulation, '
-                'then rebuild the image if using installed code.')
     return directory
 
 
 SOURCE_DIRECTORY = _source_directory()
 SOURCE_HASHES = {}
+# Upstream module -> sibling modules its source imports by bare name.
+IMPORTS = {'dynamics': (), 'mpc_problem': ('dynamics',), 'apfc': ('dynamics',),
+           'apf': ('apfc',)}
 
 
 def _load(name, imports=None):
     qualified = f'{__package__}._upstream_{name}'
+    if not (SOURCE_DIRECTORY / f'{name}.py').is_file():
+        raise ImportError(
+            f'Missing upstream {SOURCE_DIRECTORY / name}.py. Run '
+            'git submodule update --init --recursive in 3dr-solo-simulation, '
+            'then rebuild the image if using installed code.')
     spec = importlib.util.spec_from_file_location(qualified, SOURCE_DIRECTORY / f'{name}.py')
     module = importlib.util.module_from_spec(spec)
     if imports:
@@ -67,18 +71,24 @@ def _load(name, imports=None):
     return module
 
 
-dynamics = _load('dynamics')
-solver = _load('mpc_problem', {'dynamics': dynamics})
+@lru_cache(maxsize=None)
+def load(name):
+    """One private instance per process of an upstream module and its imports."""
+    if name not in IMPORTS:
+        raise ImportError(f'Upstream module {name!r} is not declared in core/upstream.py')
+    return _load(name, {dependency: load(dependency) for dependency in IMPORTS[name]})
 
 
-@lru_cache(maxsize=1)
-def provenance():
-    """Report actual loaded source hashes, alongside the recorded source pin."""
+@lru_cache(maxsize=None)
+def provenance(modules):
+    """Load, then report actual source hashes of exactly ``modules`` (a tuple)."""
+    for name in modules:
+        load(name)
     metadata = Path(__file__).resolve().parents[2] / 'UPSTREAM.json'
     if not metadata.is_file():
         metadata = SOURCE_DIRECTORY.parent / 'UPSTREAM.json'
     declared = json.loads(metadata.read_text())
-    hashes = dict(SOURCE_HASHES)
+    hashes = {f'{name}.py': SOURCE_HASHES[f'{name}.py'] for name in modules}
     return dict(repository=declared['repository'], pinned_commit=declared['commit'],
                 source_directory=str(SOURCE_DIRECTORY), sha256=hashes,
                 matches_pinned_sources=all(

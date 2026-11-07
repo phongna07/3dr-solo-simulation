@@ -20,8 +20,12 @@ than adding a separate document for each feature or experiment.
   actual source provenance; do not import upstream simulator/global config.
 - `core/mpc_problem.py`: local compatibility adapter, retaining inactive-neighbor
   conditioning and optional speed recovery. Do not restore copied solver code.
-- `core/algorithm.py`: small ROS-free `Algorithm` protocol and `VehicleState`;
-  `core/mpc_algorithm.py` integrates existing MPC, selected by `algorithm: mpc`.
+- `core/algorithm.py`: small ROS-free `Algorithm`/`VehiclePlanner` protocols,
+  `VehicleState` and the algorithm registry (`algorithm:` / `run --algorithm`);
+  `core/fleet.py` is the generic per-UAV worker runtime and `core/mpc_algorithm.py`
+  with `core/controller.py` (`MPCVehicle`) integrates existing MPC (`algorithm: mpc`).
+- `core/baselines/`: adapters running unchanged upstream baselines (`apf`) through
+  the fleet runtime: robot shims, command rollout; no copied baseline code.
 - Other `solo_mpc/core/` modules: local planning, occupancy/mapping, target
   estimation, coordination, and persistent per-UAV workers; keep ROS imports out.
   These remain local ports and do not automatically follow upstream changes.
