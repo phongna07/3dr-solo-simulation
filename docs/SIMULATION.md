@@ -226,9 +226,16 @@ and flush to fifteen seconds; recording never controls flight commands.
 `run` cleanup and `./scripts/dev stop` land first, then wait for recorder finalization
 before stopping the container. Finalization remuxes decodable segment prefixes,
 checks dimensions/FPS and decoded counts, and publishes `recorded-mission.mp4`
-whenever usable footage exists. Healthy footage is joined without re-encoding.
+whenever usable footage exists. Healthy segments are joined without
+re-encoding and verified, then compressed once on CPU (`libx264` medium, CRF 23,
+`-tune animation`, ten-second keyframe interval, B frames, two threads) with
+original frame timestamps; the short live keyframe interval and high live
+quality otherwise make files about seven times larger. If that pass fails or
+its decoded count differs, the verified joined copy is published and the
+recovery report's `compression` field records why. Finalization takes roughly
+0.6× the video duration and happens after landing.
 Missing frames use held images at their original 20 FPS simulation-time slots;
-only this recovery path re-encodes on CPU with the same thread limits. Leading
+this recovery path encodes directly with the same compact settings. Leading
 holes hold the first retained image. A recording with any such holes is
 **partial**, even though the MP4 is playable. No usable frames, disk failures,
 or failed output verification remain explicit failures. Cleanup still stops
@@ -242,7 +249,8 @@ Inspect `status/recording.json` and these telemetry files:
 - `recorded-mission.timestamps.jsonl`: published output frame/source mapping;
   `held`, `source_frame` and `playback_ns` describe recovery precisely.
 - `recorded-mission.timestamps.recovery.json`: retained/dropped/held counts,
-  gap frame ranges (end exclusive), fallback events and partial/interrupted state.
+  gap frame ranges (end exclusive), fallback events, partial/interrupted state
+  and the final `compression` outcome.
 
 Original source stamps are preserved on retained frames. Held frames carry the
 retained image's source stamps and the missing slot's simulation stamp, so lost

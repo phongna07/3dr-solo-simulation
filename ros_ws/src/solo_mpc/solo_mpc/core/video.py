@@ -12,6 +12,12 @@ import time
 import cv2
 
 
+def _compact_codec(fps):
+    """Long-GOP CPU settings for the published file; live segments stay short."""
+    return ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-tune', 'animation',
+            '-g', str(max(1, round(10 * fps))), '-threads', '2', '-pix_fmt', 'yuv420p']
+
+
 class _MP4Encoder:
     """Stream compressed one-second segments; retry only a bounded RAM window."""
 
@@ -262,8 +268,7 @@ def recover_video(path, logger=None, *, interrupted=False):
             # simulation time. These are explicitly marked in the sidecar.
             command += ['-vf', f'tpad=start_mode=clone:start_duration={starts[0] / fps}:stop_mode=clone:'
                         f'stop_duration={total / fps},fps={fps}',
-                        '-frames:v', str(total), '-c:v', 'libx264', '-preset', 'ultrafast',
-                        '-crf', '20', '-threads', '2', '-pix_fmt', 'yuv420p']
+                        '-frames:v', str(total), *_compact_codec(fps)]
         else:
             command += ['-c', 'copy']
         subprocess.run(command + ['-movflags', '+faststart', str(output)],
@@ -271,11 +276,31 @@ def recover_video(path, logger=None, *, interrupted=False):
                        timeout=300 + 4 * total / fps, check=True)
         if _decoded_frames(output, size, fps, timeout=60 + 2 * total / fps) != total:
             raise RuntimeError('Recovered output frame count mismatch; compressed inputs retained')
+        compression = 'libx264 medium crf 23'
+        if not missing:
+            # Joined live segments keep their short GOPs; recompress once and
+            # publish the verified joined copy if that pass fails.
+            compact = work / 'compact.mp4'
+            try:
+                subprocess.run(['ffmpeg', '-v', 'warning', '-nostdin', '-y', '-threads', '2',
+                                '-i', str(output), '-map', '0:v:0', '-an', *_compact_codec(fps),
+                                '-fps_mode', 'passthrough', '-movflags', '+faststart',
+                                str(compact)], stdout=subprocess.DEVNULL, stderr=log,
+                               timeout=300 + 4 * total / fps, check=True)
+                if _decoded_frames(compact, size, fps, timeout=60 + 2 * total / fps) != total:
+                    raise RuntimeError('compressed frame count mismatch')
+                output.unlink()
+                output = compact
+            except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
+                compression = f'skipped, joined live segments published: {exc}'
+                log.write(f'Video compression {compression}\n'.encode())
+                if logger:
+                    logger.warning(f'Video compression {compression}')
         summary = {'state': 'partial' if missing or interrupted else 'finalized',
                    'input_frames': total, 'retained_frames': len(retained),
                    'dropped_frames': len(missing), 'held_frames': len(missing),
                    'gaps': gaps, 'fallbacks': spec['fallbacks'], 'interrupted': interrupted,
-                   'fps': fps, 'size': size}
+                   'fps': fps, 'size': size, 'compression': compression}
         final_stamps = timestamps.with_suffix('.tmp')
         previous = min(retained)
         with final_stamps.open('w') as stream:
