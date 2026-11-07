@@ -11,10 +11,10 @@ import time
 
 import _pydecomp as pdc
 import numpy as np
-from ...coordination import path_carrot
+from ...planning.coordination import path_carrot
 
 from .problem import SolverCache
-from ...paths import PathService
+from ...planning.paths import PathService
 
 # The pinned pydecomp wheel exposes its computation in _pydecomp. Import the
 # binding directly: its package initializer also loads plotting libraries,

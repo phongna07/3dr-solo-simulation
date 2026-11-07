@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .planner_grid import IncrementalLogOddsGrid, njit
+from ..planning.planner_grid import IncrementalLogOddsGrid, njit
 
 
 @njit(cache=False)

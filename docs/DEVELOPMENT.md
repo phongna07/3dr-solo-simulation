@@ -24,8 +24,9 @@ warm start, and stopping plan.
 | `core/runtime/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
 | `core/algorithms/mpc/` | MPC selection (`algorithm.py`) and `MPCVehicle` (`vehicle.py`): corridors, solver cache, warm start, retained stopping plans; `problem.py` local solver compatibility adjustments; `capture.py` optimizer-input capture and replay |
 | `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
-| `core/paths.py`, `coordination.py`, `tracking.py` | Committed local paths, leadership/formation, target estimation |
-| `core/planner_grid.py`, `occupancy_grid.py`, `mapping.py` | Local JPS/Dijkstra, occupancy primitives, explicit sensor rays |
+| `core/planning/` | Local JPS/Dijkstra (`planner_grid.py`), committed local paths (`paths.py`), leadership/formation (`coordination.py`), trajectory sampling (`references.py`), target route (`target_motion.py`, `geometry.py`) |
+| `core/perception/` | Scan projection and pose history (`sensors.py`), occupancy primitives (`occupancy_grid.py`), explicit sensor rays (`mapping.py`), target estimation (`tracking.py`) |
+| `core/video/` | Mission video encoder and `python3 -m solo_mpc.core.video` (`encoder.py`), composite, occupancy and state panels, shared visual style (`style.py`) |
 | `controller_node.py`, `frame_node.py`, `target_node.py` | ROS input/output, odometry twist rotation, ground-truth target publication |
 | `setpoint_node.py` | Source-stamped trajectory sampling, position/altitude feedback, expiry and proximity guard |
 | `flight_node.py` | Per-UAV ownership, flight service/state, world-to-body commands, takeoff and landing |
@@ -38,7 +39,7 @@ The launch resolves fleet/scenario/controller inputs once for world generation,
 bridges and ROS nodes. `solo_mpc/world.py` builds the full Iris fleet and sensor
 world together; launch callbacks supervise process lifecycles. Every run is
 fresh; old sensor/flight state
-cannot be resumed. `core/visual_style.py` shares the camera framing and fleet
+cannot be resumed. `core/video/style.py` shares the camera framing and fleet
 palette between the GUI, world and recorder.
 
 Each vehicle uses native `MulticopterVelocityControl` → `Actuators` component →

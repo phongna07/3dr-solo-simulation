@@ -427,7 +427,7 @@ def finalize_recording(run):
         time.sleep(0.5)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Finalize recording before stack shutdown')
@@ -447,3 +447,7 @@ if __name__ == '__main__':
         print(json.dumps(summary, indent=2))
     else:
         finalize_recording(args.run)
+
+
+if __name__ == '__main__':
+    main()

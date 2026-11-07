@@ -25,7 +25,7 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 import yaml
 
-from .core.target_motion import GOAL_TOLERANCE
+from .core.planning.target_motion import GOAL_TOLERANCE
 from .ros_utils import pose_arrays, qos_profile_sensor_data, seconds
 
 

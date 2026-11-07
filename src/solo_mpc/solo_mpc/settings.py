@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 
 from .core.runtime.registry import algorithm_names
-from .core.target_motion import target_route
+from .core.planning.target_motion import target_route
 
 DEFAULTS = dict(
     HORIZON_LENGTH=10,

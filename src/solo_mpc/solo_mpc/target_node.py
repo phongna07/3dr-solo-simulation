@@ -11,7 +11,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
-from .core.target_motion import GOAL_TOLERANCE, startup_route_time, target_route
+from .core.planning.target_motion import GOAL_TOLERANCE, startup_route_time, target_route
 from .ros_utils import pose_message, run_node
 
 

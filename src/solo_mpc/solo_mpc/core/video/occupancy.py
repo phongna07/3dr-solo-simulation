@@ -5,7 +5,7 @@ import math
 import cv2
 import numpy as np
 
-from .visual_style import vehicle_color
+from .style import vehicle_color
 
 
 OCCUPANCY_TOPIC = '/mpc/occupancy_grid'

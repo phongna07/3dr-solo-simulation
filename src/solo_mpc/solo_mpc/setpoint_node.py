@@ -11,7 +11,7 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectory
 
-from .core.references import sample_trajectory
+from .core.planning.references import sample_trajectory
 from .ros_utils import pose_arrays, qos_profile_sensor_data, run_node, seconds
 
 

@@ -34,7 +34,7 @@ import heapq
 
 import numpy as np
 
-from .occupancy_grid import PersistentLogOddsGrid, _dilate_disk, _string_pull
+from ..perception.occupancy_grid import PersistentLogOddsGrid, _dilate_disk, _string_pull
 
 try:
     from numba import njit

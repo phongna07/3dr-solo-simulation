@@ -29,8 +29,9 @@ than adding a separate document for each feature or experiment.
   `mpc/capture.py` records optimizer inputs for replay. `apf/` runs the unchanged
   upstream baseline through `upstream_robot.py` shims and `command_rollout.py`;
   no copied baseline code.
-- Other `solo_mpc/core/` modules: local planning, occupancy/mapping, target
-  estimation, coordination, and persistent per-UAV workers; keep ROS imports out.
+- Other `solo_mpc/core/` packages: `planning/` (local grid planning, paths,
+  coordination, references, target route), `perception/` (sensors, occupancy/mapping,
+  target estimation) and `video/` (mission recording panels); keep ROS imports out.
   These remain local ports and do not automatically follow upstream changes.
 - `src/solo_mpc/solo_mpc/`: ROS state/sensor adapters, frames, publishing,
   mission supervision, recording, and evaluation.

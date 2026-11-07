@@ -22,9 +22,9 @@ from builtin_interfaces.msg import Duration
 from .core.runtime.contracts import CycleInput, VehicleState
 from .core.runtime.cycles import CycleRunner, result_is_current
 from .core.runtime.registry import algorithm_class
-from .core.occupancy_video import OCCUPANCY_TOPIC, fuse_occupancy
-from .core.sensors import PoseHistory, project_scan
-from .core.tracking import ExactTargetTracker
+from .core.video.occupancy import OCCUPANCY_TOPIC, fuse_occupancy
+from .core.perception.sensors import PoseHistory, project_scan
+from .core.perception.tracking import ExactTargetTracker
 from .core.upstream import provenance
 from .ros_utils import (
     pose_arrays,

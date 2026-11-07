@@ -10,7 +10,7 @@ from typing import Protocol, TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ..sensors import ScanRays
+    from ..perception.sensors import ScanRays
 
 
 @dataclass

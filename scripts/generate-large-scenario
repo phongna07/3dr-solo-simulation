@@ -12,7 +12,7 @@ import numpy as np
 
 # Use the same spline as the simulated target, including its sampled segments.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/solo_mpc"))
-from solo_mpc.core.target_motion import target_route
+from solo_mpc.core.planning.target_motion import target_route
 
 
 OBSTACLES_PER_KIND = 240

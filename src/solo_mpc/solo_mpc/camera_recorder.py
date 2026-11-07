@@ -25,10 +25,10 @@ from std_msgs.msg import String
 from solo_bringup.configuration import load_config
 from solo_bringup.startup import ComponentProgress, write_status
 
-from .core.video import FrameVideo
-from .core.composite_video import CompositeVideo
-from .core.occupancy_video import OCCUPANCY_TOPIC, render_occupancy
-from .core.visual_style import OVERHEAD_TOPIC
+from .core.video.encoder import FrameVideo
+from .core.video.composite import CompositeVideo
+from .core.video.occupancy import OCCUPANCY_TOPIC, render_occupancy
+from .core.video.style import OVERHEAD_TOPIC
 
 
 class CameraRecorder(Node):

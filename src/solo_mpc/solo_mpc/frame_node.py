@@ -10,7 +10,7 @@ from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
-from .core.sensors import stabilized_camera_pose
+from .core.perception.sensors import stabilized_camera_pose
 from .ros_utils import pose_message, qos_profile_sensor_data, run_node
 
 

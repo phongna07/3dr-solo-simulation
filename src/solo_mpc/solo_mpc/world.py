@@ -7,12 +7,12 @@ from pathlib import Path
 
 import yaml
 
-from .core.sensors import CAMERA_WORLD_OFFSET
+from .core.perception.sensors import CAMERA_WORLD_OFFSET
 from .obstacle_visuals import (
     CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
     LIDAR_VISIBILITY_MASK, building_mesh, srgb_material, street_mesh, tree_mesh,
 )
-from .core.visual_style import (
+from .core.video.style import (
     OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset, vehicle_color,
 )
 

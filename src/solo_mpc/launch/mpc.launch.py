@@ -16,7 +16,7 @@ from solo_bringup.launching import critical, observed
 from solo_bringup.runtime import create_run
 from solo_bringup.startup import StartupProgress
 from solo_mpc.settings import load_settings
-from solo_mpc.core.visual_style import OVERHEAD_FPS
+from solo_mpc.core.video.style import OVERHEAD_FPS
 from solo_mpc.world import bridge_config, generate_mpc_world
 
 

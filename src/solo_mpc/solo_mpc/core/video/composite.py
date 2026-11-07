@@ -5,10 +5,10 @@ import time
 
 import cv2
 
-from .video import FrameVideo
-from .occupancy_video import overlay_occupancy, waiting_occupancy
-from .state_video import ControllerStatusHistory, FlightStateHistory, overlay_states, render_states
-from .visual_style import vehicle_color
+from .encoder import FrameVideo
+from .occupancy import overlay_occupancy, waiting_occupancy
+from .states import ControllerStatusHistory, FlightStateHistory, overlay_states, render_states
+from .style import vehicle_color
 
 
 def overlay_views(background, views):

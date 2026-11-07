@@ -6,8 +6,8 @@ import math
 import cv2
 import numpy as np
 
-from .occupancy_video import MUTED, PANEL, TEXT
-from .visual_style import vehicle_color
+from .occupancy import MUTED, PANEL, TEXT
+from .style import vehicle_color
 
 
 VELOCITY = (255, 210, 91)
