@@ -1,7 +1,7 @@
 # 50 m east-west x 30 m north-south obstacle field with irregular placement.
 # Three UAVs start in a horizontal row, perpendicular to initial travel along +Y.
 # MPC world generation sets all spawn headings to yaw 90 degrees (north).
-# Default scenario. Run: ./scripts/dev mpc
+# Default scenario. Run: ./scripts/dev run --seconds 30
 description: 50 x 30 m scattered obstacle field with a winding target route
 xlim: [0, 50]
 ylim: [0, 30]

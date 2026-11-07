@@ -98,17 +98,16 @@ active imports, packaging, or runtime behavior change.
 Routine simulation verification is authorized without additional confirmation:
 
 ```bash
-./scripts/dev mpc
-./scripts/dev mission run --seconds 30
-./scripts/dev evaluate
-./scripts/dev stop
+./scripts/dev run --seconds 30
 ```
+
+`run` starts, flies, lands, evaluates, finalizes any video and stops the stack.
 
 Add `--record-video` when visual behavior or the UAV FOV panels are relevant.
 Target input is always ground truth; there is no camera detection. The duration limits tracking simulation time, not startup,
 takeoff, or landing. Use longer runs when needed. Stop any existing simulation
-before a new one. If a command fails, inspect it and explicitly complete cleanup; commands
-after a failed `&&` are skipped. Confirm landing/disarm. Use `stop --force` only
+before a new one. If `run` fails, inspect its cleanup output and confirm the
+container stopped. Confirm landing/disarm. Use `stop --force` only
 for a crashed simulation when normal cleanup cannot complete.
 
 Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
@@ -120,7 +119,7 @@ Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
 - `telemetry/mpc.jsonl`, `telemetry/truth.jsonl`, `reports/evaluation.json`: measured
   motion, all UAVs' solver outcomes, timing, tracking, geometry, and failures.
 - `recorded-mission.mp4` when requested: visually inspect the relevant result;
-  normal `stop` finalizes it, mission completion alone does not.
+  `run` cleanup (or a manual `stop`) finalizes it.
 
 For backend-wide changes, rebuild and verify `small50_3uav`, `large200_5uav`,
 and `scen1`, each with the full fleet, camera input and recording.

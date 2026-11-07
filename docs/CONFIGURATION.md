@@ -16,7 +16,7 @@ editing a YAML file does not reconfigure an active experiment.
 Use container paths for CLI overrides:
 
 ```bash
-./scripts/dev mpc --fleet /workspace/config/fleet-custom.yaml   --scenario /workspace/config/scenario-custom.yaml   --settings /workspace/config/controller-custom.yaml
+./scripts/dev run --fleet /workspace/config/fleet-custom.yaml   --scenario /workspace/config/scenario-custom.yaml   --settings /workspace/config/controller-custom.yaml
 ```
 
 `.env` supports `FLEET_CONFIG`, `MPC_SCENARIO`, `MPC_SETTINGS`,
@@ -39,7 +39,7 @@ backend selection or one-UAV migration stage.
 
 ### Scen1: scaled five-UAV layout in a 200 × 200 m map
 
-`./scripts/dev mpc --preset scen1 --record-video` selects `config/fleet-5uav.yaml`,
+`./scripts/dev run --preset scen1 --record-video` selects `config/fleet-5uav.yaml`,
 `scenarios/scen1.yaml`, and `config/controller-scen1.yaml`. Launch derives all five
 ground spawns and the `mpc_scen1` world name from the scenario. The upstream
 submodule remains unchanged. The local frozen 33 rectangles (including widths
@@ -90,7 +90,7 @@ camera observations, solver failures, landing and finalized video for new runs.
 
 ### Five UAVs in a 200 × 200 m map
 
-`./scripts/dev mpc --preset large200_5uav --record-video` selects these matching inputs:
+`./scripts/dev run --preset large200_5uav --record-video` selects these matching inputs:
 
 - [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five native multicopters, each with its own ROS flight process and Gazebo safety plugin.
 - [large200_5uav.yaml](../ros_ws/src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
@@ -124,7 +124,7 @@ failures can be reproduced. Generate another realization before starting:
 
 ```bash
 ./scripts/generate-large-scenario --seed 42 --output config/large200-seed42.yaml
-./scripts/dev mpc --preset large200_5uav --scenario /workspace/config/large200-seed42.yaml --record-video
+./scripts/dev run --preset large200_5uav --scenario /workspace/config/large200-seed42.yaml --record-video
 ```
 
 The generator needs Python 3 with NumPy and imports this project's target spline.
@@ -289,7 +289,7 @@ still speed-limited, proximity-guarded, independently expired, and realized only
 by attitude/rotor forces; predicted positions never set the vehicle pose.
 Altitude uses separate measured-height feedback and the vertical speed limit.
 
-`mission run --seconds N` and `mission start --seconds N` limit tracking to `N`
+`run --seconds N` limits tracking to `N`
 simulation seconds on Gazebo's `/clock`, independently of the requested or
 observed real-time factor. The limit starts after takeoff when control and target
 motion are enabled. Omit `--seconds` or set it to zero for the complete route;

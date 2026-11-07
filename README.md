@@ -11,7 +11,7 @@ not moved kinematically.
 
 The `large200_5uav` preset uses five UAVs in a 200 × 200 m field with
 seeded random obstacles and a random winding target route. Select it with
-`./scripts/dev mpc --preset large200_5uav --record-video`.
+`./scripts/dev run --preset large200_5uav --record-video --seconds 300`.
 This preset flies at 3 m; `--preset small50_3uav` explicitly selects the
 original scenario.
 
@@ -44,19 +44,17 @@ git submodule update --init --recursive
 test -e .env || cp .env.example .env
 ./scripts/dev build sim
 ./scripts/dev doctor
-./scripts/dev mpc --record-video
-./scripts/dev mission run --seconds 30
-./scripts/dev evaluate
-./scripts/dev stop
+./scripts/dev run --seconds 30 --record-video
 ```
 
-Keep an existing `.env` rather than overwriting it. `mpc` waits for readiness and
-leaves motors disabled; `mission run` takes off, tracks, lands, and waits for
-settled ground and motor shutdown.
+Keep an existing `.env` rather than overwriting it. `run` is the single
+simulation command: it starts a fresh stack, waits for readiness, takes off,
+tracks, lands, waits for settled ground and motor shutdown, finalizes any
+recorded video, stops the container, and writes `reports/evaluation.json`.
 The time limit covers tracking in simulation seconds, excluding startup, takeoff,
 and landing; omit it or use `--seconds 0` to attempt the complete route.
-Failed `mpc` and `mission run` commands request landing, finalize any recorded
-video, and stop the container while retaining their failure exit status.
+Success, failure and Ctrl+C all take the same cleanup path; a failed or
+cancelled run retains its nonzero exit status.
 Physics defaults to 0.2× real time to give MPC more compute time per simulation
 second; recorded video retains normal motion at 20 FPS. `--seconds 30` requests
 30 simulation seconds of tracking (at least 150 wall seconds at 0.2×), regardless

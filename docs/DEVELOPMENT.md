@@ -312,7 +312,10 @@ flight-process liveness. Do not weaken these layers to pass a mission.
 ## Verification and optimizer replay
 
 Do not write automated tests. Run a representative mission, inspect measured
-telemetry, logs and evaluation, and stop normally; see [Simulation](SIMULATION.md).
+telemetry, logs and evaluation; see [Simulation](SIMULATION.md). One
+`./scripts/dev run --preset PRESET --seconds N --record-video` command now
+replaces the earlier `mpc`, `mission run`, `evaluate` and `stop` sequence
+recorded in the dated verification sections below.
 Ground-truth target input keeps solver changes isolated from perception; add
 recording when visual behavior is relevant. Preserve the specific
 run directory and report limits as well as successful outcomes.
@@ -833,3 +836,18 @@ input hashes, per-UAV timing/outcomes, flight/motor journals, sampled optimizer
 provenance and timestamp-sidecar audits. Compilation, import/caller checks and
 `git diff --check` passed. No automated tests, harnesses, alternative algorithms,
 configuration changes or upstream edits were added. The simulation is stopped.
+
+## Single-command run verification (November 7, 2026)
+
+`./scripts/dev run` replaced the separate `mpc`, `mission run`, `evaluate` and
+`stop` host commands. Default three-UAV fleet, camera input and recording:
+
+| Case | Actual `runs/` directory | Exit | Result |
+|---|---|---:|---|
+| `run --seconds 30 --record-video` | `20261107T060118Z-536` | 0 | Landed IDLE/disarmed/disabled, rotors < 4e-25 rad/s; 921/921 frames finalized; evaluated; container stopped |
+| Ctrl+C (group SIGINT, twice) during tracking of a 60 s run | `20261107T055120Z-21378` | 130 | Cancel file landed the fleet; 350/350 frames finalized; evaluated; container stopped |
+| `docker kill` during tracking of a 60 s run | `20261107T055918Z-22364` | 137 | Offline recovery published a partial MP4 (345/349 frames); evaluated; container stopped |
+| Missing `--scenario` file | `20261107T055651Z-27702` | 1 | Launch failed before readiness; previous run untouched; container stopped |
+
+A Ctrl+C sent during an earlier failure cleanup was ignored and cleanup completed.
+`matches_pinned_sources` was true. No GUI (`--gui`) run was performed.

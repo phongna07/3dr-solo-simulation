@@ -40,18 +40,19 @@ usage() {
 Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim]                     Build the simulation image
-  mpc [--gui] [--no-wait]         Start simulation and await initialization; no arming
+  run [--seconds SIM_SECONDS]     Start, await readiness, take off, track, land, evaluate,
+                                  finalize any video and stop the simulation
       [--preset small50_3uav|large200_5uav|scen1]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
-  mission run|start|stop|status|reset [--seconds SIM_SECONDS]
-  evaluate                       Evaluate the latest MPC flight log
-  wait                           Wait indefinitely for current simulation readiness
+      [--gui]                     Also open the Gazebo GUI (log: runs/<run-id>.gui.log)
+  mission status|stop             Inspect or land the fleet of a running simulation
+  evaluate [--run-dir DIR]       Re-evaluate a recorded run (default /workspace/runs/latest)
   status                         Show Docker state and live readiness
   logs                           Follow process logs (Ctrl+C only stops tail)
   shell                          Bash inside simulation container
   gui                            Gazebo GUI client; server keeps running on GUI exit
-  stop                           LAND, await disarm, then stop simulation
+  stop                           LAND, await disarm, finalize video, then stop simulation
   stop --force                   Stop processes immediately, no LAND
   lock                           Export manifests and image ID to artifacts/
   pull                           Pull images specified in .env (use registry digests)
@@ -59,49 +60,83 @@ Usage: ./scripts/dev COMMAND [arguments]
 EOF
 }
 
+# Cleanup steps run in their own session (see run_detached.py) when set.
+shield=()
+
 stop_simulation() {
-  local recording_status=0 shutdown_status=0
+  local run_dir="${1:-/workspace/runs/latest}" recording_status=0 shutdown_status=0
   printf 'Finalizing recording before stopping simulation.\n' >&2
-  "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint \
-    python3 -m solo_mpc.core.video /workspace/runs/latest || recording_status=$?
+  "${shield[@]}" "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint \
+    python3 -m solo_mpc.core.video "$run_dir" || recording_status=$?
   # Even a failed recorder must not prevent process cleanup.
-  "${dc[@]}" stop sim || shutdown_status=$?
+  "${shield[@]}" "${dc[@]}" stop sim || shutdown_status=$?
   if (( recording_status != 0 )); then
-    printf 'Video finalization failed; retained recording inputs and logs are in runs/latest.\n' >&2
+    printf 'Video finalization failed; retained recording inputs and logs are in %s.\n' "$run_dir" >&2
     return "$recording_status"
   fi
   return "$shutdown_status"
 }
 
-cleanup_failed_simulation() {
-  printf 'Requesting mission cleanup before stopping the failed simulation.\n' >&2
-  # Retain the failure evidence: a subsequent stop request updates mission.json.
-  if ! "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c '
+# EXIT handler of `run`, for success, failure and cancellation alike. Every step
+# runs even if an earlier one fails; the first failure decides the exit status.
+finish_run() {
+  local status=$? landing_status=0 evaluation_status=0 recording_status=0
+  set +e
+  trap - EXIT
+  trap '' INT TERM HUP
+  shield=(python3 scripts/run_detached.py --)
+  printf 'Cleaning up run %s: landing, video finalization, container stop and evaluation.\n' "$RUN_ID" >&2
+  printf 'Ctrl+C is ignored; cleanup is bounded by landing watchdogs, the finalization deadline and the 150 s stop grace period. Use ./scripts/dev stop --force from another terminal only for a crashed simulation.\n' >&2
+  if [[ -z "$("${dc[@]}" ps --status running -q sim)" ]]; then
+    # Crashed or never started: nothing can land or finalize inside it.
+    printf 'Simulation container is not running; skipping landing request and live video finalization.\n' >&2
+    "${dc[@]}" stop sim > /dev/null 2>&1
+    landing_status=1
+  else
+    if (( status != 0 && status != 130 )); then
+      # Retain the failure evidence: the following stop request updates mission.json.
+      "${shield[@]}" "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint python3 -c '
 from pathlib import Path
-import shutil
-status = Path("/workspace/runs/latest/status")
+import shutil, sys
+status = Path(sys.argv[1]) / "status"
 if (status / "mission.json").is_file():
     shutil.copyfile(status / "mission.json", status / "mission-failure.json")
-'; then
-    printf 'Could not snapshot mission status; inspect the saved process logs.\n' >&2
+' "$TASK_RUN_DIR" || printf 'Could not snapshot mission status; inspect the saved process logs.\n' >&2
+    fi
+    # Idempotent after a completed mission; it confirms settled ground and disarm.
+    "${shield[@]}" "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint \
+      ros2 run solo_mpc mission stop --run-dir "$TASK_RUN_DIR" || landing_status=$?
+    (( landing_status == 0 )) || printf 'Landing cleanup failed or the supervisor is unavailable (exit %s); still finalizing video and stopping.\n' "$landing_status" >&2
+    printf 'Stopping simulation; waiting for video encoding and verification.\n' >&2
+    stop_simulation "$TASK_RUN_DIR" || recording_status=$?
   fi
-  if ! "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission stop; then
-    printf 'Mission cleanup failed or the supervisor is unavailable; stopping the simulation and finalizing any recorded video.\n' >&2
+  # A recorder that died with its container leaves compressed segments; the
+  # stopped stack makes offline recovery safe.
+  if [[ "$MPC_RECORD_VIDEO" == true && -d "runs/${RUN_ID}/recorded-mission.mp4.encoding" ]] &&
+     ! python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1]))["state"] not in ("finalized", "partial", "empty"))' \
+       "runs/${RUN_ID}/status/recording.json" 2> /dev/null; then
+    printf 'Recovering compressed video segments from the stopped recorder.\n' >&2
+    recording_status=0
+    "${shield[@]}" "${dc[@]}" run --rm --no-deps -T sim \
+      python3 -m solo_mpc.core.video "$TASK_RUN_DIR" --recover || recording_status=$?
   fi
-  # Always reach graceful stack shutdown, even when LAND cannot complete after
-  # a physics/process failure. Compose waits for the recorder's finalization.
-  printf 'Stopping simulation; waiting for video encoding and verification.\n' >&2
-  if ! stop_simulation; then
-    printf 'Cleanup reported a recording or shutdown failure; inspect the saved run.\n' >&2
+  if "$TASK_MISSION_STARTED"; then
+    # A one-off container evaluates the complete telemetry after shutdown.
+    "${shield[@]}" "${dc[@]}" run --rm --no-deps -T sim \
+      ros2 run solo_mpc evaluate --run-dir "$TASK_RUN_DIR" || evaluation_status=$?
+    if (( evaluation_status == 0 )); then
+      printf 'Evaluation saved to runs/%s/reports/evaluation.json.\n' "$RUN_ID" >&2
+    else
+      printf 'Evaluation failed (exit %s).\n' "$evaluation_status" >&2
+    fi
   fi
-}
-
-finish_failed_simulation() {
-  local status=$?
-  trap - EXIT
-  if (( status != 0 )); then
-    printf 'Command failed (exit %s); cleaning up the simulation.\n' "$status" >&2
-    cleanup_failed_simulation
+  for next in "$landing_status" "$recording_status" "$evaluation_status"; do
+    (( status != 0 )) || status=$next
+  done
+  if (( status == 0 )); then
+    printf 'Run %s complete: fleet landed and simulation stopped.\n' "$RUN_ID" >&2
+  else
+    printf 'Run %s finished with exit %s; inspect runs/%s.\n' "$RUN_ID" "$status" "$RUN_ID" >&2
   fi
   exit "$status"
 }
@@ -116,9 +151,9 @@ case "$command" in
     [[ $# -eq 0 || ( $# -eq 1 && "$1" == sim ) ]] || { usage >&2; exit 2; }
     "${dc[@]}" build sim
     ;;
-  mpc)
+  run)
     show_gui=false
-    wait_ready=true
+    mission_seconds=0
     export MPC_RECORD_VIDEO=false
     RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
     export RUN_ID
@@ -148,34 +183,47 @@ case "$command" in
         --fleet) export FLEET_CONFIG="${2:?fleet path required}"; shift 2 ;;
         --scenario) export MPC_SCENARIO="${2:?scenario path required}"; shift 2 ;;
         --settings) export MPC_SETTINGS="${2:?settings path required}"; shift 2 ;;
+        --seconds) mission_seconds="${2:?simulation seconds required}"; shift 2 ;;
         --gui) show_gui=true; shift ;;
-        --no-wait) wait_ready=false; shift ;;
         --record-video) export MPC_RECORD_VIDEO=true; shift ;;
-        *) printf 'Unknown mpc argument: %s\n' "$1" >&2; exit 2 ;;
+        *) printf 'Unknown run argument: %s\n' "$1" >&2; exit 2 ;;
       esac
     done
+    [[ "$mission_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+      printf -- '--seconds must be a nonnegative number of simulation seconds: %s\n' "$mission_seconds" >&2
+      exit 2
+    }
     if [[ -n "$("${dc[@]}" ps --status running -q sim)" ]]; then
       printf 'Simulation already running. Use status/stop before starting another.\n' >&2
       exit 1
     fi
     mkdir -p runs
-    trap finish_failed_simulation EXIT
+    TASK_RUN_DIR="/workspace/runs/${RUN_ID}"
+    TASK_MISSION_STARTED=false
+    # Startup: Ctrl+C aborts into the same cleanup as any other exit.
+    trap 'exit 130' INT TERM HUP
+    trap finish_run EXIT
     "${dc[@]}" up -d --no-build sim
     TASK_CONTAINER="$("${dc[@]}" ps -q sim)"
     docker inspect "$TASK_CONTAINER" --format '{{json .Image}}' > "runs/${RUN_ID}.image-id.json"
-    if "$wait_ready"; then
-      python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --all-processes
-    fi
+    python3 scripts/wait_ready.py --run-id "$RUN_ID" --container "$TASK_CONTAINER" --all-processes
     if "$show_gui"; then
-      printf 'Starting Gazebo GUI.\n'
-      "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py
+      printf 'Starting Gazebo GUI; closing it leaves the mission running.\n'
+      # Its own session keeps Ctrl+C for the mission; container stop ends it.
+      python3 scripts/run_detached.py -- "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint \
+        python3 /workspace/scripts/gazebo_gui.py > "runs/${RUN_ID}.gui.log" 2>&1 &
     fi
+    # Mission: Ctrl+C becomes a cancel file; the mission client lands, then exits.
+    trap : INT TERM HUP
+    TASK_MISSION_STARTED=true
+    python3 scripts/run_detached.py --cancel-file "runs/${RUN_ID}.mission.cancel" -- \
+      "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission run \
+      --run-dir "$TASK_RUN_DIR" --seconds "$mission_seconds" \
+      --cancel-file "${TASK_RUN_DIR}.mission.cancel"
     ;;
-  wait)
-    [[ $# -eq 0 ]] || { usage >&2; exit 2; }
-    TASK_CONTAINER="$("${dc[@]}" ps -a -q sim)"
-    [[ -n "$TASK_CONTAINER" ]] || { printf 'No simulation container. Start with ./scripts/dev mpc.\n' >&2; exit 1; }
-    python3 scripts/wait_ready.py --container "$TASK_CONTAINER"
+  mpc|wait)
+    printf '%s was replaced by ./scripts/dev run, which starts, flies, lands and stops in one command.\n' "$command" >&2
+    exit 2
     ;;
   status)
     "${dc[@]}" ps
@@ -185,20 +233,18 @@ case "$command" in
   shell) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint bash ;;
   gui) "${dc[@]}" exec sim /usr/local/bin/solo-entrypoint python3 /workspace/scripts/gazebo_gui.py ;;
   mission)
-    if "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"; then
-      :
-    else
-      TASK_MISSION_STATUS=$?
-      if [[ "${1:-}" == run ]]; then
-        printf 'Mission run failed (exit %s); cleaning up the simulation.\n' "$TASK_MISSION_STATUS" >&2
-        cleanup_failed_simulation
-      else
-        printf 'Mission command failed (exit %s); inspect ./scripts/dev mission status and use ./scripts/dev stop after cleanup.\n' "$TASK_MISSION_STATUS" >&2
-      fi
-      exit "$TASK_MISSION_STATUS"
-    fi
+    case "${1:-}" in
+      status|stop) ;;
+      run|start|reset)
+        printf 'mission %s is part of ./scripts/dev run; only mission status|stop remain.\n' "$1" >&2
+        exit 2
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc mission "$@"
     ;;
-  evaluate) "${dc[@]}" exec -T sim /usr/local/bin/solo-entrypoint ros2 run solo_mpc evaluate "$@" ;;
+  # A separate container also works after run has stopped the simulation.
+  evaluate) "${dc[@]}" run --rm --no-deps -T sim ros2 run solo_mpc evaluate "$@" ;;
   stop)
     [[ -n "$("${dc[@]}" ps --status running -q sim)" ]] || exit 0
     TASK_LANDING_STATUS=0

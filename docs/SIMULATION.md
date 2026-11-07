@@ -11,21 +11,18 @@ from `.env.example` only for a new checkout.
 ```bash
 ./scripts/dev build sim
 ./scripts/dev doctor
-./scripts/dev mpc --record-video
-./scripts/dev mission run --seconds 30
-./scripts/dev evaluate
-./scripts/dev stop
+./scripts/dev run --seconds 30 --record-video
 ```
 
-`mpc` starts a fresh stack and waits for native models, per-UAV flight processes,
-measured odometry/motor telemetry, sensors and algorithm workers. Motors stay
-disabled. Takeoff waits for world-frame state, ownership, fresh inputs and a
+`run` performs the whole mission in one command. It starts a fresh stack and
+waits for native models, per-UAV flight processes, measured odometry/motor
+telemetry, sensors and algorithm workers with motors disabled. Takeoff waits for world-frame state, ownership, fresh inputs and a
 stable fleet altitude
 before enabling target motion and control. Startup can take several minutes
 with slow rendering. `--seconds` limits tracking using Gazebo's simulation clock,
 excluding startup/takeoff/landing; omit it or use `--seconds 0` to attempt the
 complete route. Reaching the route goal or a safety stop can end tracking earlier.
-While tracking, `mission run`/`start` progress reports elapsed over requested
+While tracking, `run` progress reports elapsed over requested
 tracking simulation seconds (`tracking: 12.3/30s sim`) when `--seconds` is
 positive, otherwise scenario waypoints the target has reached, counting its
 start, over all route waypoints (`target waypoints: 4/12`). The completed,
@@ -42,7 +39,17 @@ retains normal target/UAV speeds at the existing 1920 × 1080 / 20 FPS.
 The exported video also includes recorded takeoff/landing and keeps recording
 until the stack stops, so its total duration can exceed `--seconds`. Compare its
 timestamp sidecar and tracking interval, not the host command's elapsed time.
-Normal `stop` finalizes the video.
+
+After the mission client returns, `run` always requests `mission stop`
+(idempotent after a completed mission; it confirms settled ground and disarm),
+finalizes the video, stops the container, and then evaluates the complete
+telemetry into `reports/evaluation.json` in a one-off container. If the
+simulation container already crashed, `run` skips the live steps, recovers the
+retained compressed video segments (see below) and still evaluates. Each step
+runs even if an earlier one failed. The exit status is
+the first failure among mission, landing, video finalization and evaluation
+(130 after Ctrl+C). All steps target the new `runs/<run-id>/`, never
+`runs/latest`, so a startup failure cannot touch a previous run.
 
 `telemetry/flight-<uav>.jsonl` records native flight mode/ownership, measured
 world position/velocity, source stamps, actual four-rotor speeds in rad/s,
@@ -53,19 +60,13 @@ for every vehicle after the mission, before stopping physics.
 For the five-UAV 200 × 200 m random field, use the matching preset:
 
 ```bash
-./scripts/dev mpc --preset large200_5uav --record-video
-./scripts/dev mission run --seconds 300
-./scripts/dev evaluate
-./scripts/dev stop
+./scripts/dev run --preset large200_5uav --seconds 300 --record-video
 ```
 
 For the scaled upstream layout in a 200 × 200 m field at 6 m flight altitude:
 
 ```bash
-./scripts/dev mpc --preset scen1 --record-video
-./scripts/dev mission run --seconds 90
-./scripts/dev evaluate
-./scripts/dev stop
+./scripts/dev run --preset scen1 --seconds 90 --record-video
 ```
 
 Target input is always exact ground truth; UAV cameras only feed recordings.
@@ -88,38 +89,39 @@ for regeneration and parameter details.
 
 | Command | Purpose |
 |---|---|
-| `mpc --record-video` | Record overhead, map, state instruments, and all UAV FOVs |
-| `mpc --gui` / `gui` | Attach Gazebo viewer; closing it leaves simulation running |
-| `mpc --no-wait` / `wait` | Start asynchronously / wait indefinitely for readiness |
-| `mission start --seconds 30` | Return after tracking starts; supervisor continues |
+| `run --record-video` | Record overhead, map, state instruments, and all UAV FOVs |
+| `run --gui` / `gui` | Attach Gazebo viewer (log `runs/<run-id>.gui.log`); closing it leaves the mission running |
 | `mission status` | Mission state, ownership, errors, and controller diagnostics |
 | `mission stop` | Pause target, disable publishing, land owned UAVs, await settled ground and motor shutdown |
-| `mission reset` | Reset the target while idle |
+| `evaluate [--run-dir DIR]` | Re-evaluate a recorded run; works after the stack stopped |
 | `status` / `logs` / `shell` | Health / process logs / container shell |
 
-Prefix the commands above with `./scripts/dev`. Only one simulation should run
+Prefix the commands above with `./scripts/dev`. Use `mission`, `status`,
+`logs`, `shell` and `gui` from a second terminal while `run` is active. Only one simulation should run
 at a time. Native models and ROS nodes share one container; host ROS discovery
 and vehicle network endpoints are unnecessary. Use `shell` to inspect topics.
 
 ## Stop and recover
 
-Ctrl+C in `mission run` requests cleanup. Confirm landing and disarm before
-restarting. The supervisor remains responsible after a `mission start` client
-exits. Target loss, stale inputs, persistent controller failures, or flight
+Ctrl+C during `run` startup aborts into cleanup. During the mission, Ctrl+C
+writes `runs/<run-id>.mission.cancel`; the mission client polls it, stops the
+target and lands before `run` continues with cleanup. The Docker clients run in
+their own session, so Ctrl+C cannot kill them mid-landing. Once cleanup starts,
+Ctrl+C is ignored until landing, video finalization and container stop finish;
+they are bounded by the landing watchdogs, the finalization deadline and the
+150 s stop grace period. Target loss, stale inputs, persistent controller failures, or flight
 violations trigger cleanup.
 
-Normal `./scripts/dev stop` requests mission cleanup before stopping the container.
-If landing fails, inspect flight state, actual motor speeds, safety status and
-owner-token service errors, then retry `mission stop`.
-Failed `./scripts/dev mission run` commands automatically request mission cleanup,
+If landing fails, inspect the saved flight state, actual motor speeds, safety
+status and owner-token service errors.
+Failed `run` commands automatically request mission cleanup,
 then gracefully stop the container so the recorder finishes encoding and saves
 `recorded-mission.mp4`. The container also stops if the cleanup request fails
 because physics, flight state, or the supervisor is unavailable. The original
 nonzero command status is retained. Before retrying cleanup, the CLI saves the
 available mission status to `status/mission-failure.json`; `status/mission.json`
 then describes the final cleanup attempt. Inspect both and the process logs.
-Successful missions still need an explicit `stop` to finalize the video.
-Other mission subcommands keep the stack available on failure. Landing progress
+Landing progress
 shows simulation/wall elapsed time, per-UAV mode, armed state, altitude, and state
 age. Cleanup requires settled ground and observed motor shutdown/disarm;
 low altitude or a requested disable alone is insufficient.
@@ -128,10 +130,10 @@ for a stalled clock or missing flight state (`scen1` allows 120 simulation secon
 for landing). A slow but progressing simulation can
 therefore take longer than four wall minutes. Final mission and landing status
 is preserved in `status/mission.json`.
-Failures during `mpc` startup or its attached GUI use the same automatic cleanup.
 The separate `gui` command leaves the stack running when its viewer exits.
-Use `stop --force` only for a crashed simulation when normal landing cannot
-complete. A failed command in an `&&` chain skips later cleanup commands.
+`./scripts/dev stop` from another terminal lands, finalizes the video and stops
+a stack whose `run` client was lost (for example, a closed terminal). Use
+`stop --force` only for a crashed simulation when normal landing cannot complete.
 
 Ownership is per UAV through token-checked `FlightCommand` services. Lost or
 mismatched ownership stops publishing and triggers cleanup of remaining owned
@@ -201,9 +203,8 @@ collision geometry. Restart the development stack to regenerate the scenery;
 release images need rebuilding.
 
 Select `--record-video` at launch; it also enables the UAV cameras shown in the FOV panels.
-Normal `stop` and automatic shutdown after a failed `mpc` or `mission run`
-finalize `recorded-mission.mp4`; successful mission completion and normal GUI
-closure do not. Recording starts at takeoff and continues through landing.
+Every `run` exit (success, failure or Ctrl+C) and a manual `stop` finalize
+`recorded-mission.mp4`; GUI closure does not. Recording starts at takeoff and continues through landing.
 
 MP4 recording streams composed BGR frames directly to FFmpeg, trying
 `h264_nvenc` first. Actual initialization, pipe, flush or segment verification
@@ -221,7 +222,7 @@ Segments use a common timebase and no B frames. Composition and source-time
 sampling remain unchanged. Encoder stalls are bounded to ten seconds per frame
 and flush to fifteen seconds; recording never controls flight commands.
 
-Normal `./scripts/dev stop` lands first, then waits for recorder finalization
+`run` cleanup and `./scripts/dev stop` land first, then wait for recorder finalization
 before stopping the container. Finalization remuxes decodable segment prefixes,
 checks dimensions/FPS and decoded counts, and publishes `recorded-mission.mp4`
 whenever usable footage exists. Healthy footage is joined without re-encoding.
@@ -330,7 +331,7 @@ An accelerated GUI does not prove server acceleration.
 - NVIDIA: select `COMPOSE_FILE=compose.yaml:compose.nvidia.yaml` with host drivers
   and NVIDIA Container Toolkit. Add `compose.wslg.yaml` or `compose.x11.yaml`
   when a viewer needs that display path.
-- Software fallback: `LIBGL_ALWAYS_SOFTWARE=1 ./scripts/dev mpc`. Expect slower
+- Software fallback: `LIBGL_ALWAYS_SOFTWARE=1 ./scripts/dev run`. Expect slower
   startup and lower wall-time sensor rates.
 
 Explicit `COMPOSE_FILE` overrides automatic selection; use the same files for
@@ -340,6 +341,9 @@ Docker daemon host. For example, discover them using
 `stat -c %g /dev/dri/renderD128` and `stat -c %g /dev/dri/card0` with real paths.
 
 ## Diagnose failures
+
+While `run` is active, use a second terminal; after it exits, the stack is
+stopped, so inspect the saved `runs/<run-id>/` directory instead.
 
 ```bash
 ./scripts/dev status
