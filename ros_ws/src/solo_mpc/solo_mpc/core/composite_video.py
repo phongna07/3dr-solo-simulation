@@ -59,13 +59,16 @@ class CompositeVideo:
     """
 
     def __init__(self, path, fps, vehicles, *, occupancy=False, telemetry=False,
-                 timestamps_path=None, logger=None):
+                 timestamps_path=None, logger=None, map_config=None, algorithm=None):
         self.vehicles = tuple(vehicles)
         if not self.vehicles or len(set(self.vehicles)) != len(self.vehicles):
             raise ValueError("A composite video needs unique vehicle names")
         if {'overhead', 'occupancy'} & set(self.vehicles):
             raise ValueError("The vehicle names 'overhead' and 'occupancy' are reserved for combined recording")
         self.occupancy = occupancy
+        self.algorithm = algorithm
+        # Rendered once; without grid geometry, fall back to the short panel.
+        self.waiting_panel = waiting_occupancy(map_config, self.vehicles) if occupancy else None
         self.telemetry = {name: FlightStateHistory() for name in self.vehicles} if telemetry else {}
         self.controller_status = ControllerStatusHistory()
         self.video = FrameVideo(path, fps, timestamps_path=timestamps_path, logger=logger)
@@ -131,10 +134,11 @@ class CompositeVideo:
             occupancy_panel = self.current.get('occupancy')
             if self.telemetry:
                 states = {name: history.sample(stamp) for name, history in self.telemetry.items()}
-                panel = render_states(states, stamp, self.controller_status.sample(stamp))
+                panel = render_states(states, stamp, self.controller_status.sample(stamp),
+                                      self.algorithm)
                 if self.occupancy:
                     if occupancy_panel is None:
-                        occupancy_panel = waiting_occupancy()
+                        occupancy_panel = self.waiting_panel
                     # Fit both aspect ratios at one displayed width, with equal
                     # outer margins and a gap between the map and state panels.
                     height, width = frame.shape[:2]

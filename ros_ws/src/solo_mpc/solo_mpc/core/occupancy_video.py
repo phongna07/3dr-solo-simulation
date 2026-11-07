@@ -32,7 +32,7 @@ def fuse_occupancy(maps):
     return cells
 
 
-def render_occupancy(cells, resolution, origin, positions, names, stamp_ns):
+def render_occupancy(cells, resolution, origin, positions, names, stamp_ns, *, waiting=False):
     """Return a labelled panel; grid row zero is world minimum Y, at the bottom.
 
     No world geometry or target truth is used: only classified LiDAR cells and
@@ -52,7 +52,8 @@ def render_occupancy(cells, resolution, origin, positions, names, stamp_ns):
                     thickness, cv2.LINE_AA)
 
     text('OCCUPANCY MAP', (padding, 30), 0.72, thickness=2)
-    text('LiDAR only | combined fleet scans', (padding, 54), color=MUTED)
+    text('Waiting for LiDAR mapping...' if waiting else 'LiDAR only | combined fleet scans',
+         (padding, 54), color=MUTED)
     text('+Y', (left, top - 7), 0.36, MUTED)
     raster = np.full((*cells.shape, 3), UNKNOWN, np.uint8)
     raster[cells == 0] = FREE
@@ -102,13 +103,24 @@ def render_occupancy(cells, resolution, origin, positions, names, stamp_ns):
     for x in (padding, padding + bar_px):
         cv2.line(panel, (x, y - 4), (x, y + 4), TEXT, 1)
     text(f'{bar_m:g} m', (padding + bar_px + 9, y + 5), 0.43)
-    observed = 100 * np.count_nonzero(cells >= 0) / cells.size
-    text(f'Scanned {observed:.1f}% | t={stamp_ns / 1e9:.1f}s',
-         (padding, bottom + 88), 0.45, MUTED)
+    if not waiting:
+        observed = 100 * np.count_nonzero(cells >= 0) / cells.size
+        text(f'Scanned {observed:.1f}% | t={stamp_ns / 1e9:.1f}s',
+             (padding, bottom + 88), 0.45, MUTED)
     return panel
 
 
-def waiting_occupancy():
+def waiting_occupancy(cfg=None, names=()):
+    """Placeholder before the first map; with the configured grid geometry it
+    has the live panel's exact layout, so the video overlay never shifts."""
+    if cfg is not None:
+        xmin, ymin, xmax, ymax = cfg['WORLD_BOUNDS'][:4]
+        resolution = float(cfg['GRID_RESOLUTION'])
+        # Same cell counts as SensorGrid, the source of every published map.
+        shape = (int(np.ceil((ymax - ymin) / resolution)) + 1,
+                 int(np.ceil((xmax - xmin) / resolution)) + 1)
+        return render_occupancy(np.full(shape, -1, np.int8), resolution, (xmin, ymin),
+                                {}, names, 0, waiting=True)
     panel = np.full((220, 560, 3), PANEL, np.uint8)
     cv2.putText(panel, 'OCCUPANCY MAP', (20, 36), cv2.FONT_HERSHEY_SIMPLEX,
                 0.72, TEXT, 2, cv2.LINE_AA)

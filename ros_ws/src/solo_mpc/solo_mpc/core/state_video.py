@@ -106,7 +106,7 @@ class ControllerStatusHistory:
         return None
 
 
-def render_states(states, stamp_ns, status=None):
+def render_states(states, stamp_ns, status=None, algorithm=None):
     """One row per UAV: measured nose direction, XY vectors and XYZ values."""
     row_height, header, footer = 148, 88, 68
     panel = np.full((header + row_height * len(states) + footer, 480, 3), PANEL, np.uint8)
@@ -118,7 +118,8 @@ def render_states(states, stamp_ns, status=None):
         cv2.putText(panel, label, xy, cv2.FONT_HERSHEY_SIMPLEX, size, color,
                     thickness, cv2.LINE_AA)
 
-    text('DRONE STATE', (20, 29), 0.70, thickness=2)
+    text(f"ALGORITHM: {(algorithm or '--').upper()}", (20, 29), 0.70, thickness=2,
+         max_width=440)
     live = status is not None and not status['stale']
     vehicles = status.get('vehicles', {}) if live else {}
     def milliseconds(value):

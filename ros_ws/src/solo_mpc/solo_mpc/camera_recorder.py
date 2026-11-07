@@ -8,6 +8,7 @@ import signal
 import time
 
 import numpy as np
+import yaml
 from cv_bridge import CvBridge, CvBridgeError
 import rclpy
 from rclpy.clock import Clock, ClockType
@@ -43,11 +44,15 @@ class CameraRecorder(Node):
         self.overhead = overhead
         self.composite = None
         if combined:
+            # The launch snapshots the resolved run inputs before any node starts.
+            config = self.output_dir / 'config'
             self.composite = CompositeVideo(
                 Path(output_dir) / 'recorded-mission.mp4', fps, self.vehicle_names,
                 occupancy=True, telemetry=True,
                 timestamps_path=Path(output_dir) / 'telemetry/recorded-mission.timestamps.jsonl',
                 logger=self.get_logger(),
+                map_config=json.loads((config / 'mpc-config.json').read_text()),
+                algorithm=yaml.safe_load((config / 'controller.yaml').read_text())['algorithm'],
             )
         self.videos = ({'combined': self.composite.video} if combined else {
             name: FrameVideo(Path(output_dir) / f"{name}.avi", fps, logger=self.get_logger())
