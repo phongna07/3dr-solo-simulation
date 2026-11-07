@@ -141,8 +141,11 @@ class FleetCoordinator(FleetGuidance):
                                 list(self.maps.values()))
         target = track.trajectory(stamp, self.cfg['HORIZON_LENGTH'],
                                   self.cfg['TIMESTEP'], 2 * self.cfg['VMAX'])
+        # Unclipped filter velocity, the goal feed-forward of upstream baselines.
+        velocity = track.velocity(stamp)
         self.guidance = {
             n: dict(mode=self.modes[n], leader=n == self.leader, target=target,
+                    target_velocity=velocity,
                     goal=guidance_goal(self.goal_policy, states[n].position,
                                        track.pursuit(states[n].position, stamp, self.cfg),
                                        n == self.leader, self.cfg),
