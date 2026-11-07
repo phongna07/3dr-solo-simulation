@@ -60,6 +60,7 @@ DEFAULTS = dict(
     CBF_QP_GAMMA=1.0,  # Baselines cbf_qp/cbf_qp_lag: kappa(h) = gamma h^3
     CBF_QP_KP=1.0,  # nominal PD u = -KP (p - r) - KD (v - r_dot)
     CBF_QP_KD=2.0,
+    PURE_MPC_W_COL=1.5,  # Baseline pure_mpc: W_col of upstream's original robot_mpc.py
     COST_LENGTH_SCALE=1.0,
     COST_ACCEL_SCALE=1.0,
     MPC_SOLVER="ipopt",
@@ -226,7 +227,7 @@ def validate(scenario, settings, cfg):
             raise ValueError(f"{key} must be a positive integer")
     for key in ("PATH_DEVIATION_THRESHOLD", "KF_PROCESS_NOISE_STD", "KF_OBS_NOISE_STD",
                 "VELOCITY_TRUSTED_THRESHOLD", "SLOT_LOOKAHEAD_TIME", "BASELINE_LEADER_STANDOFF",
-                "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD"):
+                "CBF_QP_GAMMA", "CBF_QP_KP", "CBF_QP_KD", "PURE_MPC_W_COL"):
         if not math.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be finite and positive")
     if not 0 < cfg["SLOT_MIN_RATIO"] <= 1:

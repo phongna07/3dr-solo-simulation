@@ -6,7 +6,6 @@ cache, warm start and retained stopping plans belong to one vehicle's worker;
 leadership, assignment, mapping and prediction exchange live in core/runtime/fleet.py.
 """
 
-from dataclasses import dataclass
 import time
 
 import _pydecomp as pdc
@@ -15,17 +14,11 @@ from ...planning.coordination import path_carrot
 
 from .problem import SolverCache
 from ...planning.paths import PathService
+from ..stop_plan import StopPlan, stop_tail
 
 # The pinned pydecomp wheel exposes its computation in _pydecomp. Import the
 # binding directly: its package initializer also loads plotting libraries,
 # which are unnecessary for a headless ROS controller.
-
-
-@dataclass
-class StopPlan:
-    states: np.ndarray
-    controls: np.ndarray
-    stamp: float
 
 
 class MPCVehicle:
@@ -73,28 +66,10 @@ class MPCVehicle:
         return bool(np.all(np.asarray(points).reshape(-1, 2) @ A.T <= b - margin + 1e-6))
 
     def _stop_tail(self, state, stamp):
-        """Use simulation time and measured-state agreement, never a solve counter.
-
-        A model certificate cannot justify replay after the measured vehicle deviates from it.
-        The publisher's existing expiry/hold behavior handles a rejected tail.
-        """
-        plan = self.stop_plan
-        if plan is None:
-            return None
-        elapsed = (stamp - plan.stamp) / self.cfg["TIMESTEP"]
-        if not np.isfinite(elapsed) or elapsed < -1e-6:
+        tail = stop_tail(self.stop_plan, state, stamp, self.cfg)
+        if tail is None:
             self.stop_plan = None
-            return None
-        index = min(int(np.floor(elapsed + 1e-6)), len(plan.states) - 1)
-        measured = (state.position[:2], state.velocity[:2], state.acceleration[:2])
-        for values, expected, key in zip(
-            measured, np.split(plan.states[index], 3),
-            ("BACKUP_POSITION_TOLERANCE", "BACKUP_VELOCITY_TOLERANCE", "BACKUP_ACCEL_TOLERANCE"),
-        ):
-            if not np.isfinite(values).all() or np.linalg.norm(values - expected) > self.cfg[key]:
-                self.stop_plan = None
-                return None
-        return plan, index
+        return tail
 
     def _select_corridor(self, state, stamp, candidates):
         previous = self.active_corridor
@@ -157,7 +132,7 @@ class MPCVehicle:
         return {"ok": True, "nominal_ok": False, "position": rows[1, :2].copy(),
                 "velocity": rows[1, 2:4].copy(), "acceleration": control.copy(),
                 "prediction": rows.copy(), "controls": controls,
-                "reason": f"stop_plan: {reason}", **metrics}
+                "reason": f"stop_plan: {reason}", "retained_plan": True, **metrics}
 
     def solve(self, states, predictions, guidance, stamp, scan=None):
         """Local planning and solve against an immutable fleet-cycle snapshot."""

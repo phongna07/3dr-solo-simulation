@@ -29,7 +29,9 @@ than adding a separate document for each feature or experiment.
   `mpc/capture.py` records optimizer inputs for replay. `apf/` runs the unchanged
   upstream baseline through `upstream_robot.py` shims and `command_rollout.py`;
   `cbf_qp/` (`CBFQPVehicle`) and `cbf_qp_lag/` (lag-aware subclass) run unchanged
-  upstream `cbfqp.py` through the same adapters; no copied baseline code.
+  upstream `cbfqp.py` through the same adapters; `pure_mpc/` (`PureMPCVehicle`) runs
+  unchanged upstream `pure_mpc.py` with the shared `stop_plan.py` fallback; no copied
+  baseline code.
 - Other `solo_mpc/core/` packages: `planning/` (local grid planning, paths,
   coordination, references, target route), `perception/` (sensors, occupancy/mapping,
   target estimation) and `video/` (mission recording panels); keep ROS imports out.

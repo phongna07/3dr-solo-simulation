@@ -25,6 +25,7 @@ warm start, and stopping plan.
 | `core/algorithms/mpc/` | MPC selection (`algorithm.py`) and `MPCVehicle` (`vehicle.py`): corridors, solver cache, warm start, retained stopping plans; `problem.py` local solver compatibility adjustments; `capture.py` optimizer-input capture and replay |
 | `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
 | `core/algorithms/cbf_qp/`, `cbf_qp_lag/` | Upstream CBF-QP safety filter baseline (`CBFQPVehicle`) and its lag-aware subclass |
+| `core/algorithms/pure_mpc/`, `stop_plan.py` | Upstream plain MPC baseline (`PureMPCVehicle`) and the simulation-time stop plan and collection revalidation shared with MPC |
 | `core/planning/` | Local JPS/Dijkstra (`planner_grid.py`), committed local paths (`paths.py`), leadership/formation (`coordination.py`), trajectory sampling (`references.py`), target route (`target_motion.py`, `geometry.py`) |
 | `core/perception/` | Scan projection and pose history (`sensors.py`), occupancy primitives (`occupancy_grid.py`), explicit sensor rays (`mapping.py`), target estimation (`tracking.py`) |
 | `core/video/` | Mission video encoder and `python3 -m solo_mpc.core.video` (`encoder.py`), composite, occupancy and state panels, shared visual style (`style.py`) |
@@ -90,12 +91,13 @@ state rows). Both carry source epoch and timestep. A prediction alone does not
 authorize execution. `nominal_success`, `fallback_used` and
 `publication_eligible` have separate meanings: a retained stop can be eligible
 with a failed nominal solve, while an otherwise successful solve can become
-ineligible after expiry or a flight-state change. Collection asks the MPC adapter
-to revalidate retained stops against current measured state using the original
+ineligible after expiry or a flight-state change. Collection asks the MPC and
+`pure_mpc` adapters to revalidate replayed retained plans (diagnostic
+`retained_plan`, `core/algorithms/stop_plan.py`) against current measured state using the original
 position/velocity/acceleration tolerances. Rejection changes publication
 eligibility without erasing the nominal outcome or fallback selection.
-Here `fallback_used` denotes selection of the retained stopping trajectory;
-it does not describe an internal numerical solver retry or confirm execution.
+Here `fallback_used` denotes selection of a fallback trajectory (a retained
+stopping plan, or a baseline's braking rollout); it does not describe an internal numerical solver retry or confirm execution.
 
 `CycleResult` includes a copied coordination metadata snapshot alongside vehicle
 results. Solver/stage details remain algorithm diagnostics, outside trajectory
@@ -247,6 +249,42 @@ with scen1's UMAX 3.0 and VMAX 2.2, `alpha ≈ 2.12`, `CORRIDOR_MARGIN + 3.34 m`
 and `UAV_SAFE_DISTANCE + 4.89 m`. Every LiDAR hit within reach is a barrier row
 (twice for the lag variant), and the exact projection is quadratic in rows, so
 `solver_ms` grows with scan density; worker deadlines stay unchanged.
+
+`algorithm: pure_mpc` (`core/algorithms/pure_mpc/`) runs the unchanged upstream
+`pure_mpc.py` `PureMPC` (`UPSTREAM_MODULES` `dynamics`, `pure_mpc`): the plain
+MPC of upstream's first version without path planner, corridor or CBF, with hard
+distance constraints to the 64 nearest LiDAR points within reach, teammate plans
+at `UAV_SAFE_DISTANCE`, soft map bounds and a sigmoid collision cost weighted by
+`PURE_MPC_W_COL`. One `PureMPC` (its CasADi Opti/IPOPT problem) is built per
+worker before readiness, within `controller_worker_startup_timeout_wall`. It uses
+the shared shims, `baseline_standoff` goal and latest-scan hit obstacles;
+teammates are passed in fleet order because upstream binds plan parameter j to
+teammate j. A solve is successful when upstream's `n_fail` is unchanged; its
+`Xp`/`Up` (already local `[px, py, vx, vy, ax, ay]` rows) are executed directly
+and are the neighbor prediction. Telemetry records `solver_status`,
+`solver_iterations` (from `opti.stats()`), `solver_ms`/`solver_cpu_ms`,
+`obstacle_points` and `pure_mpc_fail_total`. A failed solve ignores upstream's
+returned command and, when the shared `StopPlan` (the last solved plan) still
+matches measured position/velocity/acceleration at the elapsed simulation time,
+replays its remaining rows extended by `command_rollout.brake_extend` to the
+horizon (`pure_mpc_failed: previous_plan`, `retained_plan` true, revalidated at
+collection, rejection `stop_plan_measured_state_changed`); otherwise it brakes
+from the measured state (`pure_mpc_failed: brake`). Both publish as visible
+fallbacks (`nominal_ok=False`, `partial_solver_failure`); non-finite output is
+`pure_mpc_invalid_output`. MPC's retained stop plans now also carry
+`retained_plan`, and `revalidate` of both is keyed on it, not on `fallback_used`.
+
+Known `pure_mpc` deviations: upstream replays the previous plan by a solve
+counter, here by simulation time with measured-state agreement; on failure the
+neighbor prediction is the executed rows, whereas upstream keeps its stale plan;
+teammate plans come from the previous cycle; upstream's warm start shifts by
+one step per solve even after skipped cycles. Derived ranges: the horizon reach
+`VMAX · H · TIMESTEP` is 1.2 m on small50 and 2.2 m on large200/scen1 (hard
+points within reach + `CORRIDOR_MARGIN`, and the tracking goal clipped to it),
+and the sigmoid centre is `VMAX/2`. Known upstream behaviour: the cost uses every
+other hit plus teammates, truncated to `96 + n_others` points, so with more than
+about 192 hits the teammates drop out of the cost (their hard constraints remain).
+`ipopt.max_cpu_time` (0.2, 0.35, 0.75 s) turns slow solves into visible failures.
 
 Known CBF deviations: the barrier models a double integrator (with lag
 `ACCEL_TAU` for `cbf_qp_lag`), while the executed chain is measurement latency,
@@ -1046,3 +1084,52 @@ missed. These are baseline results, not tuning targets.
 Installed-package check (not flight evidence): in the rebuilt image
 `upstream.load('cbfqp')` resolved `share/solo_mpc/upstream`, matched the pinned
 hashes, and `CBFQP._deadlock_type` ran its `scipy.optimize.linprog` LP.
+
+## Plain MPC baseline verification (November 7, 2026)
+
+The retained stop plan moved to `core/algorithms/stop_plan.py` (MPC behaviour
+unchanged; collection revalidation is now keyed on `retained_plan`), then the
+upstream `pure_mpc` baseline was added and the image rebuilt. All runs are 60 s
+tracking with the full fleet, camera input and 1920 × 1080 / 20 FPS recording
+(all map/state/FOV panels present). Every run exited 0, logged no exceptions,
+reached readiness, landed IDLE, disarmed and disabled (final actual rotor speeds
+≤ 1.2e-24 rad/s, `safety_active` false), and no delivery exceeded the control
+period. `matches_pinned_sources` was true at `db96e52`, listing
+exactly the selected modules (`dynamics.py`, `pure_mpc.py` for `pure_mpc`).
+
+| Preset | Algorithm | Run | Clearance / min UAV distance (m) | Ready | Nearest UAV–target p50 (m) |
+|---|---|---|---|---:|---:|
+| small50_3uav | mpc, stop-plan refactor | `20261107T132839Z-27873` | 0.717 / 1.834 | 1.000 | 1.15 |
+| large200_5uav | mpc, stop-plan refactor | `20261107T133626Z-25213` | 0.696 / 1.287 | 1.000 | 1.09 |
+| scen1 | mpc, stop-plan refactor | `20261107T134520Z-16833` | 0.557 / 1.955 | 1.000 | 3.75 |
+| small50_3uav | pure_mpc | `20261107T135425Z-21576` | 0.840 / 1.123 | 0.997 | 1.25 |
+| large200_5uav | pure_mpc | `20261107T140337Z-10594` | 1.772 / 1.168 | 0.998 | 5.96 |
+| scen1 | pure_mpc | `20261107T141450Z-13260` | 1.521 / 8.815 | 1.000 | 6.80 |
+
+MPC reason counts and solver times match the November 7 references
+(`solver_ms` p95/max 63/99 ms small50, 82/118 ms large200; all solves
+succeeded). Frames sampled from every run show the map, state and FOV panels. The scen1 `mpc_failed` maxima of the earlier references predate the
+20 → 10 step scen1 horizon; like the post-change run `20261107T101705Z-13864`,
+scen1 MPC recorded no failure (p95/max 130/340 ms), so MPC's own fallback was
+not exercised in flight.
+
+`pure_mpc` plan time includes IPOPT on 64 hard points, teammate constraints and
+the sigmoid cost: `solver_ms` p95/max was 189/359 ms (small50), 289/661 ms
+(large200) and 77/307 ms (scen1); 68.5 %, 77.3 % and 5.9 % of fleet cycles
+exceeded 100 ms compute. `Maximum_CpuTime_Exceeded` occurred twice on small50
+and once on large200, each replayed as `pure_mpc_failed: previous_plan`
+(`partial_solver_failure`, shown in the recording as Nominal 2/3). These replays
+ran the shared `stop_tail` and the `retained_plan`-keyed collection
+revalidation, which accepted all three; no `pure_mpc_failed: brake` or
+`stop_plan_measured_state_changed` occurred in flight. On large200 the fleet
+lost the target at t ≈ 13 s and then searched at 0.2–0.9 m/s (VMAX 2.2), so 89 %
+of vehicle cycles were `search`; on scen1 satellites approached from 80–120 m in
+`search` at up to 1 m/s while the leader trailed the target by about 6.6 m.
+Obstacle hits stayed below 140, so the cost-point truncation did not drop
+teammates. These are baseline results, not tuning targets.
+
+Installed-package check (not flight evidence): in the rebuilt image
+`upstream.load('pure_mpc')` resolved `share/solo_mpc/upstream` with
+`matches_pinned_sources: true`; `load_settings(..., algorithm='pure_mpc')`
+validated for all three presets, and `PureMPCVehicle` solved and produced both
+fallbacks (`previous_plan`, `brake`) with H+1 rows and H controls.

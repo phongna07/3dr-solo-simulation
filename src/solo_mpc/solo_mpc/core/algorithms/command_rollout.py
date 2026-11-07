@@ -27,3 +27,15 @@ def command_trajectory(x0, u, cfg):
         U.append(control)
         X.append(A @ X[-1] + B @ control)
     return np.array(X), np.array(U)
+
+
+def brake_extend(states, controls, cfg):
+    """Extend a plan tail to H+1 rows and H controls by braking from its last row."""
+    A, B = upstream.load('dynamics').model(cfg["TIMESTEP"], cfg["D_FRAC"], cfg["ACCEL_TAU"], 2)
+    H = cfg["HORIZON_LENGTH"]
+    X = [np.asarray(row, float) for row in states[:H + 1]]
+    U = [np.asarray(row, float) for row in controls[:len(X) - 1]]
+    while len(X) < H + 1:
+        U.append(brake(X[-1][2:4], cfg))
+        X.append(A @ X[-1] + B @ U[-1])
+    return np.array(X), np.array(U)

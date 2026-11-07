@@ -29,8 +29,8 @@ The solver and predictive dynamics come directly from a pinned, unchanged
 at `external/motion_planning_MPC`. This repository focuses on Gazebo simulation
 and recorded missions. Local adapters handle measured state, ROS, sensors, and
 flight supervision. A ROS-free algorithm registry selects the existing MPC
-(`algorithm: mpc`) or the upstream APF (`apf`) and CBF-QP (`cbf_qp`,
-`cbf_qp_lag`) baselines, also via
+(`algorithm: mpc`) or the upstream APF (`apf`), CBF-QP (`cbf_qp`,
+`cbf_qp_lag`) and plain MPC (`pure_mpc`) baselines, also via
 `run --algorithm NAME`; planning and formation remain local ports. One flight
 process per UAV owns body velocity/enable commands and token-checked flight
 services. A Gazebo safety plugin independently expires commands, descends, and
