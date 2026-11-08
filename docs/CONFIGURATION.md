@@ -65,9 +65,7 @@ guide widths are 0.06 m. Recording remains 1920 × 1080 at 20 FPS with every pan
 Normal/sprint target speeds scale from 5/13 to 1/2.6 m/s. The three-second
 startup ramp, 0.1 s timestep, 20-step nominal and 25-step stopping horizons,
 0.2 s acceleration lag, dimensionless ratios and cost weights are retained.
-Prediction speed/acceleration bounds use 2.2 m/s and 3 m/s²
-after a 2 m/s / 1 m/s² attempt repeatedly hit the
-existing solver CPU cap during follower approaches. Acceleration cost scale
+Prediction speed/acceleration bounds use 2.2 m/s and 1 m/s². Acceleration cost scale
 remains 1 m/s² for native response; target process-noise acceleration and
 trusted-velocity thresholds scale to 0.4 m/s² and 0.3 m/s.
 The sprint legs still exceed the prediction speed bound; bounded early-route

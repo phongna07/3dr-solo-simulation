@@ -246,8 +246,8 @@ computed from the cycle's measured state, so `revalidate` is the identity.
 Derived ranges at local limits (`alpha = UMAX/√2`, `beta = VMAX`): with UMAX 2.0
 and VMAX 1.2 (small50/large200), `alpha ≈ 1.41`, obstacle rows within
 `CORRIDOR_MARGIN + 1.71 m` and neighbors within `D_N ≈ UAV_SAFE_DISTANCE + 3.09 m`;
-with scen1's UMAX 3.0 and VMAX 2.2, `alpha ≈ 2.12`, `CORRIDOR_MARGIN + 3.34 m`
-and `UAV_SAFE_DISTANCE + 4.89 m`. Every LiDAR hit within reach is a barrier row
+with scen1's UMAX 1.0 and VMAX 2.2, `alpha ≈ 0.71`, `CORRIDOR_MARGIN + 5.62 m`
+and `UAV_SAFE_DISTANCE + 11.95 m`. Every LiDAR hit within reach is a barrier row
 (twice for the lag variant), and the exact projection is quadratic in rows, so
 `solver_ms` grows with scan density; worker deadlines stay unchanged.
 
