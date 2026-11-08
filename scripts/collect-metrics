@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""Collect comparison metrics from finished runs into metrics/<preset>_<limit>.{csv,xlsx,md}.
+
+Each table keeps one row per algorithm: the latest run collected for it. A run
+only replaces its algorithm's row; other algorithms' rows stay unchanged.
+Requires host NumPy and PyYAML; reads only files under runs/<run-id>/.
+
+    ./scripts/collect-metrics --list
+    ./scripts/collect-metrics RUN_ID [RUN_ID ...]
+"""
+
+import argparse
+import csv
+import datetime
+import importlib.util
+import json
+from pathlib import Path
+import re
+import sys
+from xml.sax.saxutils import escape
+import zipfile
+
+import numpy as np
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+RUNS = ROOT / "runs"
+OUT = ROOT / "metrics"
+UPSTREAM = ROOT / "external/motion_planning_MPC"
+ALGORITHM_ORDER = ["mpc", "apf", "cbf_qp", "cbf_qp_lag", "pure_mpc", "impc_ob_rec"]
+REFORM_MIN_WINDOW = 0.2  # as upstream thesis_metrics.py
+SLOW_CYCLE_MS = 100.0
+
+# (key, readable header, format, definition); the CSV/XLSX use the headers.
+SECTIONS = [
+    ("Run", [
+        ("algorithm", "Algorithm", "{}", "Planner selected with run --algorithm"),
+        ("run_id", "Run ID", "{}", "Directory under runs/"),
+        ("tracking_s", "Tracking duration [s]", "{:.1f}", "Simulation time from tracking start to end"),
+        ("waypoints", "Target waypoints reached", "{}", "Route waypoints the target reached, counting its start"),
+        ("landed", "Fleet landed and disarmed", "{}", "Final flight state: landed, disarmed, motors disabled and stopped"),
+        ("video_s", "Video length [s]", "{:.1f}", "Duration of recorded-mission.mp4, if recorded"),
+    ]),
+    ("Safety and completion", [
+        ("collision_free", "Collision-free", "{}", "No obstacle clearance < UAV radius, UAV pair closer than 2 x radius, or exit from the map"),
+        ("completion_pct", "Completion [%]", "{:.1f}", "Share of tracking before the first collision (100 without one)"),
+        ("first_collision_s", "First collision [s]", "{:.1f}", "Tracking time of the first collision"),
+        ("min_clearance_m", "Min obstacle clearance beyond UAV radius [m]", "{:.2f}", "Smallest planar obstacle distance minus ROBOT_RADIUS (negative: contact)"),
+        ("min_separation_m", "Min inter-UAV distance [m]", "{:.2f}", "Smallest 3D distance between two UAVs"),
+    ]),
+    ("Formation", [
+        ("track_pct", "Time in TRACK mode [%]", "{:.1f}", "UAV-steps in formation (TRACK) over the whole tracking interval"),
+        ("gather_mean_s", "Gathering time, followers mean [s]", "{:.1f}", "Mean time until each follower first enters TRACK (leader joins at election)"),
+        ("gather_team_s", "Gathering time, whole team [s]", "{:.1f}", "Time until the last UAV first enters TRACK; blank if one never joins"),
+        ("reform_pct", "Re-formation time in SEARCH [%]", "{:.1f}", "UAV-steps in SEARCH after each UAV first joined, before the first collision"),
+        ("reform_episodes", "Re-formation episodes per UAV", "{:.1f}", "SEARCH episodes after joining, per joined UAV"),
+        ("reform_episode_s", "Re-formation episode mean length [s]", "{:.1f}", "Mean length of those SEARCH episodes"),
+        ("leader_pct", "Leader present after formation [%]", "{:.1f}", "Steps with an elected leader after the whole team first was in TRACK"),
+        ("leader_losses", "Leader losses after formation", "{}", "Times the leader was lost after the whole team first was in TRACK"),
+    ]),
+    ("Tracking", [
+        ("mission_visibility_pct", "Mission visibility [%]", "{:.2f}", "Steps after gathering with the target inside >= 1 square FOV (side 2 x VIEWING_RADIUS); steps after a collision count as unseen"),
+        ("mission_coverage", "Mission coverage efficiency", "{:.3f}", "FOV union area of the component connected to the nearest UAV / (N (2L)^2), after gathering; zero after a collision"),
+        ("visibility_pct", "Visibility, ignoring collisions [%]", "{:.2f}", "Mission visibility without the collision cut"),
+        ("coverage", "Coverage efficiency, ignoring collisions", "{:.3f}", "Mission coverage without the collision cut"),
+        ("near_p50_m", "Nearest UAV to target, median [m]", "{:.2f}", "Planar distance of the nearest UAV to the target, after gathering"),
+        ("near_p95_m", "Nearest UAV to target, p95 [m]", "{:.2f}", "As above, 95th percentile"),
+        ("near_max_m", "Nearest UAV to target, max [m]", "{:.2f}", "As above, maximum"),
+        ("fleet_p50_m", "Mean fleet distance to target, median [m]", "{:.2f}", "Mean planar UAV-to-target distance, after gathering"),
+        ("fleet_p95_m", "Mean fleet distance to target, p95 [m]", "{:.2f}", "As above, 95th percentile"),
+    ]),
+    ("Computation", [
+        ("solve_mean_ms", "Solve time per UAV, mean [ms]", "{:.1f}", "Per-UAV planning + optimization wall time per control step"),
+        ("solve_p95_ms", "Solve time per UAV, p95 [ms]", "{:.1f}", "As above, 95th percentile"),
+        ("solve_max_ms", "Solve time per UAV, max [ms]", "{:.1f}", "As above, maximum"),
+        ("cycle_p50_ms", "Fleet control cycle, median [ms]", "{:.1f}", "Whole-fleet control cycle wall time"),
+        ("cycle_p95_ms", "Fleet control cycle, p95 [ms]", "{:.1f}", "As above, 95th percentile"),
+        ("cycle_max_ms", "Fleet control cycle, max [ms]", "{:.1f}", "As above, maximum"),
+        ("slow_cycle_pct", "Cycles slower than 100 ms [%]", "{:.1f}", "Fleet cycles exceeding 100 ms wall time"),
+        ("late_pct", "Late command delivery [%]", "{:.2f}", "Cycles whose result arrived later than one control period (simulation time)"),
+        ("failures", "Solver failures and fallbacks", "{}", "Non-nominal per-UAV results during tracking, by kind"),
+    ]),
+]
+COLUMNS = [c for _, cols in SECTIONS for c in cols]
+HEADER = {key: title for key, title, _, _ in COLUMNS}
+KEY = {title: key for key, title, _, _ in COLUMNS}
+
+
+def jsonl(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def upstream_fov_coverage():
+    """Upstream metrics.fov_coverage, loaded by path under a private name."""
+    spec = importlib.util.spec_from_file_location("_upstream_metrics", UPSTREAM / "metrics.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.fov_coverage
+
+
+def resolve_run(name):
+    path = Path(name)
+    if not path.is_dir():
+        path = RUNS / name
+    if not (path / "telemetry/mpc.jsonl").is_file():
+        raise SystemExit(f"Not a run directory with telemetry: {name}")
+    return path.resolve()
+
+
+def preset_of(run):
+    """Match the run's world to a preset scenario; small50 has the launch default."""
+    world = yaml.safe_load((run / "config/scenario.yaml").read_text()).get("world_name", "mpc_small50")
+    for scenario in sorted((ROOT / "src/solo_mpc/scenarios").glob("*.yaml")):
+        if yaml.safe_load(scenario.read_text()).get("world_name", "mpc_small50") == world:
+            return scenario.stem
+    return world.removeprefix("mpc_")
+
+
+def limit_of(mission):
+    seconds = float((mission.get("tracking") or {}).get("duration_sim") or 0.0)
+    return "full_mission" if seconds <= 0 else f"{seconds:g}s"
+
+
+def describe(run):
+    mission = json.loads((run / "status/mission.json").read_text())
+    settings = yaml.safe_load((run / "config/controller.yaml").read_text())
+    return settings.get("algorithm", "mpc"), preset_of(run), limit_of(mission), mission
+
+
+def clearance(point, obstacles):
+    p = np.asarray(point)[:2]
+    d = [float(np.linalg.norm(p - np.clip(p, [x, y], [x + w, y + h]))) for x, y, w, h in obstacles["rects"]]
+    d += [float(np.linalg.norm(p - [x, y]) - r) for x, y, r in obstacles["circles"]]
+    return min(d) if d else float("inf")
+
+
+def percentiles(values, q):
+    return np.percentile(values, q).tolist() if len(values) else [None] * len(q)
+
+
+def collect(run, fov_coverage):
+    algorithm, preset, limit, mission = describe(run)
+    scenario = yaml.safe_load((run / "config/scenario.yaml").read_text())
+    cfg = json.loads((run / "config/mpc-config.json").read_text())
+    settings = yaml.safe_load((run / "config/controller.yaml").read_text())
+    R, L = float(cfg["ROBOT_RADIUS"]), float(cfg["VIEWING_RADIUS"])
+    period = float(settings["control_period"])
+
+    records = jsonl(run / "telemetry/mpc.jsonl")
+    window = None
+    recording = run / "status/recording.json"
+    if recording.is_file():
+        window = json.loads(recording.read_text()).get("tracking_window_ns")
+    truth = [r for r in jsonl(run / "telemetry/truth.jsonl") if r.get("target") is not None]
+    tstamps = np.asarray([r["stamp"] for r in truth])
+    if window:
+        t0, t1 = window[0] / 1e9, window[1] / 1e9
+    else:
+        # Without a recording, tracking starts when the target starts moving
+        # (within one truth sample of the supervisor's window) and lasts elapsed_sim.
+        start = np.asarray(truth[0]["target"][:2])
+        moved = [r["stamp"] for r in truth if np.linalg.norm(np.asarray(r["target"][:2]) - start) > 1e-6]
+        elapsed = (mission.get("tracking") or {}).get("elapsed_sim")
+        if not moved or elapsed is None:
+            raise SystemExit(f"{run.name}: tracking interval unknown")
+        t0 = moved[0] - (tstamps[1] - tstamps[0])
+        t1 = t0 + float(elapsed)
+    steps = [r for r in records if t0 <= r["stamp"] <= t1 and r["vehicles"]
+             and not r["reason"].startswith("waiting")]
+    if not steps:
+        raise SystemExit(f"{run.name}: no tracking records")
+    names = sorted(steps[0]["vehicles"])
+    T, n = len(steps), len(names)
+    stamps = np.asarray([r["stamp"] for r in steps])
+
+    # Independent Gazebo geometry at each control step.
+    idx = np.clip(np.searchsorted(tstamps, stamps), 0, len(truth) - 1)
+    prev = np.clip(idx - 1, 0, len(truth) - 1)
+    idx = np.where(np.abs(tstamps[prev] - stamps) < np.abs(tstamps[idx] - stamps), prev, idx)
+    P = np.asarray([[truth[i]["vehicles"][v]["position"] for v in names] for i in idx])  # (T, n, 3)
+    tgt = np.asarray([truth[i]["target"][:2] for i in idx])
+    track = np.asarray([[r["controller_modes"].get(v) == "TRACK" for v in names] for r in steps])
+    leader = np.asarray([r["leader"] is not None for r in steps])
+
+    # Collisions as upstream thesis_metrics: obstacle, pair closer than 2R, outside the map.
+    clear = np.asarray([[clearance(p, scenario["obstacles"]) for p in row] for row in P])
+    pair = np.linalg.norm(P[:, :, None] - P[:, None], axis=3)
+    pair[:, np.arange(n), np.arange(n)] = np.inf
+    (x0, x1), (y0, y1) = scenario["xlim"], scenario["ylim"]
+    hit = ((clear < R) | (pair.min(axis=2) < 2 * R)
+           | (P[..., 0] < x0) | (P[..., 0] > x1) | (P[..., 1] < y0) | (P[..., 1] > y1)).any(axis=1)
+    kc = int(np.argmax(hit)) if hit.any() else T
+    alive = np.arange(T) < kc
+
+    # Gathering and re-formation, each UAV split at its own first TRACK step.
+    join, out_steps, window_steps, episodes = [], 0, 0, []
+    for j in range(n):
+        if not track[:kc, j].any():
+            continue
+        k = int(np.argmax(track[:, j]))
+        join.append(stamps[k] - stamps[0])
+        out = ~track[k:kc, j]
+        out_steps += int(out.sum())
+        window_steps += kc - k
+        edge = np.diff(np.r_[0, out.astype(int), 0])
+        episodes += list((np.flatnonzero(edge == -1) - np.flatnonzero(edge == 1)) * period)
+    gathered = len(join) == n
+    followers = [t for t in join if t > 0]
+    reform_ok = join and window_steps / len(join) >= REFORM_MIN_WINDOW * T
+
+    # Coverage and visibility after the gathering (first step with every UAV in TRACK).
+    full = track.all(axis=1)
+    w = int(np.argmax(full)) if full.any() else 0
+    diff = P[:, :, :2] - tgt[:, None]
+    cheb = np.abs(diff).max(axis=2)
+    dist = np.linalg.norm(diff, axis=2)
+    side = 2 * L
+    cov = np.asarray([fov_coverage(P[t, :, :2], side, leader_idx=int(dist[t].argmin()))[0]
+                      for t in range(T)]) / (n * side ** 2)
+    visible = cheb.min(axis=1) <= L
+
+    # Leader continuity after the whole team first was in TRACK.
+    post = slice(w, T) if full.any() else slice(T, T)
+    lead_post = leader[post]
+    losses = int(np.sum(lead_post[:-1] & ~lead_post[1:])) if len(lead_post) else None
+
+    solve = [v["planning_and_solve_ms"] for r in steps for v in r["vehicles"].values()
+             if v.get("planning_and_solve_ms") is not None]
+    cycle = np.asarray([r["compute_ms"] for r in steps])
+    delay = np.asarray([r["reported_stamp"] - r["stamp"] for r in steps if "reported_stamp" in r])
+    failures = {}
+    for r in steps:
+        for v in r["vehicles"].values():
+            result = v["result"]
+            if result not in ("tracking", "search") or v.get("fallback_used"):
+                label = result if not v.get("fallback_used") else f"{result} (fallback)"
+                failures[label] = failures.get(label, 0) + 1
+
+    landed = []
+    for f in sorted((run / "telemetry").glob("flight-*.jsonl")):
+        last = jsonl(f)[-1]
+        landed.append(last["landed"] and not last["armed"] and not last["enabled"]
+                      and max(abs(s) for s in last["motor_speed_rad_s"]) < 1.0)
+    video = None
+    stamps_file = run / "telemetry/recorded-mission.timestamps.jsonl"
+    if (run / "recorded-mission.mp4").is_file() and stamps_file.is_file():
+        frames = sum(1 for _ in stamps_file.open())
+        video = frames / 20.0  # fixed 20 FPS composition
+
+    tp = mission.get("target_progress") or {}
+    near = dist.min(axis=1)[post]
+    fleet = dist.mean(axis=1)[post]
+    near_q = percentiles(near, [50, 95, 100])
+    fleet_q = percentiles(fleet, [50, 95])
+    solve_q = percentiles(solve, [95, 100])
+    cycle_q = percentiles(cycle, [50, 95, 100])
+    row = {
+        "algorithm": algorithm,
+        "run_id": run.name,
+        "tracking_s": float(stamps[-1] - stamps[0]),
+        "waypoints": f'{tp.get("waypoints_reached")}/{tp.get("waypoints")}',
+        "landed": "yes" if landed and all(landed) else "no",
+        "video_s": video,
+        "collision_free": "yes" if kc == T else "no",
+        "completion_pct": 100.0 * kc / T,
+        "first_collision_s": float(stamps[kc] - stamps[0]) if kc < T else None,
+        "min_clearance_m": float(clear.min() - R),
+        "min_separation_m": float(pair.min()),
+        "track_pct": 100.0 * float(track.mean()),
+        "gather_mean_s": (float(np.mean(followers)) if followers else 0.0) if gathered else None,
+        "gather_team_s": float(max(join)) if gathered else None,
+        "reform_pct": 100.0 * out_steps / window_steps if reform_ok else None,
+        "reform_episodes": len(episodes) / len(join) if reform_ok else None,
+        "reform_episode_s": (float(np.mean(episodes)) if episodes else 0.0) if reform_ok else None,
+        "leader_pct": 100.0 * float(lead_post.mean()) if len(lead_post) else None,
+        "leader_losses": losses,
+        "mission_visibility_pct": 100.0 * float((visible & alive)[w:].mean()),
+        "mission_coverage": float(np.where(alive, cov, 0.0)[w:].mean()),
+        "visibility_pct": 100.0 * float(visible[w:].mean()),
+        "coverage": float(cov[w:].mean()),
+        "near_p50_m": near_q[0], "near_p95_m": near_q[1], "near_max_m": near_q[2],
+        "fleet_p50_m": fleet_q[0], "fleet_p95_m": fleet_q[1],
+        "solve_mean_ms": float(np.mean(solve)) if solve else None,
+        "solve_p95_ms": solve_q[0], "solve_max_ms": solve_q[1],
+        "cycle_p50_ms": cycle_q[0], "cycle_p95_ms": cycle_q[1], "cycle_max_ms": cycle_q[2],
+        "slow_cycle_pct": 100.0 * float(np.mean(cycle > SLOW_CYCLE_MS)),
+        "late_pct": 100.0 * float(np.mean(delay > period)) if len(delay) else None,
+        "failures": "; ".join(f"{k}: {c}" for k, c in sorted(failures.items(), key=lambda x: -x[1])) or "none",
+    }
+    return preset, limit, row
+
+
+def read_table(path):
+    if not path.is_file():
+        return {}
+    with path.open(newline="") as f:
+        rows = [{KEY[h]: v for h, v in r.items() if h in KEY} for r in csv.DictReader(f)]
+    return {r["algorithm"]: r for r in rows}
+
+
+def number(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if re.fullmatch(r"-?\d+", value):
+        return int(value)
+    return float(value) if re.fullmatch(r"-?\d+(\.\d+)?(e-?\d+)?", value) else value
+
+
+def text(key, fmt, value):
+    value = number(value)
+    if value is None:
+        return "–"
+    if isinstance(value, float) and fmt != "{}":
+        return fmt.format(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def ordered(rows):
+    rank = {a: i for i, a in enumerate(ALGORITHM_ORDER)}
+    return [rows[a] for a in sorted(rows, key=lambda a: (rank.get(a, len(rank)), a))]
+
+
+def write_csv(path, rows):
+    with path.open("w", newline="") as f:
+        out = csv.writer(f)
+        out.writerow([HEADER[k] for k, _, _, _ in COLUMNS])
+        for r in rows:
+            out.writerow(["" if number(r.get(k)) is None else
+                          (round(number(r[k]), 4) if isinstance(number(r[k]), float) else r[k])
+                          for k, _, _, _ in COLUMNS])
+
+
+def write_markdown(path, rows, preset, limit):
+    algorithms = [r["algorithm"] for r in rows]
+    lines = [f"# Metrics: {preset}, {limit.replace('_', ' ')}", "",
+             f"Updated {datetime.datetime.now().astimezone():%Y-%m-%d %H:%M %Z}. "
+             "One column per algorithm (its latest collected run); "
+             "the CSV and XLSX hold the same values with one row per algorithm.", ""]
+    for section, cols in SECTIONS:
+        lines += [f"## {section}", "", "| Metric | " + " | ".join(algorithms) + " |",
+                  "|---|" + "---:|" * len(algorithms)]
+        for key, title, fmt, _ in cols:
+            if key == "algorithm":
+                continue
+            lines.append(f"| {title} | " + " | ".join(text(key, fmt, r.get(key)) for r in rows) + " |")
+        lines.append("")
+    lines += ["## Definitions", "", "| Metric | Definition |", "|---|---|"]
+    lines += [f"| {title} | {definition} |" for _, title, _, definition in COLUMNS]
+    lines += ["", "Gathering, re-formation, mission coverage and mission visibility follow upstream "
+              "`thesis_metrics.py`; FOVs are squares of side 2 x VIEWING_RADIUS.", ""]
+    path.write_text("\n".join(lines))
+
+
+def column_name(i):
+    s = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def sheet_xml(table, widths, freeze_column):
+    cells = []
+    for y, row in enumerate(table, 1):
+        out = []
+        for x, value in enumerate(row):
+            ref = f"{column_name(x)}{y}"
+            style = ' s="1"' if y == 1 else ""
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out.append(f'<c r="{ref}"{style}><v>{value}</v></c>')
+            elif value not in (None, ""):
+                out.append(f'<c r="{ref}" t="inlineStr"{style}><is><t>{escape(str(value))}</t></is></c>')
+        cells.append(f'<row r="{y}">{"".join(out)}</row>')
+    cols = "".join(f'<col min="{i + 1}" max="{i + 1}" width="{w}" customWidth="1"/>' for i, w in enumerate(widths))
+    pane = (f'<pane xSplit="{freeze_column}" ySplit="1" topLeftCell="{column_name(freeze_column)}2" '
+            'activePane="bottomRight" state="frozen"/>')
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<sheetViews><sheetView workbookViewId="0">{pane}</sheetView></sheetViews>'
+            f'<cols>{cols}</cols><sheetData>{"".join(cells)}</sheetData></worksheet>')
+
+
+def write_xlsx(path, rows):
+    """Minimal standard workbook (Metrics, Definitions) without third-party packages."""
+    metrics = [[HEADER[k] for k, _, _, _ in COLUMNS]]
+    for r in rows:
+        metrics.append([round(v, 4) if isinstance(v, float) else v
+                        for v in (number(r.get(k)) for k, _, _, _ in COLUMNS)])
+    widths = [max(12, min(48, len(HEADER[k]) * 0.9)) for k, _, _, _ in COLUMNS]
+    definitions = [["Section", "Metric", "Definition"]]
+    definitions += [[s, t, d] for s, cols in SECTIONS for _, t, _, d in cols]
+    sheets = [("Metrics", sheet_xml(metrics, widths, 1)),
+              ("Definitions", sheet_xml(definitions, [22, 44, 110], 0))]
+    ns = "http://schemas.openxmlformats.org"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml",
+                   f'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="{ns}/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                   '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                   + "".join(f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                             for i in range(1, len(sheets) + 1)) + '</Types>')
+        z.writestr("_rels/.rels",
+                   f'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="{ns}/package/2006/relationships">'
+                   f'<Relationship Id="rId1" Type="{ns}/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+                   '</Relationships>')
+        z.writestr("xl/workbook.xml",
+                   f'<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="{ns}/spreadsheetml/2006/main" '
+                   f'xmlns:r="{ns}/officeDocument/2006/relationships"><sheets>'
+                   + "".join(f'<sheet name="{name}" sheetId="{i}" r:id="rId{i}"/>' for i, (name, _) in enumerate(sheets, 1))
+                   + '</sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels",
+                   f'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="{ns}/package/2006/relationships">'
+                   + "".join(f'<Relationship Id="rId{i}" Type="{ns}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>'
+                             for i in range(1, len(sheets) + 1))
+                   + f'<Relationship Id="rId{len(sheets) + 1}" Type="{ns}/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+                   '</Relationships>')
+        z.writestr("xl/styles.xml",
+                   f'<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="{ns}/spreadsheetml/2006/main">'
+                   '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+                   '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+                   '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+                   '<borders count="1"><border/></borders>'
+                   '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+                   '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+                   '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1">'
+                   '<alignment wrapText="1" vertical="top"/></xf></cellXfs>'
+                   '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
+        for i, (_, xml) in enumerate(sheets, 1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", xml)
+
+
+def list_runs():
+    for run in sorted(p for p in RUNS.iterdir() if not p.is_symlink() and (p / "telemetry/mpc.jsonl").is_file()):
+        try:
+            algorithm, preset, limit, mission = describe(run)
+        except (OSError, ValueError, KeyError) as error:
+            print(f"{run.name}  (unreadable: {error})")
+            continue
+        tp = mission.get("target_progress") or {}
+        print(f"{run.name}  {preset:<14} {limit:<13} {algorithm:<12} "
+              f"state={mission.get('state')} waypoints={tp.get('waypoints_reached')}/{tp.get('waypoints')}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("runs", nargs="*", help="run IDs under runs/ or run directories")
+    parser.add_argument("--list", action="store_true", help="list runs with preset, limit and algorithm")
+    parser.add_argument("--force", action="store_true",
+                        help="replace an algorithm's row even with an older run than the stored one")
+    args = parser.parse_args()
+    if args.list:
+        list_runs()
+        return
+    if not args.runs:
+        parser.error("give one or more run IDs (see --list)")
+    fov_coverage = upstream_fov_coverage()
+    changed = {}
+    for name in args.runs:
+        run = resolve_run(name)
+        preset, limit, row = collect(run, fov_coverage)
+        stem = f"{preset}_{limit}"
+        table = changed[stem][2] if stem in changed else read_table(OUT / f"{stem}.csv")
+        old = table.get(row["algorithm"])
+        if old and old["run_id"] > row["run_id"] and not args.force:
+            print(f"{run.name}: kept newer {row['algorithm']} run {old['run_id']} in {stem} (use --force)")
+            continue
+        table[row["algorithm"]] = row
+        changed[stem] = (preset, limit, table)
+        print(f"{run.name}: {row['algorithm']} -> metrics/{stem}")
+    OUT.mkdir(exist_ok=True)
+    for stem, (preset, limit, table) in changed.items():
+        rows = ordered(table)
+        write_csv(OUT / f"{stem}.csv", rows)
+        write_xlsx(OUT / f"{stem}.xlsx", rows)
+        write_markdown(OUT / f"{stem}.md", rows, preset, limit)
+        print(f"Wrote metrics/{stem}.csv, .xlsx and .md ({len(rows)} algorithms)")
+
+
+if __name__ == "__main__":
+    main()

@@ -179,6 +179,30 @@ filter requires every UAV above the lower of `flight_altitude - 0.5` and
 Inspect solver failures and measured motion alongside the summary. Sampled
 clearance and successful commands alone do not establish continuous safety.
 
+### Algorithm comparison tables
+
+`run` collects each mission into per-algorithm comparison tables after its
+evaluation; a collection failure only prints a warning and never changes the run
+status. Collect earlier runs again without rerunning them (host Python with
+NumPy and PyYAML):
+
+```bash
+./scripts/collect-metrics --list
+./scripts/collect-metrics RUN_ID [RUN_ID ...]
+```
+
+Each run updates `metrics/<preset>_<limit>.csv`, `.xlsx` and `.md`, where the
+limit is the run's `--seconds` (`90s`) or `full_mission`. A table keeps one row
+per algorithm, its latest collected run; only that algorithm's row changes, and
+an older run never replaces a newer one unless `--force` is given. `metrics/` is
+ignored by Git. Columns cover completion and safety, formation (gathering and
+re-formation time), tracking (mission visibility and coverage), solve and cycle
+time, and solver fallbacks; the Markdown and the workbook's second sheet define
+each one. Gathering, re-formation, mission visibility and mission coverage follow
+upstream `thesis_metrics.py`, including its collision cut: after the first
+obstacle contact, UAV pair closer than `2 * ROBOT_RADIUS` or exit from the map,
+the remaining steps count as unseen. The uncut values are reported beside them.
+
 The three current presets completed recorded full-fleet native missions on
 November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
 for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;

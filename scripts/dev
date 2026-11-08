@@ -41,7 +41,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   doctor                         Host/Docker/config diagnostics
   build [sim]                     Build the simulation image
   run [--seconds SIM_SECONDS]     Start, await readiness, take off, track, land, evaluate,
-                                  finalize any video and stop the simulation
+                                  finalize any video, stop the simulation and update metrics/
       [--preset small50_3uav|large200_5uav|scen1]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--algorithm NAME]          Override the settings algorithm (mpc|apf|cbf_qp|cbf_qp_lag|pure_mpc|impc_ob_rec)
@@ -130,6 +130,9 @@ if (status / "mission.json").is_file():
     else
       printf 'Evaluation failed (exit %s).\n' "$evaluation_status" >&2
     fi
+    # Comparison tables are a convenience; a failure never changes the run status.
+    python3 scripts/collect-metrics "$RUN_ID" >&2 ||
+      printf 'Metrics collection failed; retry with ./scripts/collect-metrics %s.\n' "$RUN_ID" >&2
   fi
   for next in "$landing_status" "$recording_status" "$evaluation_status"; do
     (( status != 0 )) || status=$next
