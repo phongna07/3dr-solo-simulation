@@ -301,6 +301,7 @@ class Controller(Node):
                         neighbors=[self.histories[k].at(seconds(scan.header.stamp))[0]
                                    for k in names if k != n],
                         neighbor_radius=cfg["ROBOT_RADIUS"] + 0.15,
+                        ceiling_z=settings["obstacle_height"],
                     )
                 except ValueError:
                     reason = "scan_pose_unavailable"

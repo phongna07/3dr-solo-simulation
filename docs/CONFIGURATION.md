@@ -240,17 +240,19 @@ leaves that UAV's map unchanged and does not block MPC or another UAV's mapping.
 Scan age and timestamp-matched measured poses are still required.
 
 Projection uses full measured roll, pitch and yaw, including the rotated 0.08 m
-LiDAR mount offset. There is no endpoint-height band around the sensor. Rays
-ending at or below the known world ground plane (Z=0, with a 1 mm tolerance)
-are discarded entirely, so they cannot clear cells. NaN, negative infinity,
+LiDAR mount offset. Rays ending at or below the known world ground plane (Z=0,
+with a 1 mm tolerance) or at or above `obstacle_height` are discarded entirely,
+including returns, so they cannot clear cells. NaN, negative infinity,
 zero, below-minimum and finite above-maximum ranges are also discarded.
 Positive infinity and maximum-range no-returns clear only their observed XY
 prefix; finite in-range hits mark their projected endpoint occupied. Teammate
 returns retain their free prefix without marking the teammate occupied.
 
 This remains a 2D projection: upward/downward rays observe different heights
-from the planned 3 m flight plane. A ray can pass above a low obstacle and clear
-its XY footprint, or project an overhang/upper surface into the flight corridor.
+from the planned flight plane. Because all obstacles share `obstacle_height`, a
+ray kept below it cannot pass over one, but a tilted ray can still project an
+upper or lower obstacle surface into the flight corridor. Discarded rays add no
+evidence, so sustained tilt reduces how far each scan observes.
 The numerical ground tolerance does not bound Gaussian range noise; a noisy
 ground return reconstructed above it can remain as a false occupied cell.
 Sparse/empty scans add no evidence in unseen directions, and persistent maps can
