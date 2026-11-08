@@ -5,6 +5,8 @@ cameras render the same scene without Fuel downloads or texture search paths.
 """
 
 import math
+import struct
+import zlib
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -148,51 +150,84 @@ def srgb_material(red, green, blue):
                  for c in (red / 255, green / 255, blue / 255))
 
 
-def street_mesh(path, bounds):
-    """World-aligned paint only: fixed 24 m blocks, independent of obstacles.
+def ground_mesh(path, bounds, *, cell_size):
+    """Flat, tiled asphalt with baked bump shading; no displaced geometry.
 
-    Batch upward-facing quads into two materials, with no collision or LiDAR
-    geometry. Leave intersections clear and set paint 6 mm above the ground.
+    One texture with four cells per edge and two triangles cover the ground.
+    World UVs set the requested cell size without changing the flat mesh.
     """
-    # Muted paint, halfway to the asphalt, so markings stay behind the UAVs.
-    mesh = Mesh(dict(yellow=srgb_material(130, 122, 86),
-                     white=srgb_material(130, 134, 132)))
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    texture = path.with_suffix('.png')
+    size = 256
+    pixels = bytearray()
+    for y in range(size):
+        pixels.append(0)  # PNG row filter: none.
+        row = y // 64
+        v = (y % 64 + 0.5) / 64
+        for x in range(size):
+            u = ((x + (row % 2) * 32) % 64 + 0.5) / 64
+            # Shaded bevels suggest shallow rounded bumps, entirely in color.
+            edge = min(u, 1 - u, v, 1 - v)
+            bevel = min(1.0, edge / 0.065)
+            shade = (math.exp(-u / 0.065) + math.exp(-v / 0.065)
+                     - math.exp(-(1 - u) / 0.065) - math.exp(-(1 - v) / 0.065))
+            grain = (((x * 73856093) ^ (y * 19349663)) % 17 - 8) * 0.28
+            offset = -9 * (1 - bevel) + 11 * shade + grain
+            pixels.extend(max(0, min(255, round(c + offset))) for c in (64, 67, 65))
+
+    def chunk(kind, data):
+        return (struct.pack('!I', len(data)) + kind + data
+                + struct.pack('!I', zlib.crc32(kind + data) & 0xffffffff))
+
+    texture.write_bytes(b'\x89PNG\r\n\x1a\n'
+                        + chunk(b'IHDR', struct.pack('!2I5B', size, size, 8, 2, 0, 0, 0))
+                        + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b''))
     xmin, ymin, xmax, ymax = bounds
-    pitch, half_width = 24.0, 4.0
+    points = [(xmin, ymin, 0.006), (xmax, ymin, 0.006),
+              (xmax, ymax, 0.006), (xmin, ymax, 0.006)]
+    mesh = Mesh(dict(asphalt=(1, 1, 1)))
+    mesh.face('asphalt', points)
+    mesh.write(path)
+    # Add a standard COLLADA diffuse sampler and world-aligned repeating UVs.
+    ns = {'c': 'http://www.collada.org/2005/11/COLLADASchema'}
+    ET.register_namespace('', ns['c'])
+    tree = ET.parse(path)
+    root = tree.getroot()
 
-    def stripe(axis, along, across, length, width, material):
-        points = [(along - length / 2, across - width / 2),
-                  (along + length / 2, across - width / 2),
-                  (along + length / 2, across + width / 2),
-                  (along - length / 2, across + width / 2)]
-        if axis == 1:
-            points = [(y, x) for x, y in reversed(points)]
-        # Clip at the finite ground boundary, including partially visible blocks.
-        points = [(min(xmax, max(xmin, x)), min(ymax, max(ymin, y)), 0.006)
-                  for x, y in points]
-        mesh.face(material, points)
+    def sub(parent, tag, **attrs):
+        return ET.SubElement(parent, '{' + ns['c'] + '}' + tag, **attrs)
 
-    for axis in (0, 1):
-        lo, hi, across_lo, across_hi = ((xmin, xmax, ymin, ymax) if axis == 0
-                                       else (ymin, ymax, xmin, xmax))
-        for row in range(math.floor(across_lo / pitch), math.ceil(across_hi / pitch) + 1):
-            center = row * pitch
-            for block in range(math.floor(lo / pitch), math.ceil(hi / pitch)):
-                start, end = block * pitch, (block + 1) * pitch
-                middle = (start + end) / 2
-                for offset in (-0.14, 0.14):
-                    stripe(axis, middle, center + offset, pitch - 13, 0.10, "yellow")
-                for side in (-1, 1):
-                    stripe(axis, middle, center + side * half_width,
-                           pitch - 2 * half_width, 0.12, "white")
-                    for dash in (-4, 0, 4):
-                        stripe(axis, middle + dash, center + side * 2,
-                               1.8, 0.10, "white")
-                # Zebra crossings across each approach, outside the intersection.
-                for crossing in (start + 5.0, end - 5.0):
-                    for bar in range(-5, 6):
-                        stripe(axis, crossing, center + bar * 0.65, 1.3, 0.30, "white")
-    return mesh.write(path)
+    images = sub(root, 'library_images')
+    sub(sub(images, 'image', id='asphalt_image'), 'init_from').text = texture.name
+    profile = root.find('.//c:profile_COMMON', ns)
+    surface = sub(sub(profile, 'newparam', sid='asphalt_surface'), 'surface', type='2D')
+    sub(surface, 'init_from').text = 'asphalt_image'
+    sampler = sub(sub(profile, 'newparam', sid='asphalt_sampler'), 'sampler2D')
+    sub(sampler, 'source').text = 'asphalt_surface'
+    for axis in ('s', 't'):
+        sub(sampler, 'wrap_' + axis).text = 'WRAP'
+    for channel in ('ambient', 'diffuse'):
+        target = profile.find('c:technique/c:phong/c:' + channel, ns)
+        target.clear()
+        sub(target, 'texture', texture='asphalt_sampler', texcoord='UVMap')
+    geometry = root.find('.//c:geometry/c:mesh', ns)
+    source = sub(geometry, 'source', id='asphalt_uv')
+    tile_size = 4 * cell_size
+    coords = [value / tile_size for triangle, _ in mesh.faces['asphalt']
+              for point in triangle for value in point[:2]]
+    sub(source, 'float_array', id='asphalt_uv_array', count='12').text = ' '.join(map(str, coords))
+    accessor = sub(sub(source, 'technique_common'), 'accessor',
+                   source='#asphalt_uv_array', count='6', stride='2')
+    for axis in ('S', 'T'):
+        sub(accessor, 'param', name=axis, type='float')
+    triangles = geometry.find('c:triangles', ns)
+    sub(triangles, 'input', semantic='TEXCOORD', source='#asphalt_uv', offset='2', set='0')
+    triangles.find('c:p', ns).text = ' '.join(f'{i} {i} {i}' for i in range(6))
+    binding = root.find('.//c:instance_material', ns)
+    sub(binding, 'bind_vertex_input', semantic='UVMap', input_semantic='TEXCOORD', input_set='0')
+    tree.write(path, encoding='utf-8', xml_declaration=True)
+    return path
 
 
 def building_mesh(path, width, depth, obstacle_height, index):
