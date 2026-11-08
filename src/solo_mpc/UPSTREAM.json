@@ -1,6 +1,6 @@
 {
   "source": "motion_planning_MPC",
-  "commit": "db96e52b89c24a559271b1a24e36c6d3f9c53873",
+  "commit": "af327c52a3d66ef47766cf96683088c309de850c",
   "sha256": {
     "dynamics.py": "26eefe78f3a9a0ca06499aa71599a72e02f219019b0d1992fdacebbee86b7d81",
     "mpc_problem.py": "e2c54cdb3ed427e983816909cc4301c49cb54fa4cfa3ba120ef56b886391f593",
@@ -44,5 +44,5 @@
   ],
   "solver_integration": "Unchanged submodule runtime_sources loaded lazily per algorithm by core/upstream.py: mpc_problem.py and dynamics.py for mpc (core/algorithms/mpc/problem.py applies local compatibility adjustments); apf.py, apfc.py and dynamics.py for apf (core/algorithms/apf/ with the shared core/algorithms/ baseline adapters); cbfqp.py, apfc.py and dynamics.py for cbf_qp and cbf_qp_lag (core/algorithms/cbf_qp/, cbf_qp_lag/); pure_mpc.py and dynamics.py for pure_mpc (core/algorithms/pure_mpc/); impc_ob.py and dynamics.py for impc_ob_rec (core/algorithms/impc_ob_rec/).",
   "ported_algorithms_commit": "d7e5a791b2eefd0c3a55a2a5e444eec75dc709ae",
-  "pinned_on": "2026-11-05"
+  "pinned_on": "2026-11-08"
 }
