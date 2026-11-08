@@ -15,6 +15,9 @@ seeded random obstacles and a random winding target route. Select it with
 This preset flies at 3 m; `--preset small50_3uav` explicitly selects the
 original scenario.
 
+`--preset scen1_1000` runs the upstream five-UAV 1000 × 1000 m scenario unscaled
+at 30 m; see the configuration guide for its few simulation-only differences.
+
 `--preset scen1` scales the upstream five-UAV 1000 × 1000 m layout to
 200 × 200 m. All starts, 65 obstacles and 27 route waypoints retain their
 relative geometry at one fifth of their original coordinates. UAVs fly at 6 m

@@ -69,6 +69,12 @@ For the scaled upstream layout in a 200 × 200 m field at 6 m flight altitude:
 ./scripts/dev run --preset scen1 --seconds 90 --record-video
 ```
 
+For the unscaled upstream 1000 × 1000 m field at 30 m flight altitude:
+
+```bash
+./scripts/dev run --preset scen1_1000 --seconds 30 --record-video
+```
+
 Target input is always exact ground truth; UAV cameras only feed recordings.
 The complete route is much longer than this representative check and contains
 2.6 m/s sprint legs. A duration-limited mission is not evidence of completing

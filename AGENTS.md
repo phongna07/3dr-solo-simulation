@@ -1,7 +1,7 @@
 # Project and architecture
 
 This project simulates full fleets of three or five UAVs tracking a moving target
-through obstacles at 3 m altitude (30 m for `scen1`). Docker supplies ROS 2 Jazzy
+through obstacles at 3 m altitude (6 m for `scen1`, 30 m for `scen1_1000`). Docker supplies ROS 2 Jazzy
 and native Gazebo Harmonic multicopters. MPC is planar; native velocity control,
 an `Actuators` component and four rotor motor models provide 3D force/torque physics.
 

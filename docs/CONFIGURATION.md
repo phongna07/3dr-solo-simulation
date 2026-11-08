@@ -93,6 +93,27 @@ Earlier 1000 m / 30 m runs in [Development](DEVELOPMENT.md) describe the former
 configuration and do not validate this scaled preset. Inspect measured flight,
 camera observations, solver failures, landing and finalized video for new runs.
 
+### Scen1_1000: unscaled five-UAV upstream layout
+
+`./scripts/dev run --preset scen1_1000 --record-video` selects
+`config/fleet-5uav.yaml`, `scenarios/scen1_1000.yaml` and
+`config/controller-scen1_1000.yaml`. The scenario is the upstream
+`scenarios/scen1.yaml` verbatim plus `world_name: mpc_scen1_1000`: 1000 × 1000 m,
+original starts at 30 m, 33 rectangles, 32 circles, 27 waypoints, 5/13 m/s target
+legs, 25 m half-footprint, 20-step horizon, VMAX 10 m/s, UMAX 5 m/s² and 2 m grid.
+Controller `params` repeat VMAX because `flight_node` reads it from that file, and
+supply upstream's four-slot `GRID_CELLS` default.
+
+Simulation-only values: obstacle collision height 40 m (meshes derive from it and
+reach 50–100 m), observer offset `[-50,-50,160]`, coverage guides 0.3 m, camera
+HFOV unchanged (30 m altitude gives the 25 m footprint), climb/descent limit 2 m/s.
+
+Known differences from upstream: IPOPT keeps the local 0.75 s CPU cap; the native
+velocity controller limits acceleration to 4 m/s² horizontally (`world.py`), below
+UMAX; `CORRIDOR_MARGIN` adds the local grid-cell allowance (2.18 m vs 0.77 m). The
+Iris stays physical size, so it is barely visible in the 160 m observer view; the
+FOV guides and panels show each UAV.
+
 ### Five UAVs in a 200 × 200 m map
 
 `./scripts/dev run --preset large200_5uav --record-video` selects these matching inputs:

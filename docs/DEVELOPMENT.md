@@ -1231,3 +1231,25 @@ MPC's because the obstacle margin is `CORRIDOR_MARGIN − IMPC_BUFFER` from the
 UAV centre. On large200 and scen1 most vehicle cycles were `search` (the fleet
 lost the target, as with `pure_mpc`). These are baseline results, not tuning
 targets; CPU-limit failures remain visible as `partial_solver_failure`.
+
+## Unscaled scen1_1000 verification (November 8, 2026)
+
+Each row is `./scripts/dev run --preset scen1_1000 --seconds 30 --record-video`
+with the named algorithm; all five UAVs flew, landed and disarmed, and no log held a
+traceback. Clearance is the minimum obstacle body clearance; distance is nearest
+UAV to target p50/max. Compute is fleet p50/max.
+
+| Algorithm | Run | Clearance (m) | Min UAV gap (m) | Distance (m) | Compute (ms) |
+| --- | --- | --- | --- | --- | --- |
+| mpc | `20261108T154852Z-6762` | 3.60 | 110.7 | 19.9 / 20.1 | 285 / 668 |
+| apf | `20261108T155617Z-21025` | 1.48 | 52.4 | 14.9 / 16.6 | 13 / 17 |
+| cbf_qp | `20261108T160304Z-29408` | 1.61 | 9.8 | 11.2 / 16.6 | 21 / 72 |
+| cbf_qp_lag | `20261108T160953Z-12` | 1.74 | 3.2 | 11.6 / 16.6 | 85 / 696 |
+| pure_mpc | `20261108T161643Z-16463` | 9.76 | 140.7 | 57.0 / 89.8 | 166 / 442 |
+| impc_ob_rec | `20261108T162326Z-9234` | 1.55 | 63.1 | 21.1 / 24.7 | 392 / 790 |
+
+MPC solved all 1635 vehicle cycles nominally and reached 9.86 m/s. Thirty seconds
+covers one route waypoint and no sprint leg; only UAV 3 reached the target, the
+others stayed in SEARCH, so formation and hand-offs are unverified. `pure_mpc` lost
+the target (all SEARCH at the end, 2.87 m/s peak); the cause was not investigated.
+`impc_ob_rec` delivered 21.5% of cycles later than the control period.

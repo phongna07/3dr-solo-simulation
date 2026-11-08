@@ -1,0 +1,173 @@
+# 1000 m x 1000 m example with a seeded random map.
+# Units: metres, m/s. See scenarios/README.md for every key.
+#
+# Physical parameters are scaled for a field-size map. They are a starting
+# point, not a tuned set: run `python config.py big1000` after every change.
+
+description: 1000 m field, 5 UAVs, random obstacles (seed 7)
+xlim: [0, 1000]
+ylim: [0, 1000]
+viewing_radius: 25        # half side of the camera footprint (m)
+tar_max_speed: 5          # target speed (m/s)
+
+starts:                   # [x, y, z]; edit with pick_waypoints.py (key u)
+- [638.81, 354.575, 30]
+- [708.72, 182.49, 30]
+- [83.569, 101.826, 30]
+- [118.523, 704.122, 30]
+- [259.686, 486.327, 30]
+
+target:
+  waypoints:              # edit with pick_waypoints.py (key t)
+  - [100, 100]
+  - [306.741, 318.276]
+  - [207.254, 483.639]
+  - [298.674, 595.225]
+  - [262.375, 692.022]
+  - [184.399, 705.466]
+  - [149.445, 788.82]
+  - [421.016, 864.107]
+  - [508.403, 800.92]
+  - [638.81, 864.107]
+  - [798.795, 817.053]
+  - [778.629, 749.832]
+  - [697.965, 696.055]
+  - [668.388, 630.179]
+  - [829.717, 510.527]
+  - [802.829, 423.14]
+  - [667.043, 445.995]
+  - [653.599, 575.058]
+  - [581.001, 553.548]
+  - [586.378, 429.862]
+  - [769.218, 311.554]
+  - [773.252, 185.179]
+  - [703.342, 104.515]
+  - [478.826, 147.536]
+  - [470.759, 351.886]
+  - [415.638, 584.469]
+  - [512.436, 675.889]
+  # one per leg; 13 m/s (> VMAX = 10) sprints force a leader hand-off:
+  # leg 5 north (90 m), leg 7 east (108 m), leg 10 south (70 m), leg 17 west (76 m)
+  speeds: [5, 5, 5, 5, 5, 13, 5, 13, 5, 5, 13, 5, 5, 5, 5, 5, 5, 13, 5, 5, 5, 5, 5, 5, 5, 5]
+
+obstacles:                # fixed obstacles, added before the random ones
+  rects: # [x, y, w, h]
+  - [218.117, 288.846, 55.889, 51.027]
+  - [775.019, 443.846, 20.211, 52.849]
+  - [753.406, 582.517, 42.14, 59.82]
+  - [592.763, 51.903, 28.612, 26.408]
+  - [242.524, 21.088, 40.565, 39.875]
+  - [611.084, 696.964, 40.392, 53.886]
+  - [535.396, 144.382, 57.798, 56.157]
+  - [361.58, 395.152, 45.663, 42.788]
+  - [333.231, 556.071, 40.95, 54.912]
+  - [733.758, 863.934, 34.217, 40.764]
+  - [788.186, 23.461, 25.471, 36.756]
+  - [683.791, 222.72, 51.721, 40.52]
+  - [264.437, 911.008, 42.933, 33.603]
+  - [832.663, 398.155, 43.226, 37.066]
+  - [507.306, 906.545, 22.749, 37.2]
+  - [376.867, 202.095, 58.862, 33.307]
+  - [402.029, 741.578, 27.356, 22.475]
+  - [169.112, 644.75, 21.559, 43.616]
+  - [188.569, 547.386, 46.321, 44.43]
+  - [810.775, 765.239, 51.898, 32.549]
+  - [99.937, 628.628, 45.55, 44.373]
+  - [313.3, 679.958, 52.955, 52.141]
+  - [82.649, 733.505, 43.162, 31.988]
+  - [752.408, 778.712, 23.872, 49.093]
+  - [500.332, 735.216, 34.829, 22.568]
+  - [783.438, 878.655, 48.866, 35.258]
+  - [97.324, 916.943, 26.205, 40.579]
+  - [753.95, 676.802, 52.147, 31.277]
+  - [392.702, 662.435, 58.023, 37.34]
+  - [24.775, 902.115, 22.613, 49.114]
+  - [723.743, 484.109, 35.217, 38.665]
+  - [357.754, 256.733, 57.916, 55.563]
+  - [78.912, 818.133, 39.753, 47.422]
+  circles: # [cx, cy, r]
+  - [266.722, 447.732, 14.176]
+  - [468.08, 894.037, 17.723]
+  - [218.798, 377.463, 20.38]
+  - [176.887, 282.682, 22.451]
+  - [507.335, 850.457, 18.117]
+  - [84.791, 394.143, 18.973]
+  - [802.259, 384.812, 12.253]
+  - [234.679, 659.907, 24.517]
+  - [651.473, 156.011, 23.111]
+  - [860.741, 469.058, 10.571]
+  - [946.74, 650.869, 11.843]
+  - [38.828, 735.774, 24.001]
+  - [896.192, 824.389, 13.194]
+  - [480.405, 589.182, 19.057]
+  - [260.534, 202.373, 13.792]
+  - [916.724, 536.503, 14.659]
+  - [327.132, 132.143, 15.08]
+  - [858.513, 216.356, 21.503]
+  - [919.49, 386.188, 18.456]
+  - [655.297, 816.004, 12.006]
+  - [459.55, 102.411, 14.948]
+  - [203.138, 744.123, 19.618]
+  - [539.602, 394.867, 22.665]
+  - [748.882, 971.193, 12.067]
+  - [967.013, 133.142, 11.377]
+  - [57.895, 323.903, 17.101]
+  - [53.453, 503.19, 11.874]
+  - [279.935, 525.318, 20.048]
+  - [621.402, 534.199, 17.742]
+  - [958.784, 922.428, 11.698]
+  - [590.111, 340.962, 23.792]
+  - [388.677, 822.389, 22.402]
+
+# generate: frozen into `obstacles:` by pick_waypoints.py (key f). To use the seed again, uncomment this block
+# and empty `obstacles:` (or keep only the fixed ones).
+# generate:
+#   seed: 7
+#   density: 0.09           # fraction of the map covered by obstacles
+#   rect_size: [20, 60]     # side length range (m)
+#   circle_radius: [10, 25] # radius range (m)
+#   circle_fraction: 0.4
+#   min_gap: 15             # clearance between obstacles (m)
+#   border_margin: 10       # keep obstacles off the map border (m)
+#   keep_clear_radius: 40   # free zone around UAV starts and target waypoints (m)
+#   path_clearance: 12      # free corridor along the target segments (m); 0 = off
+
+params:
+  CBF_BOX_RATIO: 0.5        # target within +-12.5 m of the leader's FOV centre: hand-offs only on sprints
+  # ─── Dynamics / MPC ───
+  TIMESTEP: 0.1
+  HORIZON_LENGTH: 20        # reach = VMAX * H * dt = 20 m (the backup branch, BACKUP_HORIZON = 25, stops the UAV)
+  VMAX: 10
+  UMAX: 5                   # VMAX / UMAX = 2 s = horizon length
+  ROBOT_RADIUS: 0.5         # safety radius; 2*VMAX*dt <= 2R (no tunnelling)
+  CORRIDOR_BOX: 25          # >= horizon reach
+  CORRIDOR_BARRIER_EPS: 1.0
+  COST_LENGTH_SCALE: 10     # map / FOV are 10x the 50 m scenarios -> distances / 10 in the cost
+  W_sat_slot: 10            # distances are scaled down, control effort is not: at 1 the slot pull
+                            # loses to W_u and satellites trail their slot by ~15 m
+  # ─── Sensing ───
+  SENSING_RADIUS: 50
+  SENSING_NEIGHBOR: 45      # >= 2 * reach + UAV_SAFE_DISTANCE
+  LIDAR_RANGE_MIN: 0.5
+  LIDAR_NOISE: 0.05
+  LIDAR_MARCH_STEP: 0.5
+  # ─── Occupancy grid / planner ───
+  GRID_RESOLUTION: 2.0      # ray spacing at 50 m is 1.75 m < 2 m
+  INFLATE_MARGIN: 1.0       # INFLATE_RADIUS = 2 m
+  START_SNAP_RADIUS: 20
+  GOAL_SNAP_RADIUS: 100       # (JPS planner only)
+  GOAL_CLAMP_MARGIN: 10
+  PLANNER: local
+  LOCAL_PLAN_RADIUS: 150      # planning window half size (m) -> 151 x 151 cells
+  UNKNOWN_POLICY: optimistic  # the target is usually far outside what the UAV has seen
+  UNKNOWN_COST: 1.5           # prefer known-free space when it is not much longer
+  TARGET_REPLAN_THRESHOLD: 15
+  PATH_DEVIATION_THRESHOLD: 20
+  # ─── Target estimation / target path ───
+  KF_OBS_NOISE_STD: 1.0
+  TAR_RADIUS: 1.0
+  SAFETY_MARGIN: 3.0
+  TAR_SPLINE_DS: 2.0
+  TARGET_ARRIVAL_TOL: 1.0
+
+world_name: mpc_scen1_1000
