@@ -10,10 +10,11 @@ import yaml
 from .core.perception.sensors import CAMERA_WORLD_OFFSET
 from .obstacle_visuals import (
     CAMERA_VISIBILITY_MASK, CITY_VISUAL_FLAGS, LIDAR_PROXY_FLAGS,
-    LIDAR_VISIBILITY_MASK, building_mesh, srgb_material, street_mesh, tree_mesh,
+    LIDAR_VISIBILITY_MASK, building_mesh, srgb_material, ground_mesh, tree_mesh,
 )
 from .core.video.style import (
-    OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH, follow_offset, vehicle_color,
+    FOLLOW_OFFSET, OVERHEAD_FPS, OVERHEAD_HEIGHT, OVERHEAD_TOPIC, OVERHEAD_WIDTH,
+    follow_offset, vehicle_color,
 )
 
 
@@ -346,14 +347,18 @@ def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
                    ' '.join(map(str, (*srgb_material(64, 67, 65), 1))))
     height = settings["obstacle_height"]
     assets = Path(output).parent / "city_assets"
-    paint = element(ground.find('link'), 'visual', name='street_markings')
-    element(paint, 'pose', f'{-cx} {-cy} 0 0 0 0')
-    element(paint, 'visibility_flags', CITY_VISUAL_FLAGS)
-    element(paint, 'cast_shadows', 'false')
-    mesh = element(element(paint, 'geometry'), 'mesh')
-    element(mesh, 'uri', street_mesh(assets / 'street_markings.dae',
+    surface = element(ground.find('link'), 'visual', name='asphalt_pattern')
+    element(surface, 'pose', f'{-cx} {-cy} 0 0 0 0')
+    element(surface, 'visibility_flags', CITY_VISUAL_FLAGS)
+    element(surface, 'cast_shadows', 'false')
+    mesh = element(element(surface, 'geometry'), 'mesh')
+    # Preserve half-metre cells at the default 24 m overhead height; scale
+    # linearly with the same resolved height used by the recording camera.
+    cell_size = 0.5 * follow_offset(settings)[2] / FOLLOW_OFFSET[2]
+    element(mesh, 'uri', ground_mesh(assets / 'asphalt_pattern.dae',
             (cx - ground_width / 2, cy - ground_depth / 2,
-             cx + ground_width / 2, cy + ground_depth / 2)).resolve().as_uri())
+             cx + ground_width / 2, cy + ground_depth / 2),
+            cell_size=cell_size).resolve().as_uri())
     for i, (x, y, w, h) in enumerate(scenario["obstacles"]["rects"]):
         model = solid(
             world,

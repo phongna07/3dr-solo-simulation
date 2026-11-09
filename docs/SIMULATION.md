@@ -222,21 +222,24 @@ No new CPU/performance acceptance thresholds apply.
 
 ## Recording
 
-The Gazebo ground uses asphalt gray `#404341` with muted yellow `#827A56` double
-centerlines and muted white `#828684` dashed lane dividers, edges and zebra
-crossings, blended halfway toward the asphalt so the UAVs stand out.
-Display colors are converted to linear material values for Ogre2; illumination
-and shadows still affect the captured pixels.
+The Gazebo ground keeps asphalt gray `#404341`, with a recurring staggered
+bump pattern instead of street markings. Cell width scales linearly with the
+resolved overhead camera height: `cell_size_m = 0.5 * height_m / 24`. The default
+24 m view keeps half-metre cells; `scen1_1000` at 160 m uses 3.33 m cells. The
+texture repeats every four cells, using subtle bevel shading and grain to
+suggest rough paving. This keeps cells approximately as visible from higher
+overhead views; camera angle still affects their projected size. Bumps are
+color only: the ground plane, collision, friction and LiDAR geometry remain
+unchanged. Illumination and shadows still affect the captured pixels.
 Iris colors are brightened: the original near-black body (which matched the
 asphalt) is lifted to light graphite `#969BA5`, the propellers keep their original
 blue/green, and all parts lose the metallic term and gain faint emission. Only visual
 materials change, not the vendored SDF, collision, inertia or rotor physics.
-Eight-metre-wide streets repeat on a fixed 24 m world-aligned perpendicular
-grid across the ground, independently of scenario obstacles and target routes.
-Buildings and trees can cover the paint. Markings are batched visual meshes
-6 mm above the ground, visible to cameras/GUI but excluded from LiDAR and
-collision geometry. Restart the development stack to regenerate the scenery;
-release images need rebuilding.
+The asphalt pattern is a single flat visual mesh 6 mm above the ground,
+visible to cameras/GUI but excluded from LiDAR and collision geometry. The mesh
+and its small PNG texture are generated together in each run's `city_assets/`.
+Restart the development stack to regenerate the scenery; release images need
+rebuilding.
 
 Select `--record-video` at launch; it also enables the UAV cameras shown in the FOV panels.
 Every `run` exit (success, failure or Ctrl+C) and a manual `stop` finalize
