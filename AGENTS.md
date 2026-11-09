@@ -28,8 +28,8 @@ than adding a separate document for each feature or experiment.
   conditioning and optional speed recovery (do not restore copied solver code), and
   `mpc/capture.py` records optimizer inputs for replay. `apf/` runs the unchanged
   upstream baseline through `upstream_robot.py` shims and `command_rollout.py`;
-  `cbf_qp/` (`CBFQPVehicle`) and `cbf_qp_lag/` (lag-aware subclass) run unchanged
-  upstream `cbfqp.py` through the same adapters; `pure_mpc/` (`PureMPCVehicle`) runs
+  `cbf_qp_lag/` (`CBFQPLagVehicle`) runs unchanged upstream `cbfqp.py` with
+  `lag_aware=True` through the same adapters; `pure_mpc/` (`PureMPCVehicle`) runs
   unchanged upstream `pure_mpc.py` with the shared `stop_plan.py` fallback;
   `impc_ob_rec/` (`IMPCOBRecVehicle`) runs unchanged upstream `impc_ob.py` (recover)
   with the same fallback and the fleet `broadcast`/`peers` channel; no copied

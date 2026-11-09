@@ -24,7 +24,7 @@ warm start, and stopping plan.
 | `core/runtime/workers.py`, `cycles.py` | Reusable persistent process transport, phase deadlines, asynchronous cycles |
 | `core/algorithms/mpc/` | MPC selection (`algorithm.py`) and `MPCVehicle` (`vehicle.py`): corridors, solver cache, warm start, retained stopping plans; `problem.py` local solver compatibility adjustments; `capture.py` optimizer-input capture and replay |
 | `core/algorithms/apf/`, `upstream_robot.py`, `command_rollout.py` | Upstream APF baseline and the robot shims and command rollout shared by upstream baselines |
-| `core/algorithms/cbf_qp/`, `cbf_qp_lag/` | Upstream CBF-QP safety filter baseline (`CBFQPVehicle`) and its lag-aware subclass |
+| `core/algorithms/cbf_qp_lag/` | Upstream lag-aware CBF-QP safety filter baseline (`CBFQPLagVehicle`) |
 | `core/algorithms/pure_mpc/`, `stop_plan.py` | Upstream plain MPC baseline (`PureMPCVehicle`) and the simulation-time stop plan and collection revalidation shared with MPC |
 | `core/algorithms/impc_ob_rec/` | Upstream IMPC-OB baseline with LiDAR recovery (`IMPCOBRecVehicle`): committed local path, time-aligned predetermined trajectory, peer deadlock state |
 | `core/planning/` | Local JPS/Dijkstra (`planner_grid.py`), committed local paths (`paths.py`), leadership/formation (`coordination.py`), trajectory sampling (`references.py`), target route (`target_motion.py`, `geometry.py`) |
@@ -195,7 +195,7 @@ Adapters shared by upstream baselines live in `core/algorithms/`:
   map upstream `[x, y, z, vx, vy, 0]` rows to local `[px, py, vx, vy, ax, ay]`.
 - `command_rollout.py`: upstream applies a baseline command for one `TIMESTEP`. The
   executable trajectory applies it with upstream `dynamics.model`; `apf` and
-  `cbf_qp`/`cbf_qp_lag` hold it for a second step (unless that exceeds `VMAX`) so
+  `cbf_qp_lag` hold it for a second step (unless that exceeds `VMAX`) so
   delivery latency cannot sample the tail, then brake to rest with upstream
   `impc_ob._brake_u`. A missed cycle flies the braking tail until setpoint expiry.
 - `speed_recovery.py`: the `SPEED_RECOVERY` bound replacement shared by `mpc`,
@@ -225,11 +225,11 @@ braking from `VMAX` needs about 0.6 m including acceleration lag. Close
 obstacle approaches are a baseline result, not a tuning target. Measured speed
 above `VMAX` makes the first trajectory row exceed setpoint limits, as for MPC.
 
-`algorithm: cbf_qp` and `cbf_qp_lag` (`core/algorithms/cbf_qp/`, `cbf_qp_lag/`)
-run the unchanged upstream `cbfqp.py` safety barrier certificates (Wang, Ames,
+`algorithm: cbf_qp_lag` (`core/algorithms/cbf_qp_lag/`)
+runs the unchanged upstream `cbfqp.py` safety barrier certificates (Wang, Ames,
 Egerstedt 2017) per UAV (`UPSTREAM_MODULES` `dynamics`, `apfc`, `cbfqp`;
 `CBFQP.plan` calls `apfc.speed_limit`, and its deadlock LP uses
-`scipy.optimize.linprog`). Both share `CBFQPVehicle`; `cbf_qp_lag` only sets
+`scipy.optimize.linprog`). `CBFQPLagVehicle` sets
 `lag_aware=True`, which enforces every barrier on the current state and on the
 state `T_d = ACCEL_TAU + TIMESTEP` (0.3 s) ahead with measured accelerations. The
 shared shims, goal policy, latest-scan hit obstacles and rollout are those of
@@ -343,8 +343,8 @@ from L instead of upstream's fixed 1.0/0.15 m (L = 5 there). With
 `HORIZON_LENGTH` 10 every plan must stop within 1 s, which caps cruise speed; this
 is a property of the baseline.
 
-Known CBF deviations: the barrier models a double integrator (with lag
-`ACCEL_TAU` for `cbf_qp_lag`), while the executed chain is measurement latency,
+Known CBF deviations: the barrier models a double integrator with lag
+`ACCEL_TAU`, while the executed chain is measurement latency,
 the control cycle, setpoint P control with acceleration feed-forward and native
 velocity control, so the barrier is not a guarantee here. Barriers use the
 acceleration estimated from measured velocity; teammates are planned against the
@@ -1093,6 +1093,9 @@ on large200_5uav uav1 and uav5 came within 0.84 m (below `UAV_SAFE_DISTANCE`
 fleet spent most cycles in `search` with 0.22 m minimum obstacle body clearance.
 
 ## CBF baseline verification (November 7, 2026)
+
+The plain `cbf_qp` adapter was removed on November 9, 2026; it appears in this
+and later dated evidence only as a historical record of those runs.
 
 Guidance first gained `target_velocity`; the small50 regressions below were
 flown with only that change. The `cbf_qp`/`cbf_qp_lag` runs followed a rebuild.

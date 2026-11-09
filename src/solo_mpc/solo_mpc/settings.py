@@ -57,7 +57,7 @@ DEFAULTS = dict(
     CORRIDOR_RECOVER_HOLD=0.3,
     CBF_BOX_RATIO=0.55,
     DT_CBF_GAMMA=0.5,
-    CBF_QP_GAMMA=1.0,  # Baselines cbf_qp/cbf_qp_lag: kappa(h) = gamma h^3
+    CBF_QP_GAMMA=1.0,  # Baseline cbf_qp_lag: kappa(h) = gamma h^3
     CBF_QP_KP=1.0,  # nominal PD u = -KP (p - r) - KD (v - r_dot)
     CBF_QP_KD=2.0,
     PURE_MPC_W_COL=1.5,  # Baseline pure_mpc: W_col of upstream's original robot_mpc.py

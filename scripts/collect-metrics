@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 OUT = ROOT / "metrics"
 UPSTREAM = ROOT / "external/motion_planning_MPC"
-ALGORITHM_ORDER = ["mpc", "apf", "cbf_qp", "cbf_qp_lag", "pure_mpc", "impc_ob_rec"]
+ALGORITHM_ORDER = ["mpc", "apf", "cbf_qp_lag", "pure_mpc", "impc_ob_rec"]
 REFORM_MIN_WINDOW = 0.2  # as upstream thesis_metrics.py
 SLOW_CYCLE_MS = 100.0
 

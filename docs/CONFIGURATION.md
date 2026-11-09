@@ -36,8 +36,8 @@ small ROS-free algorithm registry; `./scripts/dev run --algorithm NAME`
 (`MPC_ALGORITHM`) overrides it for one run. `mpc` uses the existing MPC
 implementation and unchanged upstream solver/dynamics; `apf` runs the unchanged
 upstream artificial potential field baseline on the same leader/slot layers;
-`cbf_qp` and `cbf_qp_lag` run the unchanged upstream safety barrier certificate
-QP filter (plain and lag-aware) on the same layers; `pure_mpc` runs the
+`cbf_qp_lag` runs the unchanged upstream safety barrier certificate QP filter
+in its lag-aware mode on the same layers; `pure_mpc` runs the
 unchanged upstream plain MPC baseline on the same layers; `impc_ob_rec` runs
 the unchanged upstream IMPC-OB baseline with its LiDAR recovery variant; see
 [Development](DEVELOPMENT.md#baseline-algorithms). Both presets
@@ -84,7 +84,7 @@ guides and panels show each UAV.
 
 Obstacle inputs follow upstream per algorithm. In every preset `mpc` decomposes the
 current scan's exact hit points, without memory, as upstream
-`generateSafeCorridor`. `apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc` and `impc_ob_rec`
+`generateSafeCorridor`. `apf`, `cbf_qp_lag`, `pure_mpc` and `impc_ob_rec`
 take those hits directly. JPS, as upstream, integrates exact hits into the
 accumulated grid and searches its cells; that grid also feeds the video occupancy
 panel. The 1.5 m margin applies to every algorithm that reads it (not `apf`).
@@ -140,8 +140,8 @@ file that may have been overridden.
 | `SPEED_RECOVERY` | true | Local adapter recovery for initially overspeed measured states (`mpc`, `pure_mpc`, `impc_ob_rec`) |
 | `BACKUP_*_TOLERANCE` | 0.15 m / 0.3 m/s / 0.5 m/s² at `VMAX` 1.2, `UMAX` 2 | Plan-replay agreement; unless overridden, scaled by `VMAX` / `UMAX`, position capped at `CORRIDOR_MARGIN − ROBOT_RADIUS` |
 | `IPOPT_OPTIONS` | 500 iterations / 0.2 s CPU | Solver limits; worker deadline remains independent |
-| `BASELINE_LEADER_STANDOFF` | `CBF_BOX_RATIO` × `VIEWING_RADIUS` (derived) | Baseline (`apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc`, `impc_ob_rec`) leader goal distance from the predicted target |
-| `CBF_QP_GAMMA` | 1.0 | Baselines `cbf_qp`/`cbf_qp_lag`: class-K function κ(h) = γh³ (upstream value) |
+| `BASELINE_LEADER_STANDOFF` | `CBF_BOX_RATIO` × `VIEWING_RADIUS` (derived) | Baseline (`apf`, `cbf_qp_lag`, `pure_mpc`, `impc_ob_rec`) leader goal distance from the predicted target |
+| `CBF_QP_GAMMA` | 1.0 | Baseline `cbf_qp_lag`: class-K function κ(h) = γh³ (upstream value) |
 | `CBF_QP_KP` / `CBF_QP_KD` | 1.0 / 2.0 | Nominal PD u = −KP(p − r) − KD(v − ṙ) to the guidance goal (upstream values) |
 | `PURE_MPC_W_COL` | 1.5 | Baseline `pure_mpc`: sigmoid collision cost weight (`W_col` of upstream's original `robot_mpc.py`) |
 | `IMPC_EPSILON` | 0.2 L, L = `UAV_SAFE_DISTANCE` / 0.6 (derived; 0.333 m in all presets) | Baseline `impc_ob_rec`: warning-band width (reference 0.2 m for 0.3 m robots) |
@@ -270,7 +270,7 @@ safety watchdogs keep their independent wall-time budgets.
 
 | Setting | Default |
 |---|---:|
-| `algorithm` | `mpc` (or `apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc`, `impc_ob_rec`; `--algorithm` overrides) |
+| `algorithm` | `mpc` (or `apf`, `cbf_qp_lag`, `pure_mpc`, `impc_ob_rec`; `--algorithm` overrides) |
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |

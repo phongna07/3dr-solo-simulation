@@ -44,7 +44,7 @@ Usage: ./scripts/dev COMMAND [arguments]
                                   finalize any video, stop the simulation and update metrics/
       [--preset scen5_1000|scen1_1000]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
-      [--algorithm NAME]          Override the settings algorithm (mpc|apf|cbf_qp|cbf_qp_lag|pure_mpc|impc_ob_rec)
+      [--algorithm NAME]          Override the settings algorithm (mpc|apf|cbf_qp_lag|pure_mpc|impc_ob_rec)
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
       [--gui]                     Also open the Gazebo GUI (log: runs/<run-id>.gui.log)
   mission status|stop             Inspect or land the fleet of a running simulation
