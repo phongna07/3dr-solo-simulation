@@ -76,17 +76,3 @@ class SensorGrid(IncrementalLogOddsGrid):
             self._dirty_box = [min(previous[0], y0), max(previous[1], y1),
                                min(previous[2], x0), max(previous[3], x1)]
         self._dirty = True
-
-    def surface_points(self, center, radius):
-        lower = np.floor((center[:2] - radius - [self.ox, self.oy]) / self.resolution).astype(int)
-        upper = np.floor((center[:2] + radius - [self.ox, self.oy]) / self.resolution).astype(int) + 1
-        x0, y0 = np.clip(lower, 0, [self.size_x, self.size_y])
-        x1, y1 = np.clip(upper, 0, [self.size_x, self.size_y])
-        ys, xs = np.nonzero(self.L[y0:y1, x0:x1] >= self.occ_logit)
-        points = np.column_stack(
-            [
-                self.ox + (xs + x0 + 0.5) * self.resolution,
-                self.oy + (ys + y0 + 0.5) * self.resolution,
-            ]
-        )
-        return points[np.linalg.norm(points - center[:2], axis=1) <= radius]

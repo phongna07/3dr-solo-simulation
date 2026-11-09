@@ -50,10 +50,8 @@ params:
   LOCAL_PLAN_RADIUS: 150.0
   # Upstream config.py default slots for leader + 4 (local default is three-UAV).
   GRID_CELLS: [[0, 1], [-1, 0], [0, -1], [1, 0]]
-  # Corridor from current-scan hits as upstream; JPS keeps the accumulated grid.
-  CORRIDOR_POINTS: scan
   CORRIDOR_MARGIN: 1.5
-  # Retain measured-state recovery and derived grid-cell corridor allowance.
+  # Retain measured-state recovery.
   SPEED_RECOVERY: true
   LOCAL_SEARCH: jps
   CONTINGENCY: true

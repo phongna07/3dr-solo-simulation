@@ -26,7 +26,6 @@ class MPCVehicle:
 
     def __init__(self, name, names, cfg, grid):
         self.name, self.names, self.cfg = name, list(names), dict(cfg)
-        self.grid = grid
         self.warm = None
         self.stop_plan, self.active_corridor = None, None
         self.corridor_cost = None
@@ -90,12 +89,9 @@ class MPCVehicle:
             raise ValueError("Corridor decomposition returned no finite polytope")
         return min(candidates, key=lambda ab: np.max(ab[0] @ state.position[:2] - ab[1]))
 
-    def _corridor_points(self, position, scan):
-        """Obstacle input of the decomposition, selected by CORRIDOR_POINTS."""
-        cfg = self.cfg
-        if cfg["CORRIDOR_POINTS"] == "map":
-            return self.grid.surface_points(position, cfg["SENSING_RADIUS"] + 1.0)
-        # As upstream generateSafeCorridor: hits of the current scan, no memory.
+    @staticmethod
+    def _corridor_points(scan):
+        """As upstream generateSafeCorridor: hits of the current scan, no memory."""
         if scan is None:
             raise ValueError("No LiDAR scan integrated yet")
         return np.asarray(scan.endpoints, float)[np.asarray(scan.hits, bool), :2]
@@ -103,7 +99,7 @@ class MPCVehicle:
     def _corridor(self, state, path, stamp, scan):
         cfg = self.cfg
         position = state.position
-        points = self._corridor_points(position, scan)
+        points = self._corridor_points(scan)
         box = cfg["CORRIDOR_BOX"]
         if not len(points):
             A = np.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])

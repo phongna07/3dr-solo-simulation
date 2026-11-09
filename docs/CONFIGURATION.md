@@ -68,10 +68,10 @@ UMAX; `CORRIDOR_MARGIN` is 1.5 m rather than upstream's derived 0.77 m. The Iris
 stays physical size, so it is barely visible in the 240 m observer view; the FOV
 guides and panels show each UAV.
 
-Obstacle inputs follow upstream per algorithm. `CORRIDOR_POINTS: scan` makes `mpc`
-decompose the current scan's exact hit points, without memory, as upstream
+Obstacle inputs follow upstream per algorithm. In every preset `mpc` decomposes the
+current scan's exact hit points, without memory, as upstream
 `generateSafeCorridor`. `apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc` and `impc_ob_rec`
-already take those hits directly. JPS, as upstream, integrates exact hits into the
+take those hits directly. JPS, as upstream, integrates exact hits into the
 accumulated grid and searches its cells; that grid also feeds the video occupancy
 panel. The 1.5 m margin applies to every algorithm that reads it (not `apf`).
 
@@ -146,8 +146,8 @@ UAVs against building faces and drives IPOPT into its CPU cap.
 
 Derived values include inflation radius, world bounds, standoff distance,
 formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`
-includes body radius, three Gaussian LiDAR-noise standard deviations, ray spacing,
-and, for `CORRIDOR_POINTS: map` (default), the grid-cell half diagonal. Noise is unbounded. The forward corridor seed
+includes body radius, three Gaussian LiDAR-noise standard deviations and ray
+spacing (0.416 m on `small50_3uav`). Noise is unbounded. The forward corridor seed
 must leave at least one cell of usable range. Keep obstacle collision height
 above flight altitude plus body radius.
 
@@ -168,8 +168,8 @@ recorded FOV panels and coverage overlays, not target estimation.
 
 Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 3 m range, and 0.01 m
 Gaussian range-noise standard deviation. Each UAV integrates its own remaining
-valid rays into its persistent occupancy grid before MPC uses the accumulated
-maps. There is no minimum valid-ray fraction. A fresh scan with no usable rays
+valid rays into its persistent occupancy grid before path planning and formation
+checks use the accumulated maps. There is no minimum valid-ray fraction. A fresh scan with no usable rays
 leaves that UAV's map unchanged and does not block MPC or another UAV's mapping.
 Scan age and timestamp-matched measured poses are still required.
 

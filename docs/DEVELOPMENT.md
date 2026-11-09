@@ -1279,5 +1279,17 @@ clearance in metres, 90 sim s for `mpc`, 30 for the others:
 All five `mpc` UAVs reached TRACK. An unrelated host process using about 23 cores
 overlapped the last three runs (simulation rate 0.16–0.17, not 0.20): they are not
 clean evidence, including `cbf_qp_lag` losing the target. All `cbf_qp` failures are
-`uav4` QP-infeasible braking (40 at the earlier 2.18 m / 40 m configuration). Other
-presets keep `CORRIDOR_POINTS: map` and were not re-flown.
+`uav4` QP-infeasible braking (40 at the earlier 2.18 m / 40 m configuration).
+
+### Scan-hit corridors in every preset (November 9, 2026)
+
+The occupied-cell corridor input was removed; `mpc` always decomposes current-scan
+hits and `small50_3uav` derives `CORRIDOR_MARGIN` 0.416 m (0.522 m with the former
+cell allowance). `mpc`, 30 sim s, without video, all landed and disarmed:
+
+| Preset | Run | Clearance (m) | Min UAV gap (m) | Failed vehicle cycles |
+| --- | --- | --- | --- | --- |
+| `small50_3uav` | `20261109T042254Z-30670` | 0.755 | 1.87 | 0 |
+| `scen1_1000` | `20261109T042713Z-21205` | 3.58 | 112.8 | 1 |
+
+The other five `small50_3uav` algorithms, whose margin also changed, were not re-flown.
