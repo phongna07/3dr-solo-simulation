@@ -560,7 +560,7 @@ The tables below preserve historical evidence, including the retired
 `small50_3uav`, `large200_5uav_separated`, `large200_5uav` and `scen1` scenarios. Their YAML and
 CLI presets have been removed, here and in later historical sections; existing
 run directories remain available for inspection. Current presets are
-`scen7_1000` and `scen1_1000`.
+`scen5_1000` and `scen1_1000`.
 
 On November 5, 2026, the rebuilt native image completed these full-fleet
 missions using default camera target detection, every UAV's LiDAR, and

@@ -42,7 +42,7 @@ Usage: ./scripts/dev COMMAND [arguments]
   build [sim]                     Build the simulation image
   run [--seconds SIM_SECONDS]     Start, await readiness, take off, track, land, evaluate,
                                   finalize any video, stop the simulation and update metrics/
-      [--preset scen7_1000|scen1_1000]  Select matching fleet/scenario/settings
+      [--preset scen5_1000|scen1_1000]  Select matching fleet/scenario/settings
       [--fleet PATH] [--scenario PATH] [--settings PATH]  Container config paths
       [--algorithm NAME]          Override the settings algorithm (mpc|apf|cbf_qp|cbf_qp_lag|pure_mpc|impc_ob_rec)
       [--record-video]            Save overhead + LiDAR map + drone states + UAV FOVs to runs/<run-id>/recorded-mission.mp4
@@ -165,10 +165,10 @@ case "$command" in
       case "$1" in
         --preset)
           case "${2:?preset name required}" in
-            scen7_1000)
+            scen5_1000)
               export FLEET_CONFIG=/workspace/config/fleet.yaml
-              export MPC_SCENARIO=/workspace/src/solo_mpc/scenarios/scen7_1000.yaml
-              export MPC_SETTINGS=/workspace/src/solo_mpc/config/controller-scen7_1000.yaml
+              export MPC_SCENARIO=/workspace/src/solo_mpc/scenarios/scen5_1000.yaml
+              export MPC_SETTINGS=/workspace/src/solo_mpc/config/controller-scen5_1000.yaml
               ;;
             scen1_1000)
               export FLEET_CONFIG=/workspace/config/fleet-5uav.yaml

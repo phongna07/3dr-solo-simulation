@@ -134,7 +134,7 @@ Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
 - `recorded-mission.mp4` when requested: visually inspect the relevant result;
   `run` cleanup (or a manual `stop`) finalizes it.
 
-For backend-wide changes, rebuild and verify `scen7_1000` and
+For backend-wide changes, rebuild and verify `scen5_1000` and
 `scen1_1000`, each with the full fleet, camera input and recording.
 The November 5, 2026 native migration evidence and limitations
 are recorded in `docs/DEVELOPMENT.md`; earlier backend flights are not validation.

@@ -1,4 +1,4 @@
-# Default; select with --preset scen7_1000. Unscaled counterpart of upstream scenarios/scen7.yaml; metres, m/s.
+# Default; select with --preset scen5_1000. Unscaled counterpart of upstream scenarios/scen5.yaml; metres, m/s.
 # Keep the worker solve/mapping cycle inside simulation-time command expiry.
 simulation_real_time_factor: 0.2
 flight_altitude: 30.0
@@ -38,7 +38,7 @@ vertical_speed_limit: 2.0
 frame_history_tolerance: 0.3
 params:
   ROBOT_RADIUS: 0.5
-  # Match upstream scenarios/scen7.yaml and config.py prediction/formation values.
+  # Match upstream scenarios/scen5.yaml and config.py prediction/formation values.
   UAV_SAFE_DISTANCE: 3.0
   COLLISION_AVOID_DISTANCE: 7.5
   VMAX: 10.0
@@ -48,7 +48,7 @@ params:
   INFLATE_MARGIN: 1.0
   CORRIDOR_BOX: 25.0
   LOCAL_PLAN_RADIUS: 150.0
-  # Upstream config.py default slot candidates; scen7 does not override them.
+  # Upstream config.py default slot candidates; scen5 does not override them.
   GRID_CELLS: [[0, 1], [-1, 0], [0, -1], [1, 0]]
   CORRIDOR_MARGIN: 1.5
   # Retain measured-state recovery.

@@ -74,7 +74,7 @@ check free disk space before long missions.
 
 A time-limited run covers only part of the route; rendering five sensors and a
 large obstacle field can make simulation slower than wall time. Use the observed
-clock rate when choosing a verification duration. Select `--preset scen7_1000`
+clock rate when choosing a verification duration. Select `--preset scen5_1000`
 to return to the default configuration.
 
 | Command | Purpose |
@@ -398,7 +398,7 @@ ros2 topic echo /uav1/motor_speed --qos-reliability best_effort --once
 ros2 topic echo /uav1/safety_active --qos-reliability best_effort --once
 ros2 topic hz /uav1/scan
 ros2 topic echo /mpc/setpoint_status --once
-timeout 5s gz topic -e -t /world/mpc_scen7_1000/stats
+timeout 5s gz topic -e -t /world/mpc_scen5_1000/stats
 ```
 
 Use the configured world name. Exit 124 from `timeout` is expected. A stopped

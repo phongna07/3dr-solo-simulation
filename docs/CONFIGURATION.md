@@ -10,8 +10,8 @@ editing a YAML file does not reconfigure an active experiment.
 | Input | Default | Purpose |
 |---|---|---|
 | Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names and native Gazebo spawn poses |
-| Scenario | [scen7_1000.yaml](../src/solo_mpc/scenarios/scen7_1000.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
-| Controller | [controller-scen7_1000.yaml](../src/solo_mpc/config/controller-scen7_1000.yaml) | Altitude, sensors, execution, timing, parameter overrides |
+| Scenario | [scen5_1000.yaml](../src/solo_mpc/scenarios/scen5_1000.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
+| Controller | [controller-scen5_1000.yaml](../src/solo_mpc/config/controller-scen5_1000.yaml) | Altitude, sensors, execution, timing, parameter overrides |
 
 Use container paths for CLI overrides:
 
@@ -46,17 +46,16 @@ backend selection or one-UAV migration stage. Explicit `--fleet`, `--scenario`,
 and `--settings` arguments after `--preset` override that preset; the original
 no-argument defaults remain unchanged.
 
-### Scen7_1000: unscaled three-UAV upstream hand-off layout
+### Scen5_1000: unscaled three-UAV upstream hand-off layout
 
-`./scripts/dev run --preset scen7_1000 --record-video` selects `config/fleet.yaml`,
-`scenarios/scen7_1000.yaml` and `config/controller-scen7_1000.yaml`. This is the
-default. The scenario is upstream `scenarios/scen7.yaml` verbatim plus
-`world_name: mpc_scen7_1000`, except the three active start altitudes: 1000 × 1000 m,
-original XY starts, 66 rectangles, 63 circles, 56 waypoints, four 13 m/s sprint
-legs (else 5 m/s) that force leader hand-offs, 25 m half-footprint, `CBF_BOX_RATIO`
-0.5, 20-step horizon, VMAX 10 m/s, UMAX 5 m/s² and 2 m grid. Upstream writes z = 3
-but plans in the plane, so z has no effect there. Flying at 30 m instead keeps the
-25 m footprint with the unchanged camera and full 50 m LiDAR range under tilt.
+`./scripts/dev run --preset scen5_1000 --record-video` selects `config/fleet.yaml`,
+`scenarios/scen5_1000.yaml` and `config/controller-scen5_1000.yaml`. This is the
+default. The scenario is upstream `scenarios/scen5.yaml` verbatim plus
+`world_name: mpc_scen5_1000`: 1000 × 1000 m, the three active upstream starts at
+30 m (its description still says 5 UAVs), 62 rectangles, 57 circles, 61 waypoints,
+six 13 m/s sprint legs (else 5 m/s) that force leader hand-offs, 25 m
+half-footprint, `CBF_BOX_RATIO` 0.5, 20-step horizon, VMAX 10 m/s, UMAX 5 m/s² and
+2 m grid. Fleet spawns are those starts on the ground.
 
 Controller values, simulation-only values and known differences from upstream
 are those of `scen1_1000` below. It supplies the same four-slot `GRID_CELLS`.

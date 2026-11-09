@@ -20,8 +20,8 @@ services:
       FLEET_CONFIG: ${FLEET_CONFIG:-/workspace/config/fleet.yaml}
       LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-}
       RUN_ID: ${RUN_ID:-}
-      MPC_SCENARIO: ${MPC_SCENARIO:-/workspace/src/solo_mpc/scenarios/scen7_1000.yaml}
-      MPC_SETTINGS: ${MPC_SETTINGS:-/workspace/src/solo_mpc/config/controller-scen7_1000.yaml}
+      MPC_SCENARIO: ${MPC_SCENARIO:-/workspace/src/solo_mpc/scenarios/scen5_1000.yaml}
+      MPC_SETTINGS: ${MPC_SETTINGS:-/workspace/src/solo_mpc/config/controller-scen5_1000.yaml}
       MPC_RECORD_VIDEO: ${MPC_RECORD_VIDEO:-false}
       MPC_ALGORITHM: ${MPC_ALGORITHM:-}
     volumes:

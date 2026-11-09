@@ -9,8 +9,8 @@ assets in `src/solo_mpc/models` retain vehicle geometry and inertias;
 `MulticopterMotorModel` systems applying rotor forces and torques. Vehicles are
 not moved kinematically.
 
-`--preset scen7_1000` explicitly selects this scenario, upstream `scen7` with its
-leader hand-off sprints.
+`--preset scen5_1000` explicitly selects this scenario, upstream `scen5` with its
+three active UAVs, seeded obstacle map and leader hand-off sprints.
 
 `--preset scen1_1000` runs the upstream five-UAV 1000 × 1000 m scenario unscaled
 at 30 m; see the configuration guide for its few simulation-only differences.
