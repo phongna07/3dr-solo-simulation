@@ -175,15 +175,6 @@ class MPCVehicle:
             carrot = path_carrot(state.position, path, cfg['VMAX'] * H * cfg['TIMESTEP'])
             slot = carrot if carrot is not None else guidance['moving_slot']
         guide = len(path) > 2
-        # SEARCH pulls towards a carrot on the planned path rather than a
-        # distant target: a straight-line pull through buildings pins the UAV
-        # on its corridor face. SEARCH UAVs never lead, so the visibility CBF
-        # that also reads tgt stays relaxed.
-        tgt = guidance['target']
-        if guidance['mode'] == 'SEARCH':
-            carrot = path_carrot(state.position, path, cfg['VMAX'] * H * cfg['TIMESTEP'])
-            if carrot is not None:
-                tgt = carrot
         inputs = dict(
             x0=x0, A_hard=A, b_hard=b,
             A_cost=self.corridor_cost[0], b_cost=self.corridor_cost[1],
@@ -191,7 +182,7 @@ class MPCVehicle:
             others=[predictions[k][:, :2] for k in others],
             nb_flags=[float(np.linalg.norm(states[k].position - state.position)
                             < cfg['SENSING_NEIGHBOR']) for k in others],
-            tgt=tgt, w_search=cfg['W_search_track'] if guidance['mode'] == 'SEARCH' else 0.0,
+            tgt=guidance['target'], w_search=cfg['W_search_track'] if guidance['mode'] == 'SEARCH' else 0.0,
             slot=slot, w_slot=cfg['W_sat_slot'] if guidance['slot'] is not None else 0.0,
             leader=guidance['leader'], ref=path[1] if guide else np.zeros(2),
             trk_goal=guidance['goal'], s_ref=float(guide), X_init=X, U_init=U,
