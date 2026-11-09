@@ -40,6 +40,7 @@ DEFAULTS = dict(
     W_corridor=1.0,
     CORRIDOR_BOX=1.5,
     CORRIDOR_MAX_FACES=16,
+    CORRIDOR_POINTS="map",  # MPC corridor input: "map" (grid cell centres) | "scan" (upstream)
     TERMINAL_STOP=False,
     CONTINGENCY=True,
     BACKUP_HORIZON=25,
@@ -184,14 +185,15 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     if not math.isfinite(noise) or noise < 0:
         raise ValueError("lidar_noise_stddev must be finite and nonnegative")
     cfg.setdefault("LIDAR_NOISE", 3 * noise)
-    # Upstream's sampling allowance plus cell-centre quantization: this port
-    # decomposes occupied grid cells rather than the raw LiDAR endpoints.
+    # Upstream's sampling allowance; "map" also needs cell-centre quantization
+    # because it decomposes occupied grid cells rather than raw LiDAR endpoints.
     reach = cfg["VMAX"] * max(
         cfg["HORIZON_LENGTH"], cfg["BACKUP_HORIZON"] if cfg["CONTINGENCY"] else 0
     ) * cfg["TIMESTEP"]
     cfg.setdefault("CORRIDOR_MARGIN", cfg["ROBOT_RADIUS"] + cfg["LIDAR_NOISE"]
                    + reach * cfg["LIDAR_ANGULAR_RES"] / 2
-                   + cfg["GRID_RESOLUTION"] / math.sqrt(2))
+                   + (cfg["GRID_RESOLUTION"] / math.sqrt(2)
+                      if cfg["CORRIDOR_POINTS"] == "map" else 0.0))
     cfg["CORRIDOR_SEED_MAX"] = cfg["SENSING_RADIUS"] - math.sqrt(2) * cfg["CORRIDOR_BOX"]
     validate(scenario, settings, cfg)
     return scenario, settings, cfg
@@ -262,6 +264,8 @@ def validate(scenario, settings, cfg):
         raise ValueError("CORRIDOR_MARGIN must be at least ROBOT_RADIUS")
     if cfg["CORRIDOR_SEED_MAX"] < cfg["GRID_RESOLUTION"]:
         raise ValueError("CORRIDOR_BOX leaves no corridor seed within SENSING_RADIUS")
+    if cfg["CORRIDOR_POINTS"] not in ("map", "scan"):
+        raise ValueError("CORRIDOR_POINTS must be map or scan")
     if cfg["LOCAL_SEARCH"] not in ("jps", "dijkstra"):
         raise ValueError("LOCAL_SEARCH must be jps or dijkstra")
     cache_faces = cfg.get('CORRIDOR_CACHE_FACES', [4, 5, 6, 7, 8])

@@ -1253,3 +1253,33 @@ covers one route waypoint and no sprint leg; only UAV 3 reached the target, the
 others stayed in SEARCH, so formation and hand-offs are unverified. `pure_mpc` lost
 the target (all SEARCH at the end, 2.87 m/s peak); the cause was not investigated.
 `impc_ob_rec` delivered 21.5% of cycles later than the control period.
+
+### scen1_1000 scan-hit corridor and margin (November 9, 2026)
+
+`CORRIDOR_POINTS: scan`, obstacle height 55 m and observer `[-70,-70,240]`. Usable
+rays were 360/360 in every cycle (237 minimum at 40 m). Sweep without video; body
+clearance in metres, 90 sim s for `mpc`, 30 for the others:
+
+| Margin | `mpc` | `cbf_qp` | `impc_ob_rec` |
+| --- | --- | --- | --- |
+| 0.77 | 2.33 `20261108T172437Z-1617` | -0.20 `20261108T173536Z-10860` | 0.21 `20261108T174141Z-31783` |
+| 1.0 | 2.26 `20261108T174738Z-24653` | -0.07 `20261108T175837Z-22866` | 0.48 `20261108T180434Z-16076` |
+| 1.3 | 2.68 `20261108T181031Z-7676` | 0.23 `20261108T182131Z-30150` | 0.67 `20261108T182727Z-20774` |
+
+`cbf_qp` overshot its margin by about 0.5 m, so 1.5 m was selected. Recorded runs at
+1.5 m (all landed and disarmed):
+
+| Algorithm | Run | Clearance (m) | Min UAV gap (m) | Failed vehicle cycles |
+| --- | --- | --- | --- | --- |
+| mpc, 90 s | `20261108T183404Z-2589` | 2.56 | 13.1 | 3 |
+| apf | `20261108T184716Z-4936` | 1.52 | 52.3 | 0 |
+| cbf_qp | `20261108T185411Z-30730` | 0.44 | 3.3 | 143 |
+| cbf_qp_lag | `20261108T190143Z-4668` | 1.11 | 115.9 | 0 |
+| pure_mpc | `20261108T191034Z-8208` | 9.70 | 140.3 | 0 |
+| impc_ob_rec | `20261108T191944Z-28289` | 0.83 | 68.3 | 108 |
+
+All five `mpc` UAVs reached TRACK. An unrelated host process using about 23 cores
+overlapped the last three runs (simulation rate 0.16–0.17, not 0.20): they are not
+clean evidence, including `cbf_qp_lag` losing the target. All `cbf_qp` failures are
+`uav4` QP-infeasible braking (40 at the earlier 2.18 m / 40 m configuration). Other
+presets keep `CORRIDOR_POINTS: map` and were not re-flown.

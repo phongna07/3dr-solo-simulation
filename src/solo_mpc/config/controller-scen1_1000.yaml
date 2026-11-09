@@ -2,9 +2,10 @@
 # Keep the five-worker solve/mapping cycle inside simulation-time command expiry.
 simulation_real_time_factor: 0.2
 flight_altitude: 30.0
-obstacle_height: 40.0
+# 25 m above flight altitude: rays stay below the top to 50 m range up to 30 deg tilt.
+obstacle_height: 55.0
 target_height: 0.05
-overhead_camera_offset: [-50, -50, 160]
+overhead_camera_offset: [-70, -70, 240]
 camera_width: 320
 camera_height: 320
 camera_rate: 8.0
@@ -49,6 +50,9 @@ params:
   LOCAL_PLAN_RADIUS: 150.0
   # Upstream config.py default slots for leader + 4 (local default is three-UAV).
   GRID_CELLS: [[0, 1], [-1, 0], [0, -1], [1, 0]]
+  # Corridor from current-scan hits as upstream; JPS keeps the accumulated grid.
+  CORRIDOR_POINTS: scan
+  CORRIDOR_MARGIN: 1.5
   # Retain measured-state recovery and derived grid-cell corridor allowance.
   SPEED_RECOVERY: true
   LOCAL_SEARCH: jps
