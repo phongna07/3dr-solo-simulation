@@ -26,6 +26,7 @@ import numpy as np
 from ... import upstream
 from ...planning.paths import PathService
 from ..command_rollout import brake_extend
+from ..speed_recovery import enable_speed_recovery, set_speed_limit
 from ..stop_plan import StopPlan, stop_tail
 from ..upstream_robot import UpstreamRobot, neighbor_robots, to_upstream
 
@@ -40,6 +41,8 @@ class IMPCOBRecVehicle:
         self.impc = module.IMPCOB(self.robot, n_others, self.cfg, recover=True)
         self.impc.n_faces = self.impc.max_faces
         self.impc.prob = module.IMPCOBProblem(n_others, self.impc.max_faces, self.cfg)
+        prob = self.impc.prob
+        enable_speed_recovery(prob.opti, prob.p, prob.X, self.cfg["HORIZON_LENGTH"], self.cfg)
         self.warmup_ok = self._warmup(n_others)
         self.own_plan = None
         self.stop_plan = None
@@ -48,6 +51,7 @@ class IMPCOBRecVehicle:
         """One hover solve without obstacles or active teammates; counters reset."""
         H, prob = self.cfg["HORIZON_LENGTH"], self.impc.prob
         x0 = np.zeros(6)
+        set_speed_limit(prob.opti, prob.p, x0, self.cfg, H)
         ok, *_ = prob.solve(x0, np.array([1.0, 0.0]), np.full(H, 10.0),
                             [(np.zeros((0, 2)), np.zeros(0))] * H,
                             [np.zeros((H, 2))] * n_others, [np.zeros(H)] * n_others,
@@ -76,6 +80,7 @@ class IMPCOBRecVehicle:
         robot = self.robot.measure(state)
         z = robot.state[2]
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
+        set_speed_limit(impc.prob.opti, impc.prob.p, x0, cfg, H)
         robot.states_prediction = to_upstream(self._predetermined(x0, stamp), z)
         peers = guidance.get('peers', {})
         others = neighbor_robots(self.names, self.name, states, predictions)

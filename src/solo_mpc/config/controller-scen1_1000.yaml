@@ -26,6 +26,11 @@ state_timeout_sim: 0.5
 sensor_timeout_sim: 0.5
 target_timeout_sim: 1.5
 planner_failure_timeout_sim: 3.0
+# Metric runs: solver fallbacks stay visible in telemetry without ending the mission.
+abort_on_planner_failure: false
+# Pause Gazebo during each fleet solve, so solve time adds no simulated latency.
+solver_lockstep: true
+solver_lockstep_hold_wall: 2.5
 arrival_fleet_radius: 65.0
 arrival_timeout_sim: 30.0
 command_timeout_sim: 0.4

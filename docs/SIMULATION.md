@@ -33,7 +33,10 @@ simulation steps. `--seconds 30` requests 30 simulation seconds of tracking,
 requiring at least 150 wall seconds at that rate, plus takeoff and landing.
 Rendering or CPU load can increase the wall duration without shortening the
 requested simulation duration. CLI elapsed progress remains labeled in wall
-seconds. Configure `simulation_real_time_factor` in the controller YAML;
+seconds. Presets pause Gazebo while each fleet solve runs (`solver_lockstep`), so observed
+pacing is below the requested factor; counts of holds, expired holds and setpoint
+states such as `proximity_guard` come from `telemetry/setpoints.jsonl` and appear in
+`reports/evaluation.json`. Configure `simulation_real_time_factor` in the controller YAML;
 see [timing and expiry](CONFIGURATION.md#timing-and-expiry). Recorded playback
 retains normal target/UAV speeds at the existing 1920 × 1080 / 20 FPS.
 The exported video covers only the tracking interval, omitting takeoff and

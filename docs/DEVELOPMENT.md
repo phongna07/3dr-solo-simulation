@@ -194,10 +194,12 @@ Adapters shared by upstream baselines live in `core/algorithms/`:
   cycle from the frozen measured snapshot and neighbor predictions. Converters
   map upstream `[x, y, z, vx, vy, 0]` rows to local `[px, py, vx, vy, ax, ay]`.
 - `command_rollout.py`: upstream applies a baseline command for one `TIMESTEP`. The
-  executable trajectory applies it for step 0 with upstream `dynamics.model`,
-  then brakes to rest with upstream `impc_ob._brake_u`. Normal operation samples
-  only the first interval because a new plan arrives every cycle; a missed cycle
-  flies the braking tail until setpoint expiry.
+  executable trajectory applies it with upstream `dynamics.model`; `apf` and
+  `cbf_qp`/`cbf_qp_lag` hold it for a second step (unless that exceeds `VMAX`) so
+  delivery latency cannot sample the tail, then brake to rest with upstream
+  `impc_ob._brake_u`. A missed cycle flies the braking tail until setpoint expiry.
+- `speed_recovery.py`: the `SPEED_RECOVERY` bound replacement shared by `mpc`,
+  `pure_mpc` and `impc_ob_rec`, applied to the built problem without patching upstream.
 - Goal policy `baseline_standoff` (`coordination.guidance_goal`): satellites use
   their slot; the leader flies to `BASELINE_LEADER_STANDOFF` from the pursuit
   goal on the target-to-leader line (upstream `robot_jps.py` baselines); others

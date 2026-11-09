@@ -16,6 +16,7 @@ import numpy as np
 
 from ... import upstream
 from ..command_rollout import brake, brake_extend, command_trajectory
+from ..speed_recovery import enable_speed_recovery, set_speed_limit
 from ..stop_plan import StopPlan, stop_tail
 from ..upstream_robot import UpstreamRobot, neighbor_robots
 
@@ -25,6 +26,7 @@ class PureMPCVehicle:
         self.name, self.names, self.cfg = name, list(names), dict(cfg)
         self.robot = UpstreamRobot(self.names.index(name))
         self.mpc = upstream.load('pure_mpc').PureMPC(self.robot, len(self.names) - 1, self.cfg)
+        enable_speed_recovery(self.mpc.opti, self.mpc.p, self.mpc.X, self.cfg["HORIZON_LENGTH"], self.cfg)
         self.stop_plan = None
 
     def solve(self, states, predictions, guidance, stamp, scan):
@@ -35,6 +37,8 @@ class PureMPCVehicle:
         obstacles = (np.empty((0, 2)) if scan is None
                      else np.asarray(scan.endpoints, float)[np.asarray(scan.hits, bool), :2])
         self.robot.measure(state)
+        set_speed_limit(self.mpc.opti, self.mpc.p,
+                        np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]], cfg, H)
         others = neighbor_robots(self.names, self.name, states, predictions)
         fails = self.mpc.n_fail
         started = time.perf_counter()

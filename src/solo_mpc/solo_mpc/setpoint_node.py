@@ -1,13 +1,19 @@
-"""Independent source-stamped trajectory sampling, expiry, and proximity guard."""
+"""Independent source-stamped trajectory sampling, expiry, proximity guard, solver lockstep."""
 
 import json
 import time
+from collections import Counter
+from pathlib import Path
 
 import numpy as np
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from gz.msgs10.boolean_pb2 import Boolean
+from gz.msgs10.world_control_pb2 import WorldControl
+from gz.transport13 import Node as GzNode
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from solo_mpc_interfaces.msg import FlightState
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectory
 
@@ -37,6 +43,46 @@ class Setpoints(Node):
                     lambda msg, vehicle=name, handler=callback: handler(vehicle, msg),
                     qos_profile_sensor_data))
         self.create_timer(1.0 / args.settings_data['publish_rate'], self.tick)
+        self.log = None
+        if args.run_dir:
+            Path(args.run_dir, 'telemetry').mkdir(parents=True, exist_ok=True)
+            self.log = open(Path(args.run_dir, 'telemetry/setpoints.jsonl'), 'a', buffering=1)
+        # This process, not the controller, owns the pause: a held world resumes at
+        # the wall deadline even if the controller dies, so landing/expiry still run.
+        self.lockstep = Counter()
+        self.hold_deadline = None
+        if args.settings_data['solver_lockstep']:
+            self.gz = GzNode()
+            self.create_subscription(Bool, '/mpc/lockstep_hold', self.hold, 10)
+            self.create_timer(0.05, self.hold_watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME))
+
+    def control_world(self, pause):
+        request = WorldControl()
+        request.pause = pause
+        try:
+            done, reply = self.gz.request(
+                f'/world/{self.args.world}/control', request, WorldControl, Boolean, 500)
+        except Exception as error:
+            self.get_logger().error(f'World control failed: {error}')
+            done, reply = False, None
+        if not done or not reply.data:
+            self.lockstep['service_failures'] += 1
+            self.get_logger().error(f'World control request pause={pause} failed')
+
+    def hold(self, msg):
+        if msg.data:
+            self.lockstep['holds'] += 1
+            self.hold_deadline = time.monotonic() + self.args.settings_data['solver_lockstep_hold_wall']
+        else:
+            self.hold_deadline = None
+        self.control_world(msg.data)
+
+    def hold_watchdog(self):
+        if self.hold_deadline is not None and time.monotonic() > self.hold_deadline:
+            self.hold_deadline = None
+            self.lockstep['expired_holds'] += 1
+            self.get_logger().error('Solver lockstep hold expired; resuming simulation')
+            self.control_world(False)
 
     def trajectory(self, name, msg):
         if msg.header.frame_id == 'world' and msg.joint_names == ['x', 'y']:
@@ -124,7 +170,17 @@ class Setpoints(Node):
             command.twist.linear.x, command.twist.linear.y, command.twist.linear.z = map(float, velocity)
             self.publishers_keep[name].publish(command)
             statuses[name] = reason
-        self.status.publish(String(data=json.dumps(dict(stamp=sim, vehicles=statuses))))
+        text = json.dumps(dict(stamp=sim, vehicles=statuses, lockstep=self.lockstep))
+        self.status.publish(String(data=text))
+        if self.log:
+            self.log.write(text + '\n')
+
+    def destroy_node(self):
+        if self.hold_deadline is not None:
+            self.control_world(False)
+        if self.log:
+            self.log.close()
+        return super().destroy_node()
 
 
 def main():

@@ -107,6 +107,9 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     scenario = yaml.safe_load(Path(scenario_path).read_text())
     settings = yaml.safe_load(Path(settings_path).read_text())
     settings.setdefault('simulation_real_time_factor', 0.2)
+    settings.setdefault('solver_lockstep', False)
+    settings.setdefault('solver_lockstep_hold_wall', 2.5)
+    settings.setdefault('abort_on_planner_failure', True)
     settings.setdefault('landing_timeout_sim', 60.0)
     settings.setdefault('landing_stall_timeout_wall', 60.0)
     settings.setdefault('target_startup_ramp_sim', 0.0)
@@ -190,6 +193,16 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     ) * cfg["TIMESTEP"]
     cfg.setdefault("CORRIDOR_MARGIN", cfg["ROBOT_RADIUS"] + cfg["LIDAR_NOISE"]
                    + reach * cfg["LIDAR_ANGULAR_RES"] / 2)
+    # Replay tolerances are sized for the default dynamics. Scale them with the
+    # scenario, keeping a replayed position deviation inside the inflated corridor.
+    scaled = dict(
+        BACKUP_POSITION_TOLERANCE=min(
+            cfg["BACKUP_POSITION_TOLERANCE"] * cfg["VMAX"] / DEFAULTS["VMAX"],
+            cfg["CORRIDOR_MARGIN"] - cfg["ROBOT_RADIUS"]),
+        BACKUP_VELOCITY_TOLERANCE=cfg["BACKUP_VELOCITY_TOLERANCE"] * cfg["VMAX"] / DEFAULTS["VMAX"],
+        BACKUP_ACCEL_TOLERANCE=cfg["BACKUP_ACCEL_TOLERANCE"] * cfg["UMAX"] / DEFAULTS["UMAX"],
+    )
+    cfg.update({key: value for key, value in scaled.items() if key not in overrides})
     cfg["CORRIDOR_SEED_MAX"] = cfg["SENSING_RADIUS"] - math.sqrt(2) * cfg["CORRIDOR_BOX"]
     validate(scenario, settings, cfg)
     return scenario, settings, cfg
@@ -245,6 +258,9 @@ def validate(scenario, settings, cfg):
     if (isinstance(factor, bool) or not isinstance(factor, (int, float))
             or not math.isfinite(factor) or factor <= 0):
         raise ValueError('simulation_real_time_factor must be finite and positive')
+    for key in ('solver_lockstep', 'abort_on_planner_failure'):
+        if not isinstance(settings[key], bool):
+            raise ValueError(f'{key} must be a boolean')
     if isinstance(capture_cycles, bool) or not isinstance(capture_cycles, int) or capture_cycles < 0:
         raise ValueError('diagnostic_capture_cycles must be a nonnegative integer')
     cpu_limit = cfg["IPOPT_OPTIONS"].get("ipopt.max_cpu_time")
@@ -290,6 +306,12 @@ def validate(scenario, settings, cfg):
         value = settings.get(key, default)
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"{key} must be finite and positive")
+    if settings['solver_lockstep'] and not (
+        settings.get('controller_worker_timeout_wall', 1.0) < settings['solver_lockstep_hold_wall']
+        < min(settings['command_timeout_wall'], settings['pose_timeout_wall'],
+              settings['flight_timeout_wall'])
+    ):
+        raise ValueError('solver_lockstep_hold_wall must lie between the worker timeout and wall expiries')
     if (
         not settings["obstacle_height"]
         > settings["flight_altitude"] + cfg["ROBOT_RADIUS"]

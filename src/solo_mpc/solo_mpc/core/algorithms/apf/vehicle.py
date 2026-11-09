@@ -37,7 +37,7 @@ class APFVehicle:
                        solver_cpu_ms=(time.process_time() - cpu_started) * 1000,
                        obstacle_points=len(obstacles), controller_mode=guidance['mode'])
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
-        X, U = command_trajectory(x0, u[:2], self.cfg)
+        X, U = command_trajectory(x0, u[:2], self.cfg, hold_steps=2)
         prediction = from_upstream(robot.states_prediction)
         if not all(np.isfinite(value).all() for value in (u, X, U, prediction)):
             return {"ok": False, "nominal_ok": False, "reason": "apf_invalid_output", **metrics}

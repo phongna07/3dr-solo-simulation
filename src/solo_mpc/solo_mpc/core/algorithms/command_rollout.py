@@ -1,9 +1,11 @@
 """Executable rows for a baseline's one-step acceleration command.
 
 Upstream applies a baseline's command for one TIMESTEP, then plans again. Step 0
-applies that command with upstream's predictive dynamics; later steps brake to
-rest with upstream impc_ob._brake_u. Normal operation samples only the first
-interval; a missed cycle flies the braking tail until setpoint expiry.
+applies that command with upstream's predictive dynamics. Delivery latency
+shifts setpoint sampling up to one TIMESTEP later, so a baseline command is held
+for a second step (unless that would exceed VMAX) to keep sampling off the
+braking tail. Later steps brake to rest with upstream impc_ob._brake_u, which a
+missed cycle flies until setpoint expiry.
 """
 
 import numpy as np
@@ -18,12 +20,15 @@ def brake(velocity, cfg):
     return u * (cfg["UMAX"] / n) if n > cfg["UMAX"] else u
 
 
-def command_trajectory(x0, u, cfg):
+def command_trajectory(x0, u, cfg, hold_steps=1):
     """States (H+1, 6) [px, py, vx, vy, ax, ay] and controls (H, 2) from x0."""
     A, B = upstream.load('dynamics').model(cfg["TIMESTEP"], cfg["D_FRAC"], cfg["ACCEL_TAU"], 2)
     X, U = [np.asarray(x0, float)], []
     for step in range(cfg["HORIZON_LENGTH"]):
-        control = np.asarray(u, float)[:2] if step == 0 else brake(X[-1][2:4], cfg)
+        control = np.asarray(u, float)[:2]
+        if step > 0 and (step >= hold_steps
+                         or np.linalg.norm((A @ X[-1] + B @ control)[2:4]) > cfg["VMAX"]):
+            control = brake(X[-1][2:4], cfg)
         U.append(control)
         X.append(A @ X[-1] + B @ control)
     return np.array(X), np.array(U)

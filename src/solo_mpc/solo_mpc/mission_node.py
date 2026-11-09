@@ -455,7 +455,10 @@ class MissionSupervisor(Flight):
                 > self.settings["command_timeout_wall"] + 1.0
             ):
                 raise RuntimeError("Controller status stopped updating")
-            if self.snapshots.get("reason") == "ready":
+            if self.snapshots.get("reason") == "ready" or (
+                self.snapshots.get("reason") == "partial_solver_failure"
+                and not self.settings["abort_on_planner_failure"]
+            ):
                 failure_since = None
             else:
                 failure_since = (

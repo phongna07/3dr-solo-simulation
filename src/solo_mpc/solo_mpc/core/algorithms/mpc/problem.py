@@ -11,9 +11,9 @@ import casadi as ca
 import numpy as np
 
 from ... import upstream as _sources
+from ..speed_recovery import replace_speed_bounds, set_speed_limit
 
 UPSTREAM_MODULES = ('dynamics', 'mpc_problem')
-dynamics = _sources.load('dynamics')
 upstream = _sources.load('mpc_problem')
 BIG = upstream.BIG
 
@@ -94,22 +94,6 @@ class SolverCache:
         return solver
 
 
-def speed_recovery_limits(x0, cfg, steps):
-    """Allow only initial overspeed a maximum-effort brake cannot remove."""
-    state = np.asarray(x0, float).reshape(6).copy()
-    A, B = dynamics.model(cfg['TIMESTEP'], cfg['D_FRAC'], cfg['ACCEL_TAU'], 2)
-    direction = (A @ state)[2:4]
-    control = -cfg['UMAX'] * direction / max(np.linalg.norm(direction), 1e-12)
-    limits = np.full(steps, float(cfg['VMAX']))
-    for k in range(steps):
-        state = A @ state + B @ control
-        speed = np.linalg.norm(state[2:4])
-        if speed <= cfg['VMAX']:
-            break
-        limits[k] = speed + 1e-6
-    return limits
-
-
 class MPCProblem(upstream.MPCProblem):
     UPSTREAM_MODULES = UPSTREAM_MODULES
 
@@ -137,28 +121,7 @@ class MPCProblem(upstream.MPCProblem):
             constraints[row] = (flag * constraints[row] - (1 - flag) *
                                 (self.Sc[step, neighbor] + cfg['UAV_SAFE_DISTANCE'] ** 2))
         if cfg.get('SPEED_RECOVERY', False):
-            self.p['speed_limit'] = o.parameter(max(H, self.Hb), 1)
-            speed_bounds = []
-            for state, count in ((self.X, H), (self.Xb, self.Hb)):
-                if not count:
-                    continue
-                depends = ca.which_depends(o.g, state, 1, True)
-                rows = []
-                for row, uses_state in enumerate(depends):
-                    if not uses_state:
-                        continue
-                    try:
-                        lo, hi = float(ca.evalf(lower[row])), float(ca.evalf(upper[row]))
-                    except RuntimeError:
-                        continue  # parameter-dependent bounds are not speed limits
-                    if lo == -np.inf and hi == cfg['VMAX'] ** 2:
-                        rows.append(row)
-                if len(rows) != count:
-                    raise ValueError('Upstream speed constraints changed; review the solver adapter')
-                for step, row in enumerate(rows):
-                    speed_bounds.append((row, step))
-            for row, step in speed_bounds:
-                upper[row] = self.p['speed_limit'][step] ** 2
+            replace_speed_bounds(o, self.p, ((self.X, H), (self.Xb, self.Hb)), lower, upper, cfg)
         if neighbor_rows or 'speed_limit' in self.p:
             o.subject_to()  # Keep every upstream constraint, replacing only the above bounds/rows.
             o.subject_to(o.bounded(lower, ca.vertcat(*constraints), upper))
@@ -169,8 +132,6 @@ class MPCProblem(upstream.MPCProblem):
         flags = kwargs['nb_flags'] if 'nb_flags' in kwargs else args[7]
         if not np.isin(flags, (0.0, 1.0)).all():
             raise ValueError('Neighbor activation flags must be binary')
-        if 'speed_limit' in self.p:
-            x0 = kwargs['x0'] if 'x0' in kwargs else args[0]
-            self.opti.set_value(self.p['speed_limit'], speed_recovery_limits(
-                x0, self.cfg, max(self.cfg['HORIZON_LENGTH'], self.Hb)))
+        x0 = kwargs['x0'] if 'x0' in kwargs else args[0]
+        set_speed_limit(self.opti, self.p, x0, self.cfg, max(self.cfg['HORIZON_LENGTH'], self.Hb))
         return super()._solve(*args, **kwargs)

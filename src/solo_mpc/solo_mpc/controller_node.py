@@ -15,7 +15,7 @@ from nav_msgs.msg import OccupancyGrid, Path as RosPath
 from rclpy.exceptions import InvalidHandle
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
@@ -54,6 +54,8 @@ class Controller(Node):
         self.outputs = {}
         self.trajectories = {}
         self.status_pub = self.create_publisher(String, "/mpc/status", 10)
+        self.lockstep_pub = (self.create_publisher(Bool, "/mpc/lockstep_hold", 10)
+                             if args.settings_data['solver_lockstep'] else None)
         self.occupancy_pub = self.create_publisher(
             OccupancyGrid, OCCUPANCY_TOPIC, qos_profile_sensor_data)
         self.log = None
@@ -181,6 +183,10 @@ class Controller(Node):
         if self.team.track.observe(position, stamp):
             self.last_observation = stamp
 
+    def _hold_simulation(self, held):
+        if self.lockstep_pub is not None:
+            self.lockstep_pub.publish(Bool(data=held))
+
     def _notify_cycle_done(self, _future):
         # Future callbacks can run on the fleet thread (or inline when already
         # done). Never collect results, read live inputs or publish from here.
@@ -231,6 +237,7 @@ class Controller(Node):
                     reason = 'partial_solver_failure'
         self._publish_cycle(start, now, stamp, reason, results, self.cycles.timing(), coordination)
         self._publish_occupancy(now)
+        self._hold_simulation(False)
         if reason == 'ready':
             self.tick()
 
@@ -316,10 +323,12 @@ class Controller(Node):
                     <= cfg["VIEWING_RADIUS"]
                 }
                 self.cycle_context = start, now, stamp
+                self._hold_simulation(True)
                 try:
                     self.cycles.submit(self.team.step, CycleInput(states, scans, stamp, seers, self.team.track))
                 except Exception as exc:
                     self.cycle_context = None
+                    self._hold_simulation(False)
                     reason = f'controller_error: {exc}'
                     self.get_logger().error(reason)
                 else:

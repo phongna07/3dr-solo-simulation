@@ -137,7 +137,8 @@ file that may have been overridden.
 | `CONTINGENCY` / `BACKUP_HORIZON` | true / 25 | Separate stopping branch ending at rest after 2.5 s |
 | `W_backup` / `TERMINAL_STOP` | 0.1 / false | Backup effort weight / optional nominal terminal stop |
 | `CORRIDOR_BOX` / `CORRIDOR_MAX_FACES` | 1.5 m / 16 | Decomposition half size and initial solver allocation |
-| `SPEED_RECOVERY` | true | Local adapter recovery for initially overspeed measured states |
+| `SPEED_RECOVERY` | true | Local adapter recovery for initially overspeed measured states (`mpc`, `pure_mpc`, `impc_ob_rec`) |
+| `BACKUP_*_TOLERANCE` | 0.15 m / 0.3 m/s / 0.5 m/s² at `VMAX` 1.2, `UMAX` 2 | Plan-replay agreement; unless overridden, scaled by `VMAX` / `UMAX`, position capped at `CORRIDOR_MARGIN − ROBOT_RADIUS` |
 | `IPOPT_OPTIONS` | 500 iterations / 0.2 s CPU | Solver limits; worker deadline remains independent |
 | `BASELINE_LEADER_STANDOFF` | `CBF_BOX_RATIO` × `VIEWING_RADIUS` (derived) | Baseline (`apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc`, `impc_ob_rec`) leader goal distance from the predicted target |
 | `CBF_QP_GAMMA` | 1.0 | Baselines `cbf_qp`/`cbf_qp_lag`: class-K function κ(h) = γh³ (upstream value) |
@@ -273,6 +274,8 @@ safety watchdogs keep their independent wall-time budgets.
 | `simulation_real_time_factor` | 0.2 (requested simulation seconds per wall second) |
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |
+| `solver_lockstep` / `solver_lockstep_hold_wall` | false (true in presets) / 2.5 s | Pause Gazebo during each fleet solve; the setpoint process owns the pause and resumes at the wall deadline, which must lie between the worker timeout and the 3 s wall expiries |
+| `abort_on_planner_failure` | true (false in presets) | Whether solver fallbacks count toward `planner_failure_timeout_sim`; missing inputs and controller errors always do |
 | `controller_execution` | `parallel`; `sequential` orders the same persistent workers |
 | Worker phase / startup timeout | 1 / 30 wall seconds |
 | State / sensor freshness | 0.5 / 0.5 simulation seconds |

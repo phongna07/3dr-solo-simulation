@@ -45,7 +45,7 @@ class CBFQPVehicle:
                        cbf_infeasible_total=self.cbf.n_infeasible,
                        cbf_deadlock_total=self.cbf.n_deadlock)
         x0 = np.r_[state.position[:2], state.velocity[:2], state.acceleration[:2]]
-        X, U = command_trajectory(x0, u[:2], self.cfg)
+        X, U = command_trajectory(x0, u[:2], self.cfg, hold_steps=2)
         prediction = from_upstream(robot.states_prediction)
         if not all(np.isfinite(value).all() for value in (u, X, U, prediction)):
             return {"ok": False, "nominal_ok": False, "reason": "cbf_invalid_output", **metrics}

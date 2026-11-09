@@ -134,6 +134,17 @@ def main():
         output["target_estimation_error_p50_p95_max_m"] = (
             np.percentile(errors, [50, 95, 100]).tolist() if errors else None
         )
+    setpoints_path = run / "telemetry/setpoints.jsonl"
+    if setpoints_path.exists():
+        rows = [json.loads(line) for line in setpoints_path.read_text().splitlines()]
+        rows = [r for r in rows if airborne[0]["stamp"] <= r["stamp"] <= airborne[-1]["stamp"]]
+        counts = {}
+        for row in rows:
+            for name, status in row["vehicles"].items():
+                counts.setdefault(name, {}).setdefault(status, 0)
+                counts[name][status] += 1
+        output["setpoint_status_ticks"] = counts
+        output["solver_lockstep"] = rows[-1]["lockstep"] if rows else None
     report = run / "reports/evaluation.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(output, indent=2) + "\n")
