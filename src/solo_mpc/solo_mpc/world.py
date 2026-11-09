@@ -22,7 +22,7 @@ from .core.video.style import (
 COVERAGE_VISUAL_FLAGS = 0x20
 
 
-def fleet_world(config, source):
+def fleet_world(config, source, max_horizontal_acceleration):
     source = Path(source)
     tree = ET.parse(source / 'scenery.sdf')
     world = tree.getroot().find('world')
@@ -37,7 +37,7 @@ def fleet_world(config, source):
             pose = ET.SubElement(model, 'pose')
         pose.set('degrees', 'true')
         pose.text = ' '.join(map(str, uav['spawn']))
-        native_multicopter(model, uav['name'])
+        native_multicopter(model, uav['name'], max_horizontal_acceleration)
         world.append(model)
     return tree
 
@@ -78,7 +78,7 @@ def element(parent, tag, text=None, **attrs):
     return node
 
 
-def native_multicopter(model, name):
+def native_multicopter(model, name, max_horizontal_acceleration):
     safety = element(model, 'plugin', filename='SoloFlightSafety', name='solo::FlightSafety')
     element(safety, 'namespace', name)
     control = element(model, 'plugin', filename='gz-sim-multicopter-control-system',
@@ -87,7 +87,8 @@ def native_multicopter(model, name):
                        ('enableSubTopic', 'control/enable'), ('comLinkName', 'base_link'),
                        ('velocityGain', '8 8 10'), ('attitudeGain', '0.8 0.8 0.4'),
                        ('angularRateGain', '0.15 0.15 0.1'),
-                       ('maximumLinearAcceleration', '4 4 3'),
+                       ('maximumLinearAcceleration',
+                        f'{max_horizontal_acceleration} {max_horizontal_acceleration} 3'),
                        ('maximumLinearVelocity', '12 12 5'),
                        ('maximumAngularVelocity', '2 2 1')]:
         element(control, tag, value)
@@ -316,7 +317,7 @@ def generate_mpc_world(fleet, source, destination, scenario, settings, cfg,
         raise ValueError("World-stabilized visibility model requires a square camera image")
     output = Path(destination)
     output.parent.mkdir(parents=True, exist_ok=True)
-    tree = fleet_world(fleet, source)
+    tree = fleet_world(fleet, source, cfg['UMAX'])
     world = tree.getroot().find("world")
     # Throttle wall pacing, retaining the original integration step and all
     # simulation-time rates. This gives MPC more CPU time per physical second.
