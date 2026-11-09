@@ -111,7 +111,7 @@ validation evidence and retain them for the supported release lifetime.
 
 The November 5, 2026 native verification used local runtime image
 `sha256:d75bfc1f8713f2ef992ae29e3de884cbe3fb57bc5c80053a87bb3e1d12e72be1`.
-The three current full-fleet presets completed bounded camera/recording
+The full-fleet presets current at the time completed bounded camera/recording
 missions; see [Development](DEVELOPMENT.md#native-migration-verification) for exact evidence
 and visible solver/deadline failures. Separate installed-image checks without
 host mounts imported the native flight/frame/controller/recorder modules, loaded

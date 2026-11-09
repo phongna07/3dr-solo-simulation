@@ -244,10 +244,8 @@ cycle reports `partial_solver_failure` (lower readiness). Telemetry records
 computed from the cycle's measured state, so `revalidate` is the identity.
 
 Derived ranges at local limits (`alpha = UMAX/√2`, `beta = VMAX`): with UMAX 2.0
-and VMAX 1.2 (small50/large200), `alpha ≈ 1.41`, obstacle rows within
-`CORRIDOR_MARGIN + 1.71 m` and neighbors within `D_N ≈ UAV_SAFE_DISTANCE + 3.09 m`;
-with scen1's UMAX 1.0 and VMAX 2.2, `alpha ≈ 0.71`, `CORRIDOR_MARGIN + 5.62 m`
-and `UAV_SAFE_DISTANCE + 11.95 m`. Every LiDAR hit within reach is a barrier row
+and VMAX 1.2 (small50), `alpha ≈ 1.41`, obstacle rows within
+`CORRIDOR_MARGIN + 1.71 m` and neighbors within `D_N ≈ UAV_SAFE_DISTANCE + 3.09 m`. Every LiDAR hit within reach is a barrier row
 (twice for the lag variant), and the exact projection is quadratic in rows, so
 `solver_ms` grows with scan density; worker deadlines stay unchanged.
 
@@ -280,7 +278,7 @@ counter, here by simulation time with measured-state agreement; on failure the
 neighbor prediction is the executed rows, whereas upstream keeps its stale plan;
 teammate plans come from the previous cycle; upstream's warm start shifts by
 one step per solve even after skipped cycles. Derived ranges: the horizon reach
-`VMAX · H · TIMESTEP` is 1.2 m on small50 and 2.2 m on large200/scen1 (hard
+`VMAX · H · TIMESTEP` is 1.2 m on small50 (hard
 points within reach + `CORRIDOR_MARGIN`, and the tracking goal clipped to it),
 and the sigmoid centre is `VMAX/2`. Known upstream behaviour: the cost uses every
 other hit plus teammates, truncated to `96 + n_others` points, so with more than
@@ -412,8 +410,7 @@ are constructed and solved with synthetic stationary inputs before worker
 readiness, including any SQP/IPOPT fallback. Initialization failure prevents
 readiness. That configured size is a preinitialized capacity, not a minimum for
 every solve. Anticipated instances stay resident; two additional LRU slots hold
-other exact counts (eight instances per UAV with the default configuration;
-`scen1` anticipates 4–12 and 16, with twelve instances including the reserve).
+other exact counts (eight instances per UAV with the default configuration).
 An unexpected size is built inside the existing worker deadline; a miss can
 still be slow or time out. Cache size does not limit actual corridor geometry.
 
@@ -560,9 +557,10 @@ diagnostics; hash mismatches remain visible in provenance.
 ### Native migration verification
 
 The tables below preserve historical evidence, including the retired
-`large200_5uav_separated` scenario. Its YAML and CLI preset have been removed;
-existing run directories remain available for inspection. Current presets are
-`small50_3uav`, `large200_5uav`, and `scen1`.
+`large200_5uav_separated`, `large200_5uav` and `scen1` scenarios. Their YAML and
+CLI presets have been removed, here and in later historical sections; existing
+run directories remain available for inspection. Current presets are
+`small50_3uav` and `scen1_1000`.
 
 On November 5, 2026, the rebuilt native image completed these full-fleet
 missions using default camera target detection, every UAV's LiDAR, and
@@ -581,7 +579,7 @@ The commands for each preset were:
 
 ```bash
 ./scripts/dev mpc --preset PRESET --record-video
-./scripts/dev mission run --seconds 30  # 90 for scen1
+./scripts/dev mission run --seconds 30
 ./scripts/dev evaluate
 ./scripts/dev stop
 ```

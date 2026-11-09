@@ -9,23 +9,10 @@ assets in `src/solo_mpc/models` retain vehicle geometry and inertias;
 `MulticopterMotorModel` systems applying rotor forces and torques. Vehicles are
 not moved kinematically.
 
-The `large200_5uav` preset uses five UAVs in a 200 × 200 m field with
-seeded random obstacles and a random winding target route. Select it with
-`./scripts/dev run --preset large200_5uav --record-video --seconds 300`.
-This preset flies at 3 m; `--preset small50_3uav` explicitly selects the
-original scenario.
+`--preset small50_3uav` explicitly selects this scenario.
 
 `--preset scen1_1000` runs the upstream five-UAV 1000 × 1000 m scenario unscaled
 at 30 m; see the configuration guide for its few simulation-only differences.
-
-`--preset scen1` scales the upstream five-UAV 1000 × 1000 m layout to
-200 × 200 m. All starts, 65 obstacles and 27 route waypoints retain their
-relative geometry at one fifth of their original coordinates. UAVs fly at 6 m
-with a 10 m-wide camera footprint, and the observer follows 52 m above the
-target. Normal/sprint target speeds are 1/2.6 m/s; the UAV prediction speed
-bound is 2.2 m/s. A 0.4 m grid and 30 m local planning radius retain the original
-grid workload. See the configuration guide for physical-clearance exceptions
-and verification limits.
 
 The solver and predictive dynamics come directly from a pinned, unchanged
 [colleague-owned repository](https://github.com/thuhangkhuat/motion_planning_MPC)
@@ -105,7 +92,7 @@ multicopter physics, with no legacy backend or one-UAV migration phase. The
 project has no physical-drone profile, serial-device
 configuration, or hardware migration workspace.
 
-The three current full-fleet presets completed bounded native missions with
+The full-fleet presets current at the time completed bounded native missions with
 camera input, LiDAR mapping and recording on November 5, 2026. Every vehicle landed and stopped
 its rotors. An additional all-flight-process pause confirmed independent Gazebo
 watchdog landing; that deliberate fault remains a failed supervised mission.

@@ -1,5 +1,5 @@
 schema_version: 1
-world_name: mpc_large200
+world_name: mpc_scen1_1000
 uavs:
   - name: uav1
     spawn: [16, 16, 0.195, 0, 0, 90]

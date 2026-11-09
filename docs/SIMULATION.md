@@ -57,18 +57,6 @@ motor-enable state, settled-ground confirmation and safety faults. Confirm
 fresh zero rotor speeds and `landed: true`, `armed: false`, `enabled: false`
 for every vehicle after the mission, before stopping physics.
 
-For the five-UAV 200 × 200 m random field, use the matching preset:
-
-```bash
-./scripts/dev run --preset large200_5uav --seconds 300 --record-video
-```
-
-For the scaled upstream layout in a 200 × 200 m field at 6 m flight altitude:
-
-```bash
-./scripts/dev run --preset scen1 --seconds 90 --record-video
-```
-
 For the unscaled upstream 1000 × 1000 m field at 30 m flight altitude:
 
 ```bash
@@ -77,21 +65,17 @@ For the unscaled upstream 1000 × 1000 m field at 30 m flight altitude:
 
 Target input is always exact ground truth; UAV cameras only feed recordings.
 The complete route is much longer than this representative check and contains
-2.6 m/s sprint legs. A duration-limited mission is not evidence of completing
+13 m/s sprint legs. A duration-limited mission is not evidence of completing
 the route or all handoffs. Retain the actual run ID and inspect the evaluation,
 per-UAV solver/worker timing, target freshness, landing and finalized video.
 Budget wall time from the selected pacing and observed clock rate, plus
 takeoff/landing. Recording temporarily retains raw video until finalization;
 check free disk space before long missions.
 
-The original large preset's route takes about 464 simulation seconds, with
-several early slalom bends through nearby obstacles: at least 39 wall minutes at
-0.2×. Consult the actual clock rate.
-A time-limited run covers only part of it; rendering five sensors and a large
-obstacle field can make simulation slower than wall time. Use the observed clock
-rate when choosing a verification duration. Select `--preset small50_3uav` to
-return to the original configuration; see [Configuration](CONFIGURATION.md#five-uavs-in-a-200--200-m-map)
-for regeneration and parameter details.
+A time-limited run covers only part of the route; rendering five sensors and a
+large obstacle field can make simulation slower than wall time. Use the observed
+clock rate when choosing a verification duration. Select `--preset small50_3uav`
+to return to the original configuration.
 
 | Command | Purpose |
 |---|---|
@@ -133,7 +117,7 @@ shows simulation/wall elapsed time, per-UAV mode, armed state, altitude, and sta
 age. Cleanup requires settled ground and observed motor shutdown/disarm;
 low altitude or a requested disable alone is insufficient.
 Landing allows 60 simulation seconds, with separate 60-wall-second watchdogs
-for a stalled clock or missing flight state (`scen1` allows 120 simulation seconds
+for a stalled clock or missing flight state (`scen1_1000` allows 120 simulation seconds
 for landing). A slow but progressing simulation can
 therefore take longer than four wall minutes. Final mission and landing status
 is preserved in `status/mission.json`.
@@ -209,7 +193,8 @@ upstream `thesis_metrics.py`, including its collision cut: after the first
 obstacle contact, UAV pair closer than `2 * ROBOT_RADIUS` or exit from the map,
 the remaining steps count as unseen. The uncut values are reported beside them.
 
-The three current presets completed recorded full-fleet native missions on
+The three presets current at the time (`small50_3uav` and the since-removed
+`large200_5uav` and `scen1`) completed recorded full-fleet native missions on
 November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
 for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;
 no ground-truth target override was used (detection has since been removed).

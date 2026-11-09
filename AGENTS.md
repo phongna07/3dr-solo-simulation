@@ -1,7 +1,7 @@
 # Project and architecture
 
 This project simulates full fleets of three or five UAVs tracking a moving target
-through obstacles at 3 m altitude (6 m for `scen1`, 30 m for `scen1_1000`). Docker supplies ROS 2 Jazzy
+through obstacles at 3 m altitude (30 m for `scen1_1000`). Docker supplies ROS 2 Jazzy
 and native Gazebo Harmonic multicopters. MPC is planar; native velocity control,
 an `Actuators` component and four rotor motor models provide 3D force/torque physics.
 
@@ -54,7 +54,7 @@ than adding a separate document for each feature or experiment.
 This repository is simulation-only. Do not add physical-drone profiles, serial
 device integration, or hardware migration scaffolding. All flight and recording
 runs use native Gazebo multicopters only; do not add a legacy backend or a
-one-UAV migration phase. Preserve all three full-fleet CLI presets.
+one-UAV migration phase. Preserve both full-fleet CLI presets.
 
 ## Submodule workflow
 
@@ -134,8 +134,8 @@ Inspect the actual `runs/<run-id>/` directory; `runs/latest` moves:
 - `recorded-mission.mp4` when requested: visually inspect the relevant result;
   `run` cleanup (or a manual `stop`) finalizes it.
 
-For backend-wide changes, rebuild and verify `small50_3uav`, `large200_5uav`,
-and `scen1`, each with the full fleet, camera input and recording.
+For backend-wide changes, rebuild and verify `small50_3uav` and
+`scen1_1000`, each with the full fleet, camera input and recording.
 The November 5, 2026 native migration evidence and limitations
 are recorded in `docs/DEVELOPMENT.md`; earlier backend flights are not validation.
 Preserve the 1920 × 1080 / 20 FPS composition, all map/state/FOV panels, source

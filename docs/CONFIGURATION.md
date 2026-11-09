@@ -40,58 +40,11 @@ upstream artificial potential field baseline on the same leader/slot layers;
 QP filter (plain and lag-aware) on the same layers; `pure_mpc` runs the
 unchanged upstream plain MPC baseline on the same layers; `impc_ob_rec` runs
 the unchanged upstream IMPC-OB baseline with its LiDAR recovery variant; see
-[Development](DEVELOPMENT.md#baseline-algorithms). All three presets
+[Development](DEVELOPMENT.md#baseline-algorithms). Both presets
 retain their full three-/five-UAV fleets and the existing CLI. There is no legacy
-backend selection or one-UAV migration stage.
-
-### Scen1: scaled five-UAV layout in a 200 × 200 m map
-
-`./scripts/dev run --preset scen1 --record-video` selects `config/fleet-5uav.yaml`,
-`scenarios/scen1.yaml`, and `config/controller-scen1.yaml`. Launch derives all five
-ground spawns and the `mpc_scen1` world name from the scenario. The upstream
-submodule remains unchanged. The local frozen 33 rectangles (including widths
-and heights), 32 circles (including radii), 27 route waypoints and all five XY
-starts are divided by five. No geometry is borrowed from the large200 preset.
-
-Starts are `[127.762,70.915,6]`, `[141.744,36.498,6]`,
-`[16.7138,20.3652,6]`, `[23.7046,140.8244,6]`, and
-`[51.9372,97.2654,6]`. UAV 3 initially covers the target at `[20,20]`;
-the others approach from separated locations. Native takeoff begins at ground
-level. Flight/obstacle heights are 6/8 m, preserving planar avoidance. Camera
-HFOV and 320 × 320 resolution are retained: the half-footprint is now 5 m and
-the marker half-width is 0.2 m. Observer offset is `[-20,-20,52]` m; coverage
-guide widths are 0.06 m. Recording remains 1920 × 1080 at 20 FPS with every panel.
-
-Normal/sprint target speeds scale from 5/13 to 1/2.6 m/s. The three-second
-startup ramp, 0.1 s timestep, 20-step nominal and 25-step stopping horizons,
-0.2 s acceleration lag, dimensionless ratios and cost weights are retained.
-Prediction speed/acceleration bounds use 2.2 m/s and 1 m/s². Acceleration cost scale
-remains 1 m/s² for native response; target process-noise acceleration and
-trusted-velocity thresholds scale to 0.4 m/s² and 0.3 m/s.
-The sprint legs still exceed the prediction speed bound; bounded early-route
-verification does not establish complete-route or sprint success.
-
-Formation cardinal slots are `1.75 * 5 = 8.75 m`, with obstacle contraction
-and re-expansion at 1 m/s and five-second lookahead. Adjacent/opposite full
-follower slots are about 12.37/17.5 m apart. Arrival fleet radius is 13 m.
-Sensing/neighbor ranges are 10/9 m. Grid resolution is 0.4 m (501 × 501 cells),
-local planning radius is 30 m (151 × 151 cells), corridor box is 5 m, and
-inflation margin is 0.2 m. Other spatial planning, target-estimation and route
-sampling scales are divided by five, including the 0.4 m spline sample spacing.
-The hard corridor margin retains the derived grid quantization allowance.
-
-Physical Iris geometry is unchanged: `ROBOT_RADIUS` remains 0.5 m, LiDAR minimum
-range remains 0.5 m, and inter-UAV safety distance is floored at 1 m rather
-than shrinking to 0.6 m. Soft avoidance distance is 1.5 m. Vertical speed is
-0.5 m/s for measured takeoff/landing. Source expiry, ownership, finite CPU and
-worker budgets, safety supervision and landing deadlines remain unchanged.
-The scenario and controller settings must be changed together because controller
-parameters override scenario parameters. Development configuration edits need
-a stack restart, not a native rebuild.
-
-Earlier 1000 m / 30 m runs in [Development](DEVELOPMENT.md) describe the former
-configuration and do not validate this scaled preset. Inspect measured flight,
-camera observations, solver failures, landing and finalized video for new runs.
+backend selection or one-UAV migration stage. Explicit `--fleet`, `--scenario`,
+and `--settings` arguments after `--preset` override that preset; the original
+no-argument defaults remain unchanged.
 
 ### Scen1_1000: unscaled five-UAV upstream layout
 
@@ -121,54 +74,6 @@ decompose the current scan's exact hit points, without memory, as upstream
 already take those hits directly. JPS, as upstream, integrates exact hits into the
 accumulated grid and searches its cells; that grid also feeds the video occupancy
 panel. The 1.5 m margin applies to every algorithm that reads it (not `apf`).
-
-### Five UAVs in a 200 × 200 m map
-
-`./scripts/dev run --preset large200_5uav --record-video` selects these matching inputs:
-
-- [config/fleet-5uav.yaml](../config/fleet-5uav.yaml): five native multicopters, each with its own ROS flight process and Gazebo safety plugin.
-- [large200_5uav.yaml](../src/solo_mpc/scenarios/large200_5uav.yaml): 200 × 200 m bounds, five starts, four cross-shaped formation slots, 240 random rectangles, 240 random circles, and a smooth route with early slalom bends.
-- [controller-large200.yaml](../src/solo_mpc/config/controller-large200.yaml): 3 m altitude, 6 m LiDAR range and a 0.35 s solver CPU cap. The original large scenario supplies its 2.2 m/s MPC speed bound; target speed is 1.0 m/s. Actual UAV speed varies through turns and formation contraction and can briefly overshoot the prediction bound. Worker deadlines, expiry and supervision remain enabled.
-
-The leader starts at `[16,16,3]` with the target at `[16,16]`, centered in its
-downward camera footprint. Followers start 2.625 m left, right, behind and ahead.
-The large map uses a 0.3 m grid to bound per-worker mapping cost. Obstacles have
-1.5–4 m rectangle sides or 0.6–1.5 m circle radii and retain 5 m collision height.
-The generator uses the same smoothed route as the target and protects every
-sampled route segment with at least 2.0 m clearance from enclosing obstacle discs.
-It attempts nearby obstacles on both sides every 4 m of route distance, with
-2.1–3.0 m disc-edge offsets, then fills the remaining field randomly. Enclosing
-discs retain at least 0.5 m between obstacles; these side gaps can be too narrow
-for a UAV and are not designated passages. Seed `200205` has 162 nearby
-obstacles among 480 total, with 2.114 m minimum sampled route-to-footprint
-clearance. Starts retain at least 3 m clearance from obstacle discs. Compared
-with the previous realization, the route band shrinks from 3.2 m per side and
-roadside placement spacing from 5.5 m, while target/UAV speed limits increase
-from 0.6/1.5 m/s. Acceleration remains limited to 2 m/s².
-The controller still learns obstacles through LiDAR and receives no future route;
-followers may contract formation as they approach obstacles.
-This preset uses `overhead_camera_offset: [-12,-12,40]` for a higher angled
-recording/GUI view: 12 m west, 12 m south and 40 m above the target. The wider
-view shows the five-UAV fleet and surrounding buildings/trees; occasional
-occlusion is expected. It affects the observer camera only; UAVs still fly at
-3 m with their existing cameras and LiDAR.
-
-The checked-in realization uses seed `200205`. It repeats on each launch so
-failures can be reproduced. Generate another realization before starting:
-
-```bash
-./scripts/generate-large-scenario --seed 42 --output config/large200-seed42.yaml
-./scripts/dev run --preset large200_5uav --scenario /workspace/config/large200-seed42.yaml --record-video
-```
-
-The generator needs Python 3 with NumPy and imports this project's target spline.
-Alternatively, run it before starting the stack with
-`docker compose run --rm --no-deps sim python3 /workspace/scripts/generate-large-scenario`.
-Omitting `--output` replaces the supplied large scenario. Keep generated
-experiments in `artifacts/` when they should not be committed. Different seeds
-need their own simulator verification. Explicit
-`--fleet`, `--scenario`, and `--settings` arguments after `--preset` override that
-preset; the original no-argument defaults remain unchanged.
 
 ## Fleet and geometry
 
@@ -236,7 +141,7 @@ in effect; the upstream source is unchanged. Omit the override or set it to
 In SEARCH mode the local controller passes the upstream `W_search_track` pull a
 carrot on the planned path, `VMAX` × `HORIZON_LENGTH` × `TIMESTEP` ahead, instead
 of the predicted target; the target is used only once the path is shorter than
-that. A straight-line pull towards a target ~100 m away (scen1) otherwise pins
+that. A straight-line pull towards a distant target otherwise pins
 UAVs against building faces and drives IPOPT into its CPU cap.
 
 Derived values include inflation radius, world bounds, standoff distance,
