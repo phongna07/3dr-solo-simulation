@@ -90,12 +90,20 @@ class MPCVehicle:
             raise ValueError("Corridor decomposition returned no finite polytope")
         return min(candidates, key=lambda ab: np.max(ab[0] @ state.position[:2] - ab[1]))
 
-    def _corridor(self, state, path, stamp):
+    def _corridor_points(self, position, scan):
+        """Obstacle input of the decomposition, selected by CORRIDOR_POINTS."""
+        cfg = self.cfg
+        if cfg["CORRIDOR_POINTS"] == "map":
+            return self.grid.surface_points(position, cfg["SENSING_RADIUS"] + 1.0)
+        # As upstream generateSafeCorridor: hits of the current scan, no memory.
+        if scan is None:
+            raise ValueError("No LiDAR scan integrated yet")
+        return np.asarray(scan.endpoints, float)[np.asarray(scan.hits, bool), :2]
+
+    def _corridor(self, state, path, stamp, scan):
         cfg = self.cfg
         position = state.position
-        points = self.grid.surface_points(
-            position, cfg["SENSING_RADIUS"] + 1.0
-        )
+        points = self._corridor_points(position, scan)
         box = cfg["CORRIDOR_BOX"]
         if not len(points):
             A = np.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
@@ -148,7 +156,7 @@ class MPCVehicle:
             return self._fallback(state, stamp, "planner_failed", **metrics)
         started = time.perf_counter()
         try:
-            A, b = self._corridor(state, path, stamp)
+            A, b = self._corridor(state, path, stamp, scan)
         except Exception as exc:
             metrics["corridor_ms"] = (time.perf_counter() - started) * 1000
             return self._fallback(state, stamp, f"corridor_failed: {exc}", **metrics)

@@ -104,15 +104,23 @@ legs, 25 m half-footprint, 20-step horizon, VMAX 10 m/s, UMAX 5 m/s² and 2 m gr
 Controller `params` repeat VMAX because `flight_node` reads it from that file, and
 supply upstream's four-slot `GRID_CELLS` default.
 
-Simulation-only values: obstacle collision height 40 m (meshes derive from it and
-reach 50–100 m), observer offset `[-50,-50,160]`, coverage guides 0.3 m, camera
+Simulation-only values: obstacle collision height 55 m (meshes derive from it and
+reach about 69–139 m; 25 m above flight altitude keeps rays below the top out to 50 m
+range up to 30° tilt), observer offset `[-70,-70,240]`, coverage guides 0.3 m, camera
 HFOV unchanged (30 m altitude gives the 25 m footprint), climb/descent limit 2 m/s.
 
 Known differences from upstream: IPOPT keeps the local 0.75 s CPU cap; the native
 velocity controller limits acceleration to 4 m/s² horizontally (`world.py`), below
-UMAX; `CORRIDOR_MARGIN` adds the local grid-cell allowance (2.18 m vs 0.77 m). The
-Iris stays physical size, so it is barely visible in the 160 m observer view; the
-FOV guides and panels show each UAV.
+UMAX; `CORRIDOR_MARGIN` is 1.5 m rather than upstream's derived 0.77 m. The Iris
+stays physical size, so it is barely visible in the 240 m observer view; the FOV
+guides and panels show each UAV.
+
+Obstacle inputs follow upstream per algorithm. `CORRIDOR_POINTS: scan` makes `mpc`
+decompose the current scan's exact hit points, without memory, as upstream
+`generateSafeCorridor`. `apf`, `cbf_qp`, `cbf_qp_lag`, `pure_mpc` and `impc_ob_rec`
+already take those hits directly. JPS, as upstream, integrates exact hits into the
+accumulated grid and searches its cells; that grid also feeds the video occupancy
+panel. The 1.5 m margin applies to every algorithm that reads it (not `apf`).
 
 ### Five UAVs in a 200 × 200 m map
 
@@ -234,7 +242,7 @@ UAVs against building faces and drives IPOPT into its CPU cap.
 Derived values include inflation radius, world bounds, standoff distance,
 formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`
 includes body radius, three Gaussian LiDAR-noise standard deviations, ray spacing,
-and the grid-cell half diagonal. Noise is unbounded. The forward corridor seed
+and, for `CORRIDOR_POINTS: map` (default), the grid-cell half diagonal. Noise is unbounded. The forward corridor seed
 must leave at least one cell of usable range. Keep obstacle collision height
 above flight altitude plus body radius.
 
