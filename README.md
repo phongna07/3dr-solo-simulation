@@ -2,14 +2,15 @@
 
 Teams of UAVs track a moving target through obstacles using ROS 2 Jazzy and
 native Gazebo Harmonic multicopters in Docker. The default three-UAV scenario
-uses a 50 × 30 m field and a 3 m flight altitude. Vehicle physics runs in 3D;
+uses a 1000 × 1000 m field and a 30 m flight altitude. Vehicle physics runs in 3D;
 MPC plans horizontally, with separate altitude control. Vendored original Iris
 assets in `src/solo_mpc/models` retain vehicle geometry and inertias;
 `MulticopterVelocityControl` writes an `Actuators` component consumed by four
 `MulticopterMotorModel` systems applying rotor forces and torques. Vehicles are
 not moved kinematically.
 
-`--preset small50_3uav` explicitly selects this scenario.
+`--preset scen7_1000` explicitly selects this scenario, upstream `scen7` with its
+leader hand-off sprints.
 
 `--preset scen1_1000` runs the upstream five-UAV 1000 × 1000 m scenario unscaled
 at 30 m; see the configuration guide for its few simulation-only differences.

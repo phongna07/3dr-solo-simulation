@@ -74,8 +74,8 @@ check free disk space before long missions.
 
 A time-limited run covers only part of the route; rendering five sensors and a
 large obstacle field can make simulation slower than wall time. Use the observed
-clock rate when choosing a verification duration. Select `--preset small50_3uav`
-to return to the original configuration.
+clock rate when choosing a verification duration. Select `--preset scen7_1000`
+to return to the default configuration.
 
 | Command | Purpose |
 |---|---|
@@ -165,7 +165,7 @@ Evaluate after landing, before stopping the container:
 
 Evaluation uses measured Gazebo geometry and reports its source. The airborne
 filter requires every UAV above the lower of `flight_altitude - 0.5` and
-`0.9 * flight_altitude` (2.5 m for the 3 m presets); revisit it when changing altitude.
+`0.9 * flight_altitude` (27 m for the 30 m presets); revisit it when changing altitude.
 Inspect solver failures and measured motion alongside the summary. Sampled
 clearance and successful commands alone do not establish continuous safety.
 
@@ -193,7 +193,7 @@ upstream `thesis_metrics.py`, including its collision cut: after the first
 obstacle contact, UAV pair closer than `2 * ROBOT_RADIUS` or exit from the map,
 the remaining steps count as unseen. The uncut values are reported beside them.
 
-The three presets current at the time (`small50_3uav` and the since-removed
+The three presets current at the time (the since-removed `small50_3uav`,
 `large200_5uav` and `scen1`) completed recorded full-fleet native missions on
 November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
 for `scen1`. Default camera perception and per-UAV LiDAR mapping were enabled;
@@ -398,7 +398,7 @@ ros2 topic echo /uav1/motor_speed --qos-reliability best_effort --once
 ros2 topic echo /uav1/safety_active --qos-reliability best_effort --once
 ros2 topic hz /uav1/scan
 ros2 topic echo /mpc/setpoint_status --once
-timeout 5s gz topic -e -t /world/mpc_small50/stats
+timeout 5s gz topic -e -t /world/mpc_scen7_1000/stats
 ```
 
 Use the configured world name. Exit 124 from `timeout` is expected. A stopped

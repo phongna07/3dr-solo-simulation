@@ -10,8 +10,8 @@ editing a YAML file does not reconfigure an active experiment.
 | Input | Default | Purpose |
 |---|---|---|
 | Fleet | [config/fleet.yaml](../config/fleet.yaml) | UAV names and native Gazebo spawn poses |
-| Scenario | [small50_3uav.yaml](../src/solo_mpc/scenarios/small50_3uav.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
-| Controller | [controller.yaml](../src/solo_mpc/config/controller.yaml) | Altitude, sensors, execution, timing, parameter overrides |
+| Scenario | [scen7_1000.yaml](../src/solo_mpc/scenarios/scen7_1000.yaml) | Bounds, starts, obstacles, target route, algorithm parameters |
+| Controller | [controller-scen7_1000.yaml](../src/solo_mpc/config/controller-scen7_1000.yaml) | Altitude, sensors, execution, timing, parameter overrides |
 
 Use container paths for CLI overrides:
 
@@ -46,6 +46,21 @@ backend selection or one-UAV migration stage. Explicit `--fleet`, `--scenario`,
 and `--settings` arguments after `--preset` override that preset; the original
 no-argument defaults remain unchanged.
 
+### Scen7_1000: unscaled three-UAV upstream hand-off layout
+
+`./scripts/dev run --preset scen7_1000 --record-video` selects `config/fleet.yaml`,
+`scenarios/scen7_1000.yaml` and `config/controller-scen7_1000.yaml`. This is the
+default. The scenario is upstream `scenarios/scen7.yaml` verbatim plus
+`world_name: mpc_scen7_1000`, except the three active start altitudes: 1000 × 1000 m,
+original XY starts, 66 rectangles, 63 circles, 56 waypoints, four 13 m/s sprint
+legs (else 5 m/s) that force leader hand-offs, 25 m half-footprint, `CBF_BOX_RATIO`
+0.5, 20-step horizon, VMAX 10 m/s, UMAX 5 m/s² and 2 m grid. Upstream writes z = 3
+but plans in the plane, so z has no effect there. Flying at 30 m instead keeps the
+25 m footprint with the unchanged camera and full 50 m LiDAR range under tilt.
+
+Controller values, simulation-only values and known differences from upstream
+are those of `scen1_1000` below. It supplies the same four-slot `GRID_CELLS`.
+
 ### Scen1_1000: unscaled five-UAV upstream layout
 
 `./scripts/dev run --preset scen1_1000 --record-video` selects
@@ -77,10 +92,11 @@ panel. The 1.5 m margin applies to every algorithm that reads it (not `apf`).
 
 ## Fleet and geometry
 
-The supplied three-UAV scenario starts at `[5,2,3]`, `[2.5,2,3]`, `[7.5,2,3]`
-in fleet order, facing north (+Y). The target starts at `[5,3]` and follows a
-smooth winding route to `[47,23]` at **0.6 m/s**. Horizontal UAV speed is
-**1.2 m/s** under the supplied controller overrides.
+The default three-UAV scenario starts at `[78.191,378.774,30]`,
+`[320.185,761.932,30]`, `[359.173,626.146,30]` in fleet order, facing north (+Y).
+The target starts at `[100,350]` and follows a smooth winding route to
+`[863.327,643.623]` at **5 m/s**, with four **13 m/s** sprint legs. Horizontal UAV
+speed is limited to **10 m/s** by the supplied controller overrides.
 
 Coordinates are metres in common world ENU: east, north, up. `xlim`/`ylim`
 bound the field; rectangles are `[left,bottom,width,height]`, circles
@@ -147,7 +163,7 @@ UAVs against building faces and drives IPOPT into its CPU cap.
 Derived values include inflation radius, world bounds, standoff distance,
 formation thresholds, and corridor margin. Unless overridden, `CORRIDOR_MARGIN`
 includes body radius, three Gaussian LiDAR-noise standard deviations and ray
-spacing (0.416 m on `small50_3uav`). Noise is unbounded. The forward corridor seed
+spacing (0.77 m with the 1000 m preset parameters, which pin 1.5 m instead). Noise is unbounded. The forward corridor seed
 must leave at least one cell of usable range. Keep obstacle collision height
 above flight altitude plus body radius.
 
@@ -159,14 +175,14 @@ These sampled/soft constraints do not establish collision guarantees.
 
 ## Sensors and target input
 
-Camera defaults are 160 × 160 at 8 Hz, square images, and approximately 53.13°
+Both presets use 320 × 320 cameras at 8 Hz, square images, and approximately 79.8°
 horizontal FOV. The ideal Gazebo gimbal keeps the camera downward and world-aligned,
 with its optical center 0.04 m below the body. It cancels attitude motion without
-mechanical dynamics. The ground footprint is about 2.96 × 2.96 m at 3 m body
+mechanical dynamics. The ground footprint is about 50 × 50 m at 30 m body
 altitude. UAV cameras are created only with `--record-video`; they feed the
 recorded FOV panels and coverage overlays, not target estimation.
 
-Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 3 m range, and 0.01 m
+Horizontal body-mounted LiDAR uses 360 rays at 10 Hz, 50 m range, and about 0.017 m
 Gaussian range-noise standard deviation. Each UAV integrates its own remaining
 valid rays into its persistent occupancy grid before path planning and formation
 checks use the accumulated maps. There is no minimum valid-ray fraction. A fresh scan with no usable rays

@@ -158,13 +158,13 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "scenario",
                 default_value=os.environ.get(
-                    "MPC_SCENARIO", str(share / "scenarios/small50_3uav.yaml")
+                    "MPC_SCENARIO", str(share / "scenarios/scen7_1000.yaml")
                 ),
             ),
             DeclareLaunchArgument(
                 "settings",
                 default_value=os.environ.get(
-                    "MPC_SETTINGS", str(share / "config/controller.yaml")
+                    "MPC_SETTINGS", str(share / "config/controller-scen7_1000.yaml")
                 ),
             ),
             DeclareLaunchArgument(
