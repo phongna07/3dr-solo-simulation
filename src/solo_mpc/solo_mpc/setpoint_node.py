@@ -1,4 +1,4 @@
-"""Independent source-stamped trajectory sampling, expiry, proximity guard, solver lockstep."""
+"""Independent source-stamped trajectory sampling, expiry, solver lockstep."""
 
 import json
 import time
@@ -145,16 +145,6 @@ class Setpoints(Node):
                                     + settings['acceleration_feedforward_time'] * acceleration)
                     speed = np.linalg.norm(velocity[:2])
                     velocity[:2] *= min(1.0, cfg['VMAX'] / max(speed, 1e-9))
-                    for other, (other_pose, received) in self.poses.items():
-                        if other == name or wall - received > settings['pose_timeout_wall']:
-                            continue
-                        delta = pose_arrays(other_pose)[0][:2] - position[:2]
-                        distance = np.linalg.norm(delta)
-                        if (distance < cfg['UAV_SAFE_DISTANCE'] + 0.25
-                                and np.dot(velocity[:2], delta) > 0):
-                            reason = 'proximity_guard'
-                            velocity[:2] = 0.0
-                            break
                 except (ValueError, IndexError, TypeError):
                     reason = 'invalid_command'
                     velocity[:] = 0.0

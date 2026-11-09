@@ -256,7 +256,7 @@ acceleration intent when every MPC horizon restarts at measured velocity.
 The world generator sets the native horizontal `maximumLinearAcceleration` to
 `UMAX` on each axis, so the planned acceleration bound is reachable in any heading.
 Both gains must be finite and nonnegative. The resulting horizontal request is
-still speed-limited, proximity-guarded, independently expired, and realized only
+still speed-limited, independently expired, and realized only
 by attitude/rotor forces; predicted positions never set the vehicle pose.
 Altitude uses separate measured-height feedback and the vertical speed limit.
 
