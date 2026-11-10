@@ -250,12 +250,17 @@ Live GUI motion is slower and collecting the same video duration takes longer.
 
 The native sampler combines sampled planned velocity, measured-position error
 (`position_kp`, default 1.0/s), and planned acceleration multiplied by
-`acceleration_feedforward_time` (default 0.22 s). The latter compensates the
-native horizontal velocity loop's mass/gain ratio (1.76 kg / 8), retaining the
+`acceleration_feedforward_time` (default 0.30 s). The latter is the inverse of
+the native horizontal velocity loop's fitted gain (3.37/s, measured from flown
+commands, below the nominal 8 / 1.76 kg), retaining the
 acceleration intent when every MPC horizon restarts at measured velocity.
+Sampled velocity is also scaled by `1 + velocity_drag_feedforward` (default 0.04,
+the fitted rotor-drag/velocity-gain ratio 0.136/s over 3.37/s). Without it the
+proportional loop settles where small planned accelerations balance rotor drag,
+which held `pure_mpc` near 3 m/s.
 The world generator sets the native horizontal `maximumLinearAcceleration` to
 `UMAX` on each axis, so the planned acceleration bound is reachable in any heading.
-Both gains must be finite and nonnegative. The resulting horizontal request is
+All three gains must be finite and nonnegative. The resulting horizontal request is
 still speed-limited, independently expired, and realized only
 by attitude/rotor forces; predicted positions never set the vehicle pose.
 Altitude uses separate measured-height feedback and the vertical speed limit.

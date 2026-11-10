@@ -128,8 +128,9 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     if algorithm:
         settings['algorithm'] = algorithm
     settings.setdefault('position_kp', 1.0)
-    settings.setdefault('acceleration_feedforward_time', 0.22)
-    for key in ('position_kp', 'acceleration_feedforward_time'):
+    settings.setdefault('acceleration_feedforward_time', 0.30)
+    settings.setdefault('velocity_drag_feedforward', 0.04)
+    for key in ('position_kp', 'acceleration_feedforward_time', 'velocity_drag_feedforward'):
         value = settings[key]
         if (isinstance(value, bool) or not isinstance(value, (int, float))
                 or not math.isfinite(value) or value < 0):

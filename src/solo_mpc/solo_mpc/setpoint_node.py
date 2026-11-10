@@ -140,7 +140,7 @@ class Setpoints(Node):
                             or np.linalg.norm(feedforward) > cfg['VMAX'] * 1.05
                             or np.linalg.norm(acceleration) > cfg['UMAX'] * 1.05):
                         raise ValueError('invalid trajectory values or limits')
-                    velocity[:2] = (feedforward
+                    velocity[:2] = ((1.0 + settings['velocity_drag_feedforward']) * feedforward
                                     + settings['position_kp'] * (target - position[:2])
                                     + settings['acceleration_feedforward_time'] * acceleration)
                     speed = np.linalg.norm(velocity[:2])
