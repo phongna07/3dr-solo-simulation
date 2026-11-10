@@ -7,6 +7,13 @@ Requires host NumPy and PyYAML; reads only files under runs/<run-id>/.
 
     ./scripts/collect-metrics --list
     ./scripts/collect-metrics RUN_ID [RUN_ID ...]
+    ./scripts/collect-metrics --migrate [TABLE.csv | DIR ...]
+
+The paper metrics (gathering, re-formation, target loss, mission coverage and
+execution time) form the first table. --migrate adds them to tables written
+before they existed (default: metrics/), recollecting from runs/<run-id> where
+the run still exists, and keeps every value already in the table; the original
+files are copied once to pre-paper-metrics/ beside them.
 """
 
 import argparse
@@ -16,6 +23,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shutil
 import sys
 from xml.sax.saxutils import escape
 import zipfile
@@ -33,8 +41,17 @@ SLOW_CYCLE_MS = 100.0
 
 # (key, readable header, format, definition); the CSV/XLSX use the headers.
 SECTIONS = [
-    ("Run", [
+    ("Paper metrics", [
         ("algorithm", "Algorithm", "{}", "Planner selected with run --algorithm"),
+        ("gather_mean_s", "Gathering time [s]", "{:.1f}", "Mean over the followers of t_i^g, the first time UAV i is in TRACK (the leader joins at election); blank unless every UAV joined before t_c"),
+        ("reform_pct", "Re-formation time rho_ref [%]", "{:.1f}", "Eq. (33): UAV-steps in SEARCH within [t_i^g, t_c) over sum_i (t_c - t_i^g); blank if the mean window is < 20 % of the mission"),
+        ("loss_pct", "Target loss T_loss [%]", "{:.2f}", "Eq. (34): steps of the whole mission [0, T) with no UAV within L in the infinity norm (target outside every square FOV); steps from t_c on count as lost"),
+        ("paper_coverage", "Mission coverage C", "{:.3f}", "Eq. (35): FOV union area connected to the leader's (nearest UAV's) FOV / (N (2L)^2), averaged over [0, T) with A_k = 0 from t_c on"),
+        ("exec_mean_ms", "Execution time per UAV and step, mean [ms]", "{:.1f}", "Per-UAV planning + optimization wall time per control step before t_c"),
+        ("exec_p95_ms", "Execution time per UAV and step, p95 [ms]", "{:.1f}", "As above, 95th percentile"),
+        ("paper_notes", "Paper metric notes", "{}", "Why a paper metric is unavailable, and the collision cut if one applies"),
+    ]),
+    ("Run", [
         ("run_id", "Run ID", "{}", "Directory under runs/"),
         ("tracking_s", "Tracking duration [s]", "{:.1f}", "Simulation time from tracking start to end"),
         ("waypoints", "Target waypoints reached", "{}", "Route waypoints the target reached, counting its start"),
@@ -50,17 +67,15 @@ SECTIONS = [
     ]),
     ("Formation", [
         ("track_pct", "Time in TRACK mode [%]", "{:.1f}", "UAV-steps in formation (TRACK) over the whole tracking interval"),
-        ("gather_mean_s", "Gathering time, followers mean [s]", "{:.1f}", "Mean time until each follower first enters TRACK (leader joins at election)"),
         ("gather_team_s", "Gathering time, whole team [s]", "{:.1f}", "Time until the last UAV first enters TRACK; blank if one never joins"),
-        ("reform_pct", "Re-formation time in SEARCH [%]", "{:.1f}", "UAV-steps in SEARCH after each UAV first joined, before the first collision"),
         ("reform_episodes", "Re-formation episodes per UAV", "{:.1f}", "SEARCH episodes after joining, per joined UAV"),
         ("reform_episode_s", "Re-formation episode mean length [s]", "{:.1f}", "Mean length of those SEARCH episodes"),
         ("leader_pct", "Leader present after formation [%]", "{:.1f}", "Steps with an elected leader after the whole team first was in TRACK"),
         ("leader_losses", "Leader losses after formation", "{}", "Times the leader was lost after the whole team first was in TRACK"),
     ]),
     ("Tracking", [
-        ("mission_visibility_pct", "Mission visibility [%]", "{:.2f}", "Steps after gathering with the target inside >= 1 square FOV (side 2 x VIEWING_RADIUS); steps after a collision count as unseen"),
-        ("mission_coverage", "Mission coverage efficiency", "{:.3f}", "FOV union area of the component connected to the nearest UAV / (N (2L)^2), after gathering; zero after a collision"),
+        ("mission_visibility_pct", "Mission visibility after gathering [%]", "{:.2f}", "Steps after gathering with the target inside >= 1 square FOV (side 2 x VIEWING_RADIUS); steps after a collision count as unseen"),
+        ("mission_coverage", "Mission coverage efficiency after gathering", "{:.3f}", "FOV union area of the component connected to the nearest UAV / (N (2L)^2), after gathering; zero after a collision"),
         ("visibility_pct", "Visibility, ignoring collisions [%]", "{:.2f}", "Mission visibility without the collision cut"),
         ("coverage", "Coverage efficiency, ignoring collisions", "{:.3f}", "Mission coverage without the collision cut"),
         ("near_p50_m", "Nearest UAV to target, median [m]", "{:.2f}", "Planar distance of the nearest UAV to the target, after gathering"),
@@ -84,6 +99,12 @@ SECTIONS = [
 COLUMNS = [c for _, cols in SECTIONS for c in cols]
 HEADER = {key: title for key, title, _, _ in COLUMNS}
 KEY = {title: key for key, title, _, _ in COLUMNS}
+# Headers of tables written before the paper metrics section.
+KEY.update({"Gathering time, followers mean [s]": "gather_mean_s",
+            "Re-formation time in SEARCH [%]": "reform_pct",
+            "Mission visibility [%]": "mission_visibility_pct",
+            "Mission coverage efficiency": "mission_coverage"})
+PAPER = [key for key, _, _, _ in SECTIONS[0][1]]
 
 
 def jsonl(path):
@@ -207,6 +228,15 @@ def collect(run, fov_coverage):
     gathered = len(join) == n
     followers = [t for t in join if t > 0]
     reform_ok = join and window_steps / len(join) >= REFORM_MIN_WINDOW * T
+    notes = []
+    if kc < T:
+        notes.append(f"collision at {stamps[kc] - stamps[0]:.1f} s: later steps count as lost, A_k = 0")
+    if not gathered:
+        notes.append(f"gathering: only {len(join)}/{n} UAVs reached TRACK before t_c")
+    if not reform_ok:
+        notes.append("re-formation: no UAV joined before t_c" if not join else
+                     f"re-formation: mean window after joining {window_steps / len(join) * period:.1f} s"
+                     f" < {100 * REFORM_MIN_WINDOW:.0f} % of the mission")
 
     # Coverage and visibility after the gathering (first step with every UAV in TRACK).
     full = track.all(axis=1)
@@ -226,6 +256,10 @@ def collect(run, fov_coverage):
 
     solve = [v["planning_and_solve_ms"] for r in steps for v in r["vehicles"].values()
              if v.get("planning_and_solve_ms") is not None]
+    exec_ms = [v["planning_and_solve_ms"] for r in steps[:max(kc, 1)] for v in r["vehicles"].values()
+               if v.get("planning_and_solve_ms") is not None]
+    if not exec_ms:
+        notes.append("execution time: no per-UAV solve times recorded")
     cycle = np.asarray([r["compute_ms"] for r in steps])
     delay = np.asarray([r["reported_stamp"] - r["stamp"] for r in steps if "reported_stamp" in r])
     failures = {}
@@ -254,8 +288,14 @@ def collect(run, fov_coverage):
     fleet_q = percentiles(fleet, [50, 95])
     solve_q = percentiles(solve, [95, 100])
     cycle_q = percentiles(cycle, [50, 95, 100])
+    exec_q = percentiles(exec_ms, [95])
     row = {
         "algorithm": algorithm,
+        "loss_pct": 100.0 * float((~(visible & alive)).mean()),
+        "paper_coverage": float(np.where(alive, cov, 0.0).mean()),
+        "exec_mean_ms": float(np.mean(exec_ms)) if exec_ms else None,
+        "exec_p95_ms": exec_q[0],
+        "paper_notes": "; ".join(notes) or "none",
         "run_id": run.name,
         "tracking_s": float(stamps[-1] - stamps[0]),
         "waypoints": f'{tp.get("waypoints_reached")}/{tp.get("waypoints")}',
@@ -348,10 +388,15 @@ def write_markdown(path, rows, preset, limit):
                 continue
             lines.append(f"| {title} | " + " | ".join(text(key, fmt, r.get(key)) for r in rows) + " |")
         lines.append("")
+        if section == SECTIONS[0][0]:
+            lines += ["Evaluated on the tracking interval [0, T) up to the first collision t_c "
+                      "(`Collision-free`, `First collision`); \"–\" marks a metric the run cannot "
+                      "define, with the reason in the notes row (e.g. a mission too short for the "
+                      "team to gather or for a re-formation window).", ""]
     lines += ["## Definitions", "", "| Metric | Definition |", "|---|---|"]
     lines += [f"| {title} | {definition} |" for _, title, _, definition in COLUMNS]
-    lines += ["", "Gathering, re-formation, mission coverage and mission visibility follow upstream "
-              "`thesis_metrics.py`; FOVs are squares of side 2 x VIEWING_RADIUS.", ""]
+    lines += ["", "Gathering, re-formation, mission coverage and visibility follow upstream "
+              "`thesis_metrics.py`; FOVs are squares of side 2 x VIEWING_RADIUS = 2L.", ""]
     path.write_text("\n".join(lines))
 
 
@@ -392,9 +437,12 @@ def write_xlsx(path, rows):
         metrics.append([round(v, 4) if isinstance(v, float) else v
                         for v in (number(r.get(k)) for k, _, _, _ in COLUMNS)])
     widths = [max(12, min(48, len(HEADER[k]) * 0.9)) for k, _, _, _ in COLUMNS]
+    paper = [[row[COLUMNS.index(c)] for c in COLUMNS if c[0] in PAPER] for row in metrics]
+    paper_widths = [max(12, min(48, len(HEADER[k]) * 0.9)) for k in PAPER[:-1]] + [90]
     definitions = [["Section", "Metric", "Definition"]]
     definitions += [[s, t, d] for s, cols in SECTIONS for _, t, _, d in cols]
-    sheets = [("Metrics", sheet_xml(metrics, widths, 1)),
+    sheets = [("Paper metrics", sheet_xml(paper, paper_widths, 1)),
+              ("Metrics", sheet_xml(metrics, widths, 1)),
               ("Definitions", sheet_xml(definitions, [22, 44, 110], 0))]
     ns = "http://schemas.openxmlformats.org"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -436,6 +484,50 @@ def write_xlsx(path, rows):
             z.writestr(f"xl/worksheets/sheet{i}.xml", xml)
 
 
+def write_tables(directory, stem, rows, preset, limit):
+    write_csv(directory / f"{stem}.csv", rows)
+    write_xlsx(directory / f"{stem}.xlsx", rows)
+    write_markdown(directory / f"{stem}.md", rows, preset, limit)
+
+
+def migrate(csv_path, fov_coverage):
+    """Add missing columns to an existing table, keeping every stored value."""
+    rows = read_table(csv_path)
+    preset, limit = csv_path.stem, ""
+    md = csv_path.with_suffix(".md")
+    if md.is_file():
+        match = re.match(r"# Metrics: (.+), (.+)", md.read_text().splitlines()[0])
+        if match:
+            preset, limit = match[1], match[2].replace(" ", "_")
+    for algorithm, row in rows.items():
+        run = RUNS / row["run_id"]
+        if (run / "telemetry/mpc.jsonl").is_file():
+            new = collect(run, fov_coverage)[2]
+        else:
+            # Execution time equals the stored solve time only without a collision cut.
+            whole = number(row.get("completion_pct")) == 100
+            notes = [f"run directory runs/{row['run_id']} missing: T_loss and C need the telemetry"
+                     + ("" if whole else ", execution time the collision cut")]
+            if number(row.get("gather_mean_s")) is None:
+                notes.append("gathering: not every UAV reached TRACK before t_c")
+            if number(row.get("reform_pct")) is None:
+                notes.append("re-formation: window after joining < 20 % of the mission")
+            new = {"exec_mean_ms": row.get("solve_mean_ms") if whole else None,
+                   "exec_p95_ms": row.get("solve_p95_ms") if whole else None,
+                   "paper_notes": "; ".join(notes)}
+        missing = [k for k, _, _, _ in COLUMNS if k not in row]
+        row.update({k: new.get(k) for k in missing})
+        print(f"{csv_path}: {algorithm} {row['run_id']} added {len(missing)} columns"
+              + ("" if run.is_dir() else " (run missing)"))
+    backup = csv_path.parent / "pre-paper-metrics"
+    for path in (csv_path, md, csv_path.with_suffix(".xlsx")):
+        if path.is_file() and not (backup / path.name).exists():
+            backup.mkdir(exist_ok=True)
+            shutil.copy2(path, backup / path.name)
+    write_tables(csv_path.parent, csv_path.stem, ordered(rows), preset, limit or "unknown")
+    print(f"Wrote {csv_path.with_suffix('')}.csv, .xlsx and .md (originals in {backup})")
+
+
 def list_runs():
     for run in sorted(p for p in RUNS.iterdir() if not p.is_symlink() and (p / "telemetry/mpc.jsonl").is_file()):
         try:
@@ -452,11 +544,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("runs", nargs="*", help="run IDs under runs/ or run directories")
     parser.add_argument("--list", action="store_true", help="list runs with preset, limit and algorithm")
+    parser.add_argument("--migrate", nargs="*", metavar="TABLE",
+                        help="add missing metrics to existing tables (CSV files or directories; default metrics/)")
     parser.add_argument("--force", action="store_true",
                         help="replace an algorithm's row even with an older run than the stored one")
     args = parser.parse_args()
     if args.list:
         list_runs()
+        return
+    if args.migrate is not None:
+        fov_coverage = upstream_fov_coverage()
+        for target in map(Path, args.migrate or [OUT]):
+            for table in sorted(target.glob("*.csv")) if target.is_dir() else [target]:
+                migrate(table, fov_coverage)
         return
     if not args.runs:
         parser.error("give one or more run IDs (see --list)")
@@ -477,9 +577,7 @@ def main():
     OUT.mkdir(exist_ok=True)
     for stem, (preset, limit, table) in changed.items():
         rows = ordered(table)
-        write_csv(OUT / f"{stem}.csv", rows)
-        write_xlsx(OUT / f"{stem}.xlsx", rows)
-        write_markdown(OUT / f"{stem}.md", rows, preset, limit)
+        write_tables(OUT, stem, rows, preset, limit)
         print(f"Wrote metrics/{stem}.csv, .xlsx and .md ({len(rows)} algorithms)")
 
 

@@ -196,6 +196,19 @@ upstream `thesis_metrics.py`, including its collision cut: after the first
 obstacle contact, UAV pair closer than `2 * ROBOT_RADIUS` or exit from the map,
 the remaining steps count as unseen. The uncut values are reported beside them.
 
+The first table (the Markdown's first section, the workbook's first sheet and
+the first CSV columns) holds the paper metrics: gathering time (followers' mean
+first TRACK time), re-formation time `rho_ref`, target loss `T_loss` and mission
+coverage `C` over the whole tracking interval with the collision cut, and the
+per-UAV execution time mean and p95 before `t_c`. A metric the run cannot define
+is left blank (`–`), with the reason in the notes row: a team that has not
+gathered before `t_c`, or a re-formation window under 20 % of a short mission.
+Tables written before these columns existed are upgraded in place with
+`./scripts/collect-metrics --migrate [TABLE.csv | DIR ...]` (default `metrics/`):
+stored values are kept, missing columns are recollected from `runs/<run-id>`,
+or left blank with a note when that run no longer exists, and the original
+files are copied once to `pre-paper-metrics/` beside them.
+
 The three presets current at the time (the since-removed `small50_3uav`,
 `large200_5uav` and `scen1`) completed recorded full-fleet native missions on
 November 5, 2026: 30 tracking simulation seconds for the two 3 m presets and 90 seconds
