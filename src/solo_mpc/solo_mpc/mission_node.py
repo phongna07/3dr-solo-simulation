@@ -450,9 +450,14 @@ class MissionSupervisor(Flight):
                 > self.settings["command_timeout_wall"]
             ):
                 raise RuntimeError("Independent setpoint publisher stopped reporting")
+            # A compute-delay cycle reports before Gazebo simulates its delay, so
+            # allow that pending delay at the requested real-time factor.
+            pending = max(0.0, self.snapshots.get("available_stamp", 0.0)
+                          - self.snapshots.get("reported_stamp", 0.0))
             if (
                 time.time() - self.snapshots.get("wall", 0.0)
                 > self.settings["command_timeout_wall"] + 1.0
+                + pending / self.settings.get("simulation_real_time_factor", 0.2)
             ):
                 raise RuntimeError("Controller status stopped updating")
             if self.snapshots.get("reason") == "ready" or (

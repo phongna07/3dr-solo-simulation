@@ -15,7 +15,7 @@ from nav_msgs.msg import OccupancyGrid, Path as RosPath
 from rclpy.exceptions import InvalidHandle
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float64MultiArray, String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
@@ -56,6 +56,11 @@ class Controller(Node):
         self.status_pub = self.create_publisher(String, "/mpc/status", 10)
         self.lockstep_pub = (self.create_publisher(Bool, "/mpc/lockstep_hold", 10)
                              if args.settings_data['solver_lockstep'] else None)
+        # With solver_compute_delay the paused world afterwards runs for the
+        # measured fleet-cycle time on the previous command before delivery.
+        self.release_pub = (self.create_publisher(Float64MultiArray, "/mpc/lockstep_release", 10)
+                            if args.settings_data['solver_compute_delay'] else None)
+        self.release_at = -np.inf
         self.occupancy_pub = self.create_publisher(
             OccupancyGrid, OCCUPANCY_TOPIC, qos_profile_sensor_data)
         self.log = None
@@ -235,9 +240,19 @@ class Controller(Node):
                 results[n] = self.team.revalidate(out, measured)
                 if not results[n].publication_eligible:
                     reason = 'partial_solver_failure'
-        self._publish_cycle(start, now, stamp, reason, results, self.cycles.timing(), coordination)
+        timing = self.cycles.timing()
+        if self.release_pub is not None:
+            # Whole fleet cycle (mapping, solves, worker IPC), rounded to the 1 ms
+            # physics step. The source stamp stays the observation time.
+            delay = round(self.cycles.completed - self.cycles.started, 3)
+            self.release_at = round(stamp + delay, 3)
+            timing.update(compute_delay_sim=delay, available_stamp=self.release_at)
+        self._publish_cycle(start, now, stamp, reason, results, timing, coordination)
         self._publish_occupancy(now)
-        self._hold_simulation(False)
+        if self.release_pub is not None:
+            self.release_pub.publish(Float64MultiArray(data=[stamp, self.release_at]))
+        else:
+            self._hold_simulation(False)
         if reason == 'ready':
             self.tick()
 
@@ -247,6 +262,9 @@ class Controller(Node):
         start = time.perf_counter()
         now = self.get_clock().now()
         stamp = now.nanoseconds * 1e-9
+        if stamp < self.release_at - 1e-9:
+            # The previous command is still being simulated over its compute delay.
+            return
         if 0 <= stamp - self.last_cycle_stamp < self.args.settings_data['control_period'] - 1e-9:
             return
         self.last_cycle_stamp = stamp

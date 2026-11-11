@@ -282,6 +282,7 @@ safety watchdogs keep their independent wall-time budgets.
 | `flight_altitude` / `obstacle_height` | 3 / 5 m |
 | `control_period` / `publish_rate` | 0.1 s / 20 Hz |
 | `solver_lockstep` / `solver_lockstep_hold_wall` | false (true in presets) / 2.5 s | Pause Gazebo during each fleet solve; the setpoint process owns the pause and resumes at the wall deadline, which must lie between the worker timeout and the 3 s wall expiries |
+| `solver_compute_delay` | false | Requires `solver_lockstep`: after each paused solve, simulate the measured fleet-cycle time on the previous plans, then deliver (see below) |
 | `abort_on_planner_failure` | true (false in presets) | Whether solver fallbacks count toward `planner_failure_timeout_sim`; missing inputs and controller errors always do |
 | `controller_execution` | `parallel`; `sequential` orders the same persistent workers |
 | Worker phase / startup timeout | 1 / 30 wall seconds |
@@ -295,6 +296,23 @@ safety watchdogs keep their independent wall-time budgets.
 | `landing_timeout_sim` | 60 simulation seconds to confirm settled ground and motor shutdown |
 | `landing_stall_timeout_wall` | 60 wall seconds without clock progress or flight state |
 | `diagnostic_capture_cycles` | 128 retained calls per UAV; 0 disables capture |
+
+With `solver_compute_delay`, each planning request observes at a paused
+simulation time `t`, measures the whole fleet cycle (mapping, solves and worker
+IPC) in wall seconds `d`, rounded to the 1 ms physics step, and publishes the
+plans still stamped `t`. The setpoint process keeps them pending and requests
+Gazebo `run_to_sim_time = t + d`; physics, target, sampler and flight nodes keep
+running on the previous plans. At `t + d` it delivers the new plans, samples them
+`d` into their horizon, and resumes the world. Every UAV shares the fleet delay.
+The next observation is at `max(t + control_period, t + d)`. A delay beyond
+`command_timeout_sim` expires the previous plan, which appears as `expired_command`;
+this is reported, not prevented. Delivered plans take their wall receipt time at
+delivery. `compute_delay_sim` and `available_stamp` appear in `telemetry/mpc.jsonl`;
+`delivery_delay_sim_*` then measures `available_stamp - stamp`, and the lockstep
+counters add `releases` and `expired_releases` (the wall deadline is the hold wall
+plus the delay at the requested real-time factor).
+The mission supervisor's controller-status wall freshness is extended by the same
+pending delay, since the controller reports before Gazebo simulates it.
 
 Timeouts bound failures; they do not guarantee a 100 ms fleet cycle. Native
 planner kernels warm both contiguous and sliced windows before worker readiness.

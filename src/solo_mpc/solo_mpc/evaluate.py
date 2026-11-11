@@ -47,8 +47,10 @@ def main():
     computation = np.asarray([r["compute_ms"] for r in airborne])
     # Report simulation latency separately from CPU/wall cost. A slow clock
     # gives the solver more wall time, without making its computation cheaper.
+    # With solver_compute_delay, plans become available at available_stamp.
     delivery_delay = np.asarray([
-        r['reported_stamp'] - r['stamp'] for r in airborne if 'reported_stamp' in r
+        r.get('available_stamp', r['reported_stamp']) - r['stamp']
+        for r in airborne if 'reported_stamp' in r
     ])
     separation = []
     margins = []

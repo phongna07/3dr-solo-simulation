@@ -109,6 +109,7 @@ def load_settings(scenario_path, settings_path, algorithm=None):
     settings.setdefault('simulation_real_time_factor', 0.2)
     settings.setdefault('solver_lockstep', False)
     settings.setdefault('solver_lockstep_hold_wall', 2.5)
+    settings.setdefault('solver_compute_delay', False)
     settings.setdefault('abort_on_planner_failure', True)
     settings.setdefault('landing_timeout_sim', 60.0)
     settings.setdefault('landing_stall_timeout_wall', 60.0)
@@ -259,7 +260,7 @@ def validate(scenario, settings, cfg):
     if (isinstance(factor, bool) or not isinstance(factor, (int, float))
             or not math.isfinite(factor) or factor <= 0):
         raise ValueError('simulation_real_time_factor must be finite and positive')
-    for key in ('solver_lockstep', 'abort_on_planner_failure'):
+    for key in ('solver_lockstep', 'solver_compute_delay', 'abort_on_planner_failure'):
         if not isinstance(settings[key], bool):
             raise ValueError(f'{key} must be a boolean')
     if isinstance(capture_cycles, bool) or not isinstance(capture_cycles, int) or capture_cycles < 0:
@@ -313,6 +314,8 @@ def validate(scenario, settings, cfg):
               settings['flight_timeout_wall'])
     ):
         raise ValueError('solver_lockstep_hold_wall must lie between the worker timeout and wall expiries')
+    if settings['solver_compute_delay'] and not settings['solver_lockstep']:
+        raise ValueError('solver_compute_delay requires solver_lockstep')
     if (
         not settings["obstacle_height"]
         > settings["flight_altitude"] + cfg["ROBOT_RADIUS"]

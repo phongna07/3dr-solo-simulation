@@ -1,4 +1,4 @@
-"""Independent source-stamped trajectory sampling, expiry, solver lockstep."""
+"""Independent source-stamped trajectory sampling, expiry, solver lockstep and compute delay."""
 
 import json
 import time
@@ -13,7 +13,7 @@ from gz.transport13 import Node as GzNode
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from solo_mpc_interfaces.msg import FlightState
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float64MultiArray, String
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectory
 
@@ -51,14 +51,26 @@ class Setpoints(Node):
         # the wall deadline even if the controller dies, so landing/expiry still run.
         self.lockstep = Counter()
         self.hold_deadline = None
+        # Compute delay: solved plans wait in pending until the world, running on
+        # the previous plans, reaches the release time (source stamp + fleet delay).
+        self.compute_delay = args.settings_data['solver_compute_delay']
+        self.pending, self.release, self.delivered_source = {}, None, -np.inf
         if args.settings_data['solver_lockstep']:
             self.gz = GzNode()
             self.create_subscription(Bool, '/mpc/lockstep_hold', self.hold, 10)
-            self.create_timer(0.05, self.hold_watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME))
+            if self.compute_delay:
+                self.create_subscription(
+                    Float64MultiArray, '/mpc/lockstep_release', self.release_world, 10)
+            self.create_timer(0.01 if self.compute_delay else 0.05, self.hold_watchdog,
+                              clock=Clock(clock_type=ClockType.STEADY_TIME))
 
-    def control_world(self, pause):
+    def control_world(self, pause, run_to=None):
         request = WorldControl()
         request.pause = pause
+        if run_to is not None:
+            # Gazebo pauses itself once simulation time reaches this value.
+            nanoseconds = int(round(run_to * 1e9))
+            request.run_to_sim_time.sec, request.run_to_sim_time.nsec = divmod(nanoseconds, 10**9)
         try:
             done, reply = self.gz.request(
                 f'/world/{self.args.world}/control', request, WorldControl, Boolean, 500)
@@ -77,7 +89,38 @@ class Setpoints(Node):
             self.hold_deadline = None
         self.control_world(msg.data)
 
+    def release_world(self, msg):
+        source, at = msg.data
+        sim = self.get_clock().now().nanoseconds * 1e-9
+        self.lockstep['releases'] += 1
+        # The world now runs, so the paused-hold deadline gives way to a
+        # release deadline paced by the requested real-time factor.
+        self.hold_deadline = None
+        settings = self.args.settings_data
+        self.release = source, at, time.monotonic() + settings['solver_lockstep_hold_wall'] + max(
+            0.0, at - sim) / settings['simulation_real_time_factor']
+        self.control_world(False, run_to=at)
+
+    def deliver(self):
+        source, _, _ = self.release
+        self.release, self.delivered_source = None, source
+        for name, (msg, _) in list(self.pending.items()):
+            if seconds(msg.header.stamp) <= source:
+                # The sampler receives the plan only now; its source stamp is unchanged.
+                self.trajectories[name] = msg, time.monotonic()
+                del self.pending[name]
+        # Publish at the release instant, then resume the world Gazebo paused there.
+        self.tick()
+        self.control_world(False)
+
     def hold_watchdog(self):
+        if self.release is not None:
+            if self.get_clock().now().nanoseconds * 1e-9 >= self.release[1] - 5e-4:
+                self.deliver()
+            elif time.monotonic() > self.release[2]:
+                self.lockstep['expired_releases'] += 1
+                self.get_logger().error('Compute-delay release expired; delivering and resuming')
+                self.deliver()
         if self.hold_deadline is not None and time.monotonic() > self.hold_deadline:
             self.hold_deadline = None
             self.lockstep['expired_holds'] += 1
@@ -86,9 +129,12 @@ class Setpoints(Node):
 
     def trajectory(self, name, msg):
         if msg.header.frame_id == 'world' and msg.joint_names == ['x', 'y']:
-            previous = self.trajectories.get(name)
-            if previous is None or seconds(msg.header.stamp) > seconds(previous[0].header.stamp):
-                self.trajectories[name] = msg, time.monotonic()
+            stamp = seconds(msg.header.stamp)
+            store = (self.pending if self.compute_delay and stamp > self.delivered_source
+                     else self.trajectories)
+            previous = store.get(name)
+            if previous is None or stamp > seconds(previous[0].header.stamp):
+                store[name] = msg, time.monotonic()
 
     def pose(self, name, msg):
         if msg.header.frame_id == 'world':
@@ -100,6 +146,7 @@ class Setpoints(Node):
     def enable(self, request, response):
         self.enabled = request.data
         self.trajectories.clear()
+        self.pending.clear()
         response.success = True
         response.message = 'enabled' if self.enabled else 'disabled'
         return response
@@ -166,7 +213,7 @@ class Setpoints(Node):
             self.log.write(text + '\n')
 
     def destroy_node(self):
-        if self.hold_deadline is not None:
+        if self.hold_deadline is not None or self.release is not None:
             self.control_world(False)
         if self.log:
             self.log.close()
